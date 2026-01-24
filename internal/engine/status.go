@@ -79,7 +79,7 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 	if result.ActiveStore != "" {
 		track, err := e.storeRepo.LoadTrack(result.ActiveStore)
 		if err == nil {
-			result.TrackedPaths = track.Paths
+			result.TrackedPaths = track.Paths()
 		}
 		// Ignore errors - store might not exist or have no track file
 	}

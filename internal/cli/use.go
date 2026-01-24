@@ -37,9 +37,10 @@ Use -n to create a new store if it doesn't exist.`,
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
 
-		// If -n flag is set, create the store first
+		// If -n flag is set, create the store (which also sets it as active)
 		if createNew {
 			createReq := &engine.CreateStoreRequest{
+				CWD:         cwd,
 				StoreID:     storeID,
 				Name:        storeID,
 				Scope:       storeScope,
@@ -48,7 +49,8 @@ Use -n to create a new store if it doesn't exist.`,
 			if err := eng.CreateStore(ctx, createReq); err != nil {
 				return fmt.Errorf("failed to create store: %w", err)
 			}
-			fmt.Printf("Created store: %s\n", storeID)
+			fmt.Printf("Created and activated store: %s\n", storeID)
+			return nil
 		}
 
 		// Select the store as active

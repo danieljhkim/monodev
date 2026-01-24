@@ -38,10 +38,10 @@ func BuildApplyPlan(
 		overlayRoot := storeRepo.OverlayRoot(storeID)
 
 		// For each tracked path in this store
-		for _, trackedPath := range track.Paths {
+		for _, trackedPath := range track.Tracked {
 			// Compute source and destination paths
-			sourcePath := filepath.Join(overlayRoot, trackedPath)
-			destPath := filepath.Join(workspaceRoot, trackedPath)
+			sourcePath := filepath.Join(overlayRoot, trackedPath.Path)
+			destPath := filepath.Join(workspaceRoot, trackedPath.Path)
 
 			// Check if source path exists in store
 			sourceExists, err := fs.Exists(sourcePath)
@@ -49,19 +49,17 @@ func BuildApplyPlan(
 				return nil, fmt.Errorf("failed to check source path %s: %w", sourcePath, err)
 			}
 			if !sourceExists {
-				// Skip paths that don't exist in the store
+				// Skip paths that don't exist in the store (unless required)
 				// This can happen if a path is tracked but not yet saved
+				if trackedPath.IsRequired() {
+					return nil, fmt.Errorf("required path %s not found in store %s", trackedPath.Path, storeID)
+				}
 				continue
 			}
 
-			// Determine the type (file or directory)
-			sourceInfo, err := fs.Lstat(sourcePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to stat source path %s: %w", sourcePath, err)
-			}
-
+			// Use the kind from the tracked path metadata
 			pathType := "file"
-			if sourceInfo.IsDir() {
+			if trackedPath.Kind == "dir" {
 				pathType = "directory"
 			}
 

@@ -21,13 +21,48 @@ type StoreMeta struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// TrackFile contains the list of paths tracked by a store.
+// TrackFile represents the track.json file in a store.
 type TrackFile struct {
-	// Paths is the list of tracked file/directory paths (relative to overlay root)
-	Paths []string `json:"paths"`
+	// SchemaVersion is the version of this schema
+	SchemaVersion int `json:"schemaVersion"`
 
-	// Ignores is a list of glob patterns to ignore (optional, for future use)
-	Ignores []string `json:"ignores,omitempty"`
+	// Tracked is the list of tracked paths with metadata
+	Tracked []TrackedPath `json:"tracked"`
+
+	// Ignore is the list of ignore patterns
+	Ignore []string `json:"ignore,omitempty"`
+
+	// Notes is an optional description of this store's purpose
+	Notes string `json:"notes,omitempty"`
+}
+
+// TrackedPath represents a tracked file or directory.
+type TrackedPath struct {
+	// Path is the relative path from workspace root
+	Path string `json:"path"`
+
+	// Kind is the type of path ("file" or "dir")
+	Kind string `json:"kind"`
+
+	// Required indicates if this path must exist when applying (default: true)
+	Required *bool `json:"required,omitempty"`
+}
+
+// IsRequired returns whether this path is required.
+func (t TrackedPath) IsRequired() bool {
+	if t.Required == nil {
+		return true // default to required
+	}
+	return *t.Required
+}
+
+// Paths returns a list of all tracked path strings (for backward compatibility).
+func (tf *TrackFile) Paths() []string {
+	paths := make([]string, len(tf.Tracked))
+	for i, t := range tf.Tracked {
+		paths[i] = t.Path
+	}
+	return paths
 }
 
 // NewStoreMeta creates a new StoreMeta with the given name and scope.
@@ -43,7 +78,8 @@ func NewStoreMeta(name, scope string, createdAt time.Time) *StoreMeta {
 // NewTrackFile creates a new empty TrackFile.
 func NewTrackFile() *TrackFile {
 	return &TrackFile{
-		Paths:   []string{},
-		Ignores: []string{},
+		SchemaVersion: 1,
+		Tracked:       []TrackedPath{},
+		Ignore:        []string{},
 	}
 }

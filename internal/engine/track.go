@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+
+	"github.com/danieljhkim/monodev/internal/stores"
 )
 
 // TrackRequest represents a request to track paths.
@@ -58,14 +61,29 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) error {
 
 	// Add new paths (avoid duplicates)
 	pathSet := make(map[string]bool)
-	for _, p := range track.Paths {
-		pathSet[p] = true
+	for _, tp := range track.Tracked {
+		pathSet[tp.Path] = true
 	}
 
-	for _, p := range req.Paths {
-		if !pathSet[p] {
-			track.Paths = append(track.Paths, p)
-			pathSet[p] = true
+	for _, relPath := range req.Paths {
+		if !pathSet[relPath] {
+			// Determine if path is file or directory
+			kind := "file"
+			absPath := relPath
+			if !filepath.IsAbs(relPath) {
+				absPath = filepath.Join(req.CWD, relPath)
+			}
+
+			info, err := e.fs.Lstat(absPath)
+			if err == nil && info.IsDir() {
+				kind = "dir"
+			}
+
+			track.Tracked = append(track.Tracked, stores.TrackedPath{
+				Path: relPath,
+				Kind: kind,
+			})
+			pathSet[relPath] = true
 		}
 	}
 
@@ -127,13 +145,13 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) error {
 	}
 
 	// Filter out paths to remove
-	newPaths := []string{}
-	for _, p := range track.Paths {
-		if !removeSet[p] {
-			newPaths = append(newPaths, p)
+	newTracked := []stores.TrackedPath{}
+	for _, tp := range track.Tracked {
+		if !removeSet[tp.Path] {
+			newTracked = append(newTracked, tp)
 		}
 	}
-	track.Paths = newPaths
+	track.Tracked = newTracked
 
 	// Save updated track file
 	if err := e.storeRepo.SaveTrack(repoState.ActiveStore, track); err != nil {

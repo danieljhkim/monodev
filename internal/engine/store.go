@@ -20,6 +20,9 @@ type UseStoreRequest struct {
 
 // CreateStoreRequest represents a request to create a new store.
 type CreateStoreRequest struct {
+	// CWD is the current working directory (needed to set as active store)
+	CWD string
+
 	// StoreID is the ID of the new store
 	StoreID string
 
@@ -85,8 +88,19 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 	return nil
 }
 
-// CreateStore creates a new store.
+// CreateStore creates a new store and sets it as the active store for the current repository.
 func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error {
+	// Discover repository
+	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrNotInRepo, err)
+	}
+
+	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
+	if err != nil {
+		return fmt.Errorf("failed to compute repo fingerprint: %w", err)
+	}
+
 	// Create store metadata
 	meta := stores.NewStoreMeta(req.Name, req.Scope, e.clock.Now())
 	meta.Description = req.Description
@@ -94,6 +108,23 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	// Create the store
 	if err := e.storeRepo.Create(req.StoreID, meta); err != nil {
 		return fmt.Errorf("failed to create store: %w", err)
+	}
+
+	// Set as active store for this repository
+	repoState, err := e.stateStore.LoadRepoState(repoFingerprint)
+	if err != nil {
+		if os.IsNotExist(err) {
+			repoState = state.NewRepoState(repoFingerprint)
+		} else {
+			return fmt.Errorf("failed to load repo state: %w", err)
+		}
+	}
+
+	repoState.ActiveStore = req.StoreID
+
+	// Save repo state
+	if err := e.stateStore.SaveRepoState(repoFingerprint, repoState); err != nil {
+		return fmt.Errorf("failed to save repo state: %w", err)
 	}
 
 	return nil
@@ -137,6 +168,6 @@ func (e *Engine) DescribeStore(ctx context.Context, storeID string) (*StoreDetai
 
 	return &StoreDetails{
 		Meta:         meta,
-		TrackedPaths: track.Paths,
+		TrackedPaths: track.Paths(),
 	}, nil
 }
