@@ -1,4 +1,4 @@
-.PHONY: help build install clean test format all
+.PHONY: help build install clean test format all test-integration test-coverage lint vet deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -44,7 +44,6 @@ test: ## Run unit tests (fast, no system dependencies)
 	@echo "Running unit tests..."
 	go test -v ./internal/...
 
-
 test-quick: ## Run tests without verbose output (faster)
 	@go test ./internal/...
 
@@ -54,6 +53,10 @@ test-coverage: ## Run unit tests with coverage report
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "✓ Coverage report generated: coverage.html"
 	@go tool cover -func=coverage.out | grep total | awk '{print "✓ Total coverage: " $$3}'
+
+test-integration: ## Run integration tests
+	@echo "Running integration tests..."
+	go test -v -tags=integration ./test/integration/...
 
 ##@ Development
 
