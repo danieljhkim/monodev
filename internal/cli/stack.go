@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -57,22 +56,20 @@ var stackLsCmd = &cobra.Command{
 				Stack:       result.Stack,
 				ActiveStore: result.ActiveStore,
 			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(output)
+			return outputJSON(output)
 		}
 
 		if len(result.Stack) == 0 {
-			fmt.Println("Stack is empty")
+			PrintInfo("Stack is empty")
 		} else {
-			fmt.Println("Stack (in order of precedence):")
+			PrintInfo("Stack (in order of precedence):")
 			for i, store := range result.Stack {
-				fmt.Printf("  %d. %s\n", i+1, store)
+				PrintInfo(fmt.Sprintf("  %d. %s", i+1, store))
 			}
 		}
 
 		if result.ActiveStore != "" {
-			fmt.Printf("\nActive store: %s (applied last)\n", result.ActiveStore)
+			PrintInfo(fmt.Sprintf("\nActive store: %s (applied last)", result.ActiveStore))
 		}
 
 		return nil
@@ -108,7 +105,7 @@ var stackAddCmd = &cobra.Command{
 			return fmt.Errorf("failed to add store to stack: %w", err)
 		}
 
-		fmt.Printf("Added store to stack: %s\n", storeID)
+		PrintSuccess(fmt.Sprintf("Added store to stack: %s", storeID))
 		return nil
 	},
 }
@@ -149,7 +146,7 @@ If a store-id is provided, removes that specific store from the stack.`,
 			return fmt.Errorf("failed to remove store from stack: %w", err)
 		}
 
-		fmt.Printf("Removed store from stack: %s\n", result.Removed)
+		PrintSuccess(fmt.Sprintf("Removed store from stack: %s", result.Removed))
 		return nil
 	},
 }
@@ -180,7 +177,7 @@ var stackClearCmd = &cobra.Command{
 			return fmt.Errorf("failed to clear stack: %w", err)
 		}
 
-		fmt.Println("Stack cleared")
+		PrintSuccess("Stack cleared")
 		return nil
 	},
 }

@@ -49,22 +49,22 @@ If [store-id] is provided, it temporarily overrides the active store for this ap
 		result, err := eng.Apply(ctx, req)
 		if err != nil {
 			if result != nil && result.Plan != nil && result.Plan.HasConflicts() {
-				fmt.Fprintf(os.Stderr, "Conflicts detected:\n")
+				PrintError("Conflicts detected:")
 				for _, conflict := range result.Plan.Conflicts {
-					fmt.Fprintf(os.Stderr, "  %s: %s\n", conflict.Path, conflict.Reason)
+					PrintError(fmt.Sprintf("  %s: %s", conflict.Path, conflict.Reason))
 				}
-				fmt.Fprintf(os.Stderr, "\nUse --force to override conflicts.\n")
+				PrintError("\nUse --force to override conflicts.")
 			}
 			return err
 		}
 
 		if applyDryRun {
-			fmt.Printf("Dry run - would apply %d operations\n", len(result.Plan.Operations))
+			PrintInfo(fmt.Sprintf("Dry run - would apply %d operations", len(result.Plan.Operations)))
 			return nil
 		}
 
-		fmt.Printf("Applied %d operations successfully\n", len(result.Applied))
-		fmt.Printf("Workspace ID: %s\n", result.WorkspaceID)
+		PrintSuccess(fmt.Sprintf("Applied %d operations successfully", len(result.Applied)))
+		PrintInfo(fmt.Sprintf("Workspace ID: %s", result.WorkspaceID))
 		return nil
 	},
 }

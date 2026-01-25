@@ -49,7 +49,7 @@ Use -n to create a new store if it doesn't exist.`,
 			if err := eng.CreateStore(ctx, createReq); err != nil {
 				return fmt.Errorf("failed to create store: %w", err)
 			}
-			fmt.Printf("Created and activated store: %s\n", storeID)
+			PrintSuccess(fmt.Sprintf("Created and activated store: %s", storeID))
 			return nil
 		}
 
@@ -62,7 +62,7 @@ Use -n to create a new store if it doesn't exist.`,
 			return fmt.Errorf("failed to use store: %w", err)
 		}
 
-		fmt.Printf("Active store set to: %s\n", storeID)
+		PrintSuccess(fmt.Sprintf("Active store set to: %s", storeID))
 		return nil
 	},
 }

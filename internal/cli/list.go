@@ -25,14 +25,18 @@ var listCmd = &cobra.Command{
 			return err
 		}
 
+		if jsonOutput {
+			return outputJSON(stores)
+		}
+
 		if len(stores) == 0 {
-			fmt.Println("No stores found")
+			PrintInfo("No stores found")
 			return nil
 		}
 
-		fmt.Printf("Available stores:\n")
+		PrintInfo("Available stores:")
 		for _, store := range stores {
-			fmt.Printf("  %s (%s)\n", store.Name, store.Scope)
+			PrintInfo(fmt.Sprintf("  %s (%s)", store.Name, store.Scope))
 		}
 		return nil
 	},

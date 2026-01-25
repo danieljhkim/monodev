@@ -53,13 +53,25 @@ In copy mode, all specified paths are saved.`,
 		}
 
 		if saveDryRun {
-			fmt.Printf("Dry run - would save %d paths\n", len(result.Saved))
+			PrintInfo(fmt.Sprintf("Dry run - would save %d paths", len(result.Saved)))
+			if len(result.Missing) > 0 {
+				PrintWarning(fmt.Sprintf("Would skip %d missing paths (not found in workspace):", len(result.Missing)))
+				for _, p := range result.Missing {
+					PrintWarning(fmt.Sprintf("  - %s", p))
+				}
+			}
 			return nil
 		}
 
-		fmt.Printf("Saved %d paths\n", len(result.Saved))
+		PrintSuccess(fmt.Sprintf("Saved %d paths", len(result.Saved)))
 		if len(result.Skipped) > 0 {
-			fmt.Printf("Skipped %d paths (already managed or not tracked)\n", len(result.Skipped))
+			PrintWarning(fmt.Sprintf("Skipped %d paths (already managed or not tracked)", len(result.Skipped)))
+		}
+		if len(result.Missing) > 0 {
+			PrintWarning(fmt.Sprintf("Missing %d paths (not found in workspace):", len(result.Missing)))
+			for _, p := range result.Missing {
+				PrintWarning(fmt.Sprintf("  - %s", p))
+			}
 		}
 		return nil
 	},

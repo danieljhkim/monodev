@@ -50,18 +50,18 @@ Use --dry-run to preview what would be deleted without actually deleting.`,
 		}
 
 		if len(result.DeletedPaths) == 0 {
-			fmt.Println("No untracked files found in store.")
+			PrintInfo("No untracked files found in store.")
 			return nil
 		}
 
 		if result.DryRun {
-			fmt.Printf("Dry run: The following %d path(s) would be deleted from store '%s':\n", len(result.DeletedPaths), result.StoreID)
+			PrintInfo(fmt.Sprintf("Dry run: The following %d path(s) would be deleted from store '%s':", len(result.DeletedPaths), result.StoreID))
 			for _, p := range result.DeletedPaths {
-				fmt.Printf("  - %s\n", p)
+				PrintInfo(fmt.Sprintf("  - %s", p))
 			}
-			fmt.Println("\nRun without --dry-run to actually delete these files.")
+			PrintInfo("\nRun without --dry-run to actually delete these files.")
 		} else {
-			fmt.Printf("Successfully deleted %d untracked path(s) from store '%s'\n", len(result.DeletedPaths), result.StoreID)
+			PrintSuccess(fmt.Sprintf("Successfully deleted %d untracked path(s) from store '%s'", len(result.DeletedPaths), result.StoreID))
 		}
 
 		return nil

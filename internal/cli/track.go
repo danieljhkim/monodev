@@ -36,7 +36,7 @@ var trackCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("Tracked %d paths\n", len(args))
+		PrintSuccess(fmt.Sprintf("Tracked %d paths", len(args)))
 		return nil
 	},
 }

@@ -57,6 +57,9 @@ type SaveResult struct {
 
 	// Skipped is the list of paths that were skipped (e.g., symlinks in symlink mode)
 	Skipped []string
+
+	// Missing is the list of paths that could not be saved because they don't exist in workspace
+	Missing []string
 }
 
 // Save copies workspace files to the active store and records them in workspace state.
@@ -125,6 +128,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 	result := &SaveResult{
 		Saved:   []string{},
 		Skipped: []string{},
+		Missing: []string{},
 	}
 
 	now := e.clock.Now()
@@ -149,12 +153,8 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 			}
 
 			if !exists {
-				// Path doesn't exist in workspace
-				if trackedPath.IsRequired() {
-					return nil, fmt.Errorf("required path %s does not exist in workspace", relPath)
-				}
-				// Not required - skip silently
-				result.Skipped = append(result.Skipped, relPath)
+				// Path doesn't exist in workspace - add to missing list and continue
+				result.Missing = append(result.Missing, relPath)
 				continue
 			}
 
@@ -207,8 +207,9 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 			}
 
 			if !exists {
-				// Explicitly requested paths are always required
-				return nil, fmt.Errorf("path %s does not exist in workspace", relPath)
+				// Path doesn't exist in workspace - add to missing list and continue
+				result.Missing = append(result.Missing, relPath)
+				continue
 			}
 
 			if req.DryRun {
