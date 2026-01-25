@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 )
 
@@ -33,6 +36,15 @@ func SetVersion(v string) {
 func init() {
 	// Global flags
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print the monodev CLI version",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintln(os.Stdout, rootCmd.Version)
+		},
+	})
 
 	// Add all subcommands
 	rootCmd.AddCommand(applyCmd)
