@@ -36,6 +36,7 @@ func init() {
 	rootCmd.AddCommand(pruneCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(describeCmd)
+	rootCmd.AddCommand(stackCmd)
 }
 
 // Execute executes the root command.

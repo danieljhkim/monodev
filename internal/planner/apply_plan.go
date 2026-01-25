@@ -85,6 +85,20 @@ func BuildApplyPlan(
 					Store:      previousStore,
 				}
 				plan.AddOperation(removeOp)
+			} else if force {
+				// When force is enabled, check if destination exists (unmanaged or from previous apply)
+				// If so, we need to remove it first before creating the new overlay
+				destExists, err := fs.Exists(destPath)
+				if err == nil && destExists {
+					removeOp := Operation{
+						Type:       OpRemove,
+						SourcePath: "",
+						DestPath:   destPath,
+						RelPath:    relPath,
+						Store:      "", // unknown/unmanaged
+					}
+					plan.AddOperation(removeOp)
+				}
 			}
 
 			// Add the create operation

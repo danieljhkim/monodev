@@ -10,19 +10,16 @@ import (
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
-// Unapply removes managed paths from the currently active store.
+// Unapply removes all managed paths from the workspace.
 //
-// Only removes paths that belong to the active store, not all managed paths.
-// This allows multiple stores to coexist in a workspace - unapply only affects
-// the currently active store's contributions.
+// Removes paths from both the stack stores and the active store - essentially
+// reversing what 'apply' did. All paths tracked in workspace state are removed.
 //
 // Algorithm:
-// 1. Discover repo and load repo state to get active store
-// 2. Load workspace state (must exist)
-// 3. Filter paths to only those from active store
-// 4. Remove filtered paths in deepest-first order
-// 5. Update workspace state (remove only the paths we deleted)
-// 6. If no paths remain, delete workspace state; otherwise save it
+// 1. Discover repo and load workspace state (must exist)
+// 2. Collect all managed paths
+// 3. Remove paths in deepest-first order
+// 4. Delete workspace state
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
 	// Step 1: Discover repository
 	repoRoot, err := e.gitRepo.Discover(req.CWD)
@@ -43,17 +40,7 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	// Step 2: Compute workspace ID
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 
-	// Step 3: Load repo state to get active store
-	repoState, err := e.stateStore.LoadRepoState(repoFingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load repo state: %w", err)
-	}
-
-	if repoState.ActiveStore == "" {
-		return nil, ErrNoActiveStore
-	}
-
-	// Step 4: Load workspace state
+	// Step 3: Load workspace state
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -62,17 +49,14 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
 
-	// Step 5: Filter paths to only those from the active store
-	// Workspace state now uses relative paths as keys
-	activeStorePaths := make([]string, 0)
-	for relPath, ownership := range workspaceState.Paths {
-		if ownership.Store == repoState.ActiveStore {
-			activeStorePaths = append(activeStorePaths, relPath)
-		}
+	// Step 4: Collect all managed paths
+	allPaths := make([]string, 0, len(workspaceState.Paths))
+	for relPath := range workspaceState.Paths {
+		allPaths = append(allPaths, relPath)
 	}
 
-	// Check if there are any paths to remove from active store
-	if len(activeStorePaths) == 0 {
+	// Check if there are any paths to remove
+	if len(allPaths) == 0 {
 		return &UnapplyResult{
 			Removed:     []string{},
 			WorkspaceID: workspaceID,
@@ -82,13 +66,13 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	// If dry run, just return the list of paths that would be removed
 	if req.DryRun {
 		return &UnapplyResult{
-			Removed:     activeStorePaths,
+			Removed:     allPaths,
 			WorkspaceID: workspaceID,
 		}, nil
 	}
 
-	// Step 6: Remove active store's paths in deepest-first order
-	relPaths := activeStorePaths
+	// Step 5: Remove all paths in deepest-first order
+	relPaths := allPaths
 
 	// Sort paths by depth (deepest first)
 	sort.Slice(relPaths, func(i, j int) bool {
@@ -125,7 +109,7 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		removed = append(removed, relPath)
 	}
 
-	// Step 7: Update or delete workspace state
+	// Step 6: Delete workspace state (all paths removed)
 	if len(workspaceState.Paths) == 0 {
 		// No more managed paths - delete workspace state
 		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
