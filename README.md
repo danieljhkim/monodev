@@ -23,6 +23,19 @@ It lets you:
 
 ---
 
+## Quick Start
+
+Platform support: macOS (Apple Silicon only)
+
+```bash
+# install
+brew install danieljhkim/tap/monodev
+
+monodev version
+
+monodev help
+```
+
 ## Core ideas
 
 - **Stores**  
