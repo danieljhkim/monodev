@@ -98,7 +98,9 @@ func (fs *RealFS) copyFile(src, dst string, mode os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("failed to open source: %w", err)
 	}
-	defer srcFile.Close()
+	defer func() {
+		_ = srcFile.Close()
+	}()
 
 	// Create parent directory if needed
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
@@ -109,7 +111,9 @@ func (fs *RealFS) copyFile(src, dst string, mode os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("failed to create destination: %w", err)
 	}
-	defer dstFile.Close()
+	defer func() {
+		_ = dstFile.Close()
+	}()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("failed to copy file contents: %w", err)
@@ -174,8 +178,8 @@ func (fs *RealFS) AtomicWrite(path string, data []byte, perm os.FileMode) error 
 	// Clean up temp file on error
 	defer func() {
 		if tmpFile != nil {
-			tmpFile.Close()
-			os.Remove(tmpPath)
+			_ = tmpFile.Close()
+			_ = os.Remove(tmpPath)
 		}
 	}()
 

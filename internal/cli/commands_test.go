@@ -35,11 +35,11 @@ func setupTestEnv(t *testing.T) (string, func()) {
 
 	// Set HOME to tmpDir so config uses test directory
 	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
+	_ = os.Setenv("HOME", tmpDir)
 
 	cleanup := func() {
-		os.Setenv("HOME", oldHome)
-		os.RemoveAll(tmpDir)
+		_ = os.Setenv("HOME", oldHome)
+		_ = os.RemoveAll(tmpDir)
 	}
 
 	return workspaceDir, cleanup
@@ -51,8 +51,10 @@ func TestListCommand_NoStores(t *testing.T) {
 
 	// Change to workspace directory
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	rootCmd.SetArgs([]string{"list"})
 	var bufOut, bufErr bytes.Buffer
@@ -78,8 +80,10 @@ func TestListCommand_JSONOutput(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	rootCmd.SetArgs([]string{"list", "--json"})
 	var buf bytes.Buffer
@@ -109,8 +113,10 @@ func TestStatusCommand_NoWorkspaceState(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	rootCmd.SetArgs([]string{"status"})
 	var buf bytes.Buffer
@@ -128,8 +134,10 @@ func TestStatusCommand_JSONOutput(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	rootCmd.SetArgs([]string{"status", "--json"})
 	var buf bytes.Buffer
@@ -156,8 +164,10 @@ func TestUseCommand_InvalidArgs(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	// Test with no args (should fail)
 	rootCmd.SetArgs([]string{"use"})
@@ -175,8 +185,10 @@ func TestTrackCommand_InvalidArgs(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	// Test with no args (should fail)
 	rootCmd.SetArgs([]string{"track"})
@@ -194,8 +206,10 @@ func TestApplyCommand_InvalidStore(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	// Try to apply a non-existent store
 	rootCmd.SetArgs([]string{"apply", "nonexistent-store"})
@@ -217,8 +231,10 @@ func TestUnapplyCommand_NoState(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	// Try to unapply when nothing is applied
 	rootCmd.SetArgs([]string{"unapply"})
@@ -237,8 +253,10 @@ func TestUnapplyCommand_DryRun(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	// Try dry-run unapply
 	rootCmd.SetArgs([]string{"unapply", "--dry-run"})
@@ -256,8 +274,10 @@ func TestApplyCommand_Flags(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	tests := []struct {
 		name string
@@ -287,8 +307,10 @@ func TestUseCommand_Flags(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	tests := []struct {
 		name string
@@ -318,8 +340,10 @@ func TestGlobalJSONFlag(t *testing.T) {
 	defer cleanup()
 
 	oldDir, _ := os.Getwd()
-	os.Chdir(workspaceDir)
-	defer os.Chdir(oldDir)
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
 
 	// Test that --json flag works globally
 	rootCmd.SetArgs([]string{"list", "--json"})

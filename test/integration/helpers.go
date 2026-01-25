@@ -88,18 +88,20 @@ func (fs *testFS) RemoveAll(path string) error {
 	delete(fs.fileInfo, path)
 
 	// Remove all paths that start with this path
+	// Use proper path comparison instead of deprecated filepath.HasPrefix
+	pathPrefix := path + string(filepath.Separator)
 	for p := range fs.files {
-		if filepath.HasPrefix(p, path) {
+		if p == path || (len(p) > len(path) && p[:len(pathPrefix)] == pathPrefix) {
 			delete(fs.files, p)
 		}
 	}
 	for p := range fs.dirs {
-		if filepath.HasPrefix(p, path) {
+		if p == path || (len(p) > len(path) && p[:len(pathPrefix)] == pathPrefix) {
 			delete(fs.dirs, p)
 		}
 	}
 	for p := range fs.symlinks {
-		if filepath.HasPrefix(p, path) {
+		if p == path || (len(p) > len(path) && p[:len(pathPrefix)] == pathPrefix) {
 			delete(fs.symlinks, p)
 		}
 	}

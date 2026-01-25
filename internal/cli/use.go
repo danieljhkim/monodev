@@ -50,6 +50,9 @@ Use -n to create a new store if it doesn't exist.`,
 				return fmt.Errorf("failed to create store: %w", err)
 			}
 			PrintSuccess(fmt.Sprintf("Created and activated store: %s", storeID))
+			if storeScope != "" {
+				PrintLabelValue("Scope", storeScope)
+			}
 			return nil
 		}
 

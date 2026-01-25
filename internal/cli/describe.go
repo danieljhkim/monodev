@@ -31,17 +31,24 @@ var describeCmd = &cobra.Command{
 			return outputJSON(details)
 		}
 
-		PrintInfo(fmt.Sprintf("Store: %s", details.Meta.Name))
-		PrintInfo(fmt.Sprintf("Scope: %s", details.Meta.Scope))
+		PrintSection("Store Details")
+
+		PrintLabelValue("Name", details.Meta.Name)
+		PrintLabelValue("Scope", details.Meta.Scope)
 		if details.Meta.Description != "" {
-			PrintInfo(fmt.Sprintf("Description: %s", details.Meta.Description))
+			PrintLabelValue("Description", details.Meta.Description)
 		}
-		PrintInfo(fmt.Sprintf("Created: %s", details.Meta.CreatedAt.Format("2006-01-02 15:04:05")))
-		PrintInfo(fmt.Sprintf("Updated: %s", details.Meta.UpdatedAt.Format("2006-01-02 15:04:05")))
-		PrintInfo(fmt.Sprintf("\nTracked paths (%d):", len(details.TrackedPaths)))
-		for _, path := range details.TrackedPaths {
-			PrintInfo(fmt.Sprintf("  %s", path))
+		PrintLabelValue("Created", details.Meta.CreatedAt.Format("2006-01-02 15:04:05"))
+		PrintLabelValue("Updated", details.Meta.UpdatedAt.Format("2006-01-02 15:04:05"))
+
+		if len(details.TrackedPaths) > 0 {
+			PrintSubsection(fmt.Sprintf("Tracked Paths (%s)", PrintCount(len(details.TrackedPaths), "path", "paths")))
+			PrintList(details.TrackedPaths, 1)
+		} else {
+			PrintSubsection("Tracked Paths")
+			PrintEmptyState("No paths tracked")
 		}
+
 		return nil
 	},
 }

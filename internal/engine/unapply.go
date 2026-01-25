@@ -161,6 +161,7 @@ func (e *Engine) validateManagedPath(path string, ownership state.PathOwnership)
 			// File has been modified - this is drift
 			// For unapply, we still remove it (user modifications are lost)
 			// A warning could be added here in the future
+			_ = currentHash // Acknowledge drift detection (no-op for now)
 		}
 	}
 

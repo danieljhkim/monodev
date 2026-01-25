@@ -40,20 +40,26 @@ var statusCmd = &cobra.Command{
 			return outputJSON(result)
 		}
 
-		PrintInfo(fmt.Sprintf("Workspace: %s", result.WorkspacePath))
-		PrintInfo(fmt.Sprintf("Active Store: %s", result.ActiveStore))
-		PrintInfo(fmt.Sprintf("Applied: %v", result.Applied))
+		PrintSection("Workspace Status")
+
+		PrintLabelValue("Workspace", result.WorkspacePath)
+		PrintLabelValue("Active Store", result.ActiveStore)
+
 		if result.Applied {
-			PrintInfo(fmt.Sprintf("Mode: %s", result.Mode))
-			PrintInfo(fmt.Sprintf("Applied Paths: %d", len(result.Paths)))
+			PrintLabelValueWithColor("Status", "Applied", successColor)
+			PrintLabelValue("Mode", result.Mode)
+			PrintLabelValue("Applied Paths", PrintCount(len(result.Paths), "path", "paths"))
+		} else {
+			PrintLabelValueWithColor("Status", "Not Applied", dimColor)
 		}
-		PrintInfo(fmt.Sprintf("Tracked Paths: %d", len(result.TrackedPaths)))
+
+		PrintLabelValue("Tracked Paths", PrintCount(len(result.TrackedPaths), "path", "paths"))
+
 		if len(result.TrackedPaths) > 0 {
-			PrintInfo("\nTracked in active store:")
-			for _, path := range result.TrackedPaths {
-				PrintInfo(fmt.Sprintf("  %s", path))
-			}
+			PrintSubsection("Tracked in active store:")
+			PrintList(result.TrackedPaths, 1)
 		}
+
 		return nil
 	},
 }

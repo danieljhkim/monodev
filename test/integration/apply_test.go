@@ -33,7 +33,7 @@ func TestApply_FullCycle(t *testing.T) {
 	// Setup repo state with active store
 	repoState := state.NewRepoState("repo-fingerprint-123")
 	repoState.ActiveStore = storeID
-	stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
 
 	// Apply
 	req := &engine.ApplyRequest{
@@ -105,7 +105,7 @@ func TestApply_Idempotency(t *testing.T) {
 
 	repoState := state.NewRepoState("repo-fingerprint-123")
 	repoState.ActiveStore = storeID
-	stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
 
 	req := &engine.ApplyRequest{
 		CWD:  "/repo/workspace",
@@ -163,7 +163,7 @@ func TestApply_StatePersistence(t *testing.T) {
 
 	repoState := state.NewRepoState("repo-fingerprint-123")
 	repoState.ActiveStore = storeID
-	stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
 
 	// Apply
 	req := &engine.ApplyRequest{
@@ -238,7 +238,7 @@ func TestApply_DryRun(t *testing.T) {
 
 	repoState := state.NewRepoState("repo-fingerprint-123")
 	repoState.ActiveStore = storeID
-	stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
 
 	// Dry run apply
 	req := &engine.ApplyRequest{
@@ -296,7 +296,7 @@ func TestApply_CopyMode(t *testing.T) {
 
 	repoState := state.NewRepoState("repo-fingerprint-123")
 	repoState.ActiveStore = storeID
-	stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
 
 	// Apply in copy mode
 	req := &engine.ApplyRequest{
@@ -373,7 +373,7 @@ func TestApply_MultipleStores(t *testing.T) {
 	repoState := state.NewRepoState("repo-fingerprint-123")
 	repoState.Stack = []string{store1}
 	repoState.ActiveStore = store2
-	stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
 
 	// Apply
 	req := &engine.ApplyRequest{

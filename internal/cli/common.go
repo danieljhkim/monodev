@@ -51,7 +51,8 @@ func formatJSON(v interface{}) (string, error) {
 
 // formatError formats an error for display.
 func formatError(err error) string {
-	return fmt.Sprintf("Error: %v", err)
+	initColors()
+	return errorColor.Sprintf("Error: %v", err)
 }
 
 // outputJSON outputs a value as JSON to stdout.
@@ -61,22 +62,5 @@ func outputJSON(v interface{}) error {
 	return enc.Encode(v)
 }
 
-// PrintSuccess prints a success message.
-func PrintSuccess(msg string) {
-	fmt.Println(msg)
-}
-
-// PrintWarning prints a warning message.
-func PrintWarning(msg string) {
-	fmt.Printf("Warning: %s\n", msg)
-}
-
-// PrintError prints an error message to stderr.
-func PrintError(msg string) {
-	fmt.Fprintf(os.Stderr, "%s\n", msg)
-}
-
-// PrintInfo prints an informational message.
-func PrintInfo(msg string) {
-	fmt.Println(msg)
-}
+// Note: PrintSuccess, PrintWarning, PrintError, and PrintInfo are now
+// defined in format.go with enhanced formatting and colors.

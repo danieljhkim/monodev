@@ -53,25 +53,27 @@ In copy mode, all specified paths are saved.`,
 		}
 
 		if saveDryRun {
-			PrintInfo(fmt.Sprintf("Dry run - would save %d paths", len(result.Saved)))
+			PrintSection("Dry Run")
+			PrintInfo(fmt.Sprintf("Would save %s", PrintCount(len(result.Saved), "path", "paths")))
+			if len(result.Saved) > 0 {
+				PrintSubsection("Paths to save:")
+				PrintList(result.Saved, 1)
+			}
 			if len(result.Missing) > 0 {
-				PrintWarning(fmt.Sprintf("Would skip %d missing paths (not found in workspace):", len(result.Missing)))
-				for _, p := range result.Missing {
-					PrintWarning(fmt.Sprintf("  - %s", p))
-				}
+				fmt.Println()
+				PrintWarning(fmt.Sprintf("Would skip %s (not found in workspace):", PrintCount(len(result.Missing), "missing path", "missing paths")))
+				PrintList(result.Missing, 1)
 			}
 			return nil
 		}
 
-		PrintSuccess(fmt.Sprintf("Saved %d paths", len(result.Saved)))
+		PrintSuccess(fmt.Sprintf("Saved %s", PrintCount(len(result.Saved), "path", "paths")))
 		if len(result.Skipped) > 0 {
-			PrintWarning(fmt.Sprintf("Skipped %d paths (already managed or not tracked)", len(result.Skipped)))
+			PrintWarning(fmt.Sprintf("Skipped %s (already managed or not tracked)", PrintCount(len(result.Skipped), "path", "paths")))
 		}
 		if len(result.Missing) > 0 {
-			PrintWarning(fmt.Sprintf("Missing %d paths (not found in workspace):", len(result.Missing)))
-			for _, p := range result.Missing {
-				PrintWarning(fmt.Sprintf("  - %s", p))
-			}
+			PrintWarning(fmt.Sprintf("Missing %s (not found in workspace):", PrintCount(len(result.Missing), "path", "paths")))
+			PrintList(result.Missing, 1)
 		}
 		return nil
 	},

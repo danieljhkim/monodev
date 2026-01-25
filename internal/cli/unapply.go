@@ -44,11 +44,16 @@ var unapplyCmd = &cobra.Command{
 		}
 
 		if unapplyDryRun {
-			PrintInfo(fmt.Sprintf("Dry run - would remove %d paths", len(result.Removed)))
+			PrintSection("Dry Run")
+			PrintInfo(fmt.Sprintf("Would remove %s", PrintCount(len(result.Removed), "path", "paths")))
+			if len(result.Removed) > 0 {
+				PrintSubsection("Paths to remove:")
+				PrintList(result.Removed, 1)
+			}
 			return nil
 		}
 
-		PrintSuccess(fmt.Sprintf("Removed %d paths successfully", len(result.Removed)))
+		PrintSuccess(fmt.Sprintf("Removed %s successfully", PrintCount(len(result.Removed), "path", "paths")))
 		return nil
 	},
 }

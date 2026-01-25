@@ -41,7 +41,7 @@ func TestUnapply_DeepestFirstRemoval(t *testing.T) {
 			Type:  "symlink",
 		},
 	}
-	stateStore.SaveWorkspace(workspaceID, workspaceState)
+	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
 
 	// Create files in filesystem
 	cwd := "/repo/workspace"
@@ -117,7 +117,7 @@ func TestUnapply_StateCleanup(t *testing.T) {
 			Type:  "symlink",
 		},
 	}
-	stateStore.SaveWorkspace(workspaceID, workspaceState)
+	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
 
 	cwd := "/repo/workspace"
 	fs.symlinks[filepath.Join(cwd, "file1.txt")] = "/store1/file1.txt"
@@ -166,7 +166,7 @@ func TestUnapply_PartialRemoval(t *testing.T) {
 			Type:  "symlink",
 		},
 	}
-	stateStore.SaveWorkspace(workspaceID, workspaceState)
+	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
 
 	cwd := "/repo/workspace"
 	fs.symlinks[filepath.Join(cwd, "file1.txt")] = "/store1/file1.txt"
@@ -208,7 +208,7 @@ func TestUnapply_DryRun(t *testing.T) {
 			Type:  "symlink",
 		},
 	}
-	stateStore.SaveWorkspace(workspaceID, workspaceState)
+	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
 
 	cwd := "/repo/workspace"
 	fs.symlinks[filepath.Join(cwd, "test.txt")] = "/store1/test.txt"
@@ -262,7 +262,7 @@ func TestUnapply_DriftDetection(t *testing.T) {
 			Checksum: originalChecksum,
 		},
 	}
-	stateStore.SaveWorkspace(workspaceID, workspaceState)
+	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
 
 	cwd := "/repo/workspace"
 	configPath := filepath.Join(cwd, "config.json")
@@ -309,7 +309,7 @@ func TestUnapply_ForceMode(t *testing.T) {
 			Type:  "symlink",
 		},
 	}
-	stateStore.SaveWorkspace(workspaceID, workspaceState)
+	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
 
 	cwd := "/repo/workspace"
 	filePath := filepath.Join(cwd, "file.txt")
@@ -362,7 +362,7 @@ func TestUnapply_EmptyState(t *testing.T) {
 	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
 	workspaceState.Applied = true
 	workspaceState.Paths = map[string]state.PathOwnership{} // Empty
-	stateStore.SaveWorkspace(workspaceID, workspaceState)
+	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
 
 	req := &engine.UnapplyRequest{
 		CWD: "/repo/workspace",
@@ -405,7 +405,7 @@ func TestUnapply_NestedDirectories(t *testing.T) {
 			Type:  "symlink",
 		},
 	}
-	stateStore.SaveWorkspace(workspaceID, workspaceState)
+	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
 
 	cwd := "/repo/workspace"
 	fs.symlinks[filepath.Join(cwd, "a")] = "/store1/a"

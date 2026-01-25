@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/spf13/cobra"
 )
@@ -30,14 +29,17 @@ var listCmd = &cobra.Command{
 		}
 
 		if len(stores) == 0 {
-			PrintInfo("No stores found")
+			PrintSection("Stores")
+			PrintEmptyState("No stores found")
 			return nil
 		}
 
-		PrintInfo("Available stores:")
+		PrintSection("Available Stores")
+		rows := make([][]string, 0, len(stores))
 		for _, store := range stores {
-			PrintInfo(fmt.Sprintf("  %s (%s)", store.Name, store.Scope))
+			rows = append(rows, []string{store.Name, store.Scope})
 		}
+		PrintTable([]string{"Name", "Scope"}, rows)
 		return nil
 	},
 }

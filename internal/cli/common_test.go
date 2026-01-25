@@ -76,11 +76,11 @@ func TestOutputJSON(t *testing.T) {
 		t.Fatalf("outputJSON() error = %v", err)
 	}
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	_, _ = buf.ReadFrom(r)
 	output := buf.String()
 
 	// Verify it's valid JSON
@@ -104,14 +104,14 @@ func TestPrintFunctions(t *testing.T) {
 	PrintError("Error message")
 	PrintInfo("Info message")
 
-	wOut.Close()
-	wErr.Close()
+	_ = wOut.Close()
+	_ = wErr.Close()
 	os.Stdout = oldStdout
 	os.Stderr = oldStderr
 
 	var bufOut, bufErr bytes.Buffer
-	bufOut.ReadFrom(rOut)
-	bufErr.ReadFrom(rErr)
+	_, _ = bufOut.ReadFrom(rOut)
+	_, _ = bufErr.ReadFrom(rErr)
 
 	if bufOut.String() == "" {
 		t.Error("PrintSuccess/PrintInfo should write to stdout")

@@ -59,17 +59,19 @@ var stackLsCmd = &cobra.Command{
 			return outputJSON(output)
 		}
 
+		PrintSection("Store Stack")
+
 		if len(result.Stack) == 0 {
-			PrintInfo("Stack is empty")
+			PrintSubsection("Stack (in order of precedence):")
+			PrintEmptyState("Stack is empty")
 		} else {
-			PrintInfo("Stack (in order of precedence):")
-			for i, store := range result.Stack {
-				PrintInfo(fmt.Sprintf("  %d. %s", i+1, store))
-			}
+			PrintSubsection("Stack (in order of precedence):")
+			PrintNumberedList(result.Stack, 1)
 		}
 
 		if result.ActiveStore != "" {
-			PrintInfo(fmt.Sprintf("\nActive store: %s (applied last)", result.ActiveStore))
+			fmt.Println()
+			PrintLabelValue("Active Store", fmt.Sprintf("%s (applied last)", result.ActiveStore))
 		}
 
 		return nil
@@ -106,6 +108,7 @@ var stackAddCmd = &cobra.Command{
 		}
 
 		PrintSuccess(fmt.Sprintf("Added store to stack: %s", storeID))
+		PrintInfo(fmt.Sprintf("Store '%s' will be applied before the active store.", storeID))
 		return nil
 	},
 }

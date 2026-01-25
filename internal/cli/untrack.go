@@ -42,8 +42,8 @@ It only removes the paths from track.json metadata.`,
 			return err
 		}
 
-		PrintSuccess(fmt.Sprintf("Untracked %d path(s)", len(args)))
-		PrintInfo("Note: Store overlay content not deleted. Use 'monodev prune' to clean up.")
+		PrintSuccess(fmt.Sprintf("Untracked %s", PrintCount(len(args), "path", "paths")))
+		PrintWarning("Note: Store overlay content not deleted. Use 'monodev prune' to clean up.")
 		return nil
 	},
 }

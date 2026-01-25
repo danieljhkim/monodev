@@ -49,22 +49,43 @@ If [store-id] is provided, it temporarily overrides the active store for this ap
 		result, err := eng.Apply(ctx, req)
 		if err != nil {
 			if result != nil && result.Plan != nil && result.Plan.HasConflicts() {
-				PrintError("Conflicts detected:")
+				PrintSection("Conflicts Detected")
 				for _, conflict := range result.Plan.Conflicts {
-					PrintError(fmt.Sprintf("  %s: %s", conflict.Path, conflict.Reason))
+					PrintError(fmt.Sprintf("%s: %s", conflict.Path, conflict.Reason))
 				}
-				PrintError("\nUse --force to override conflicts.")
+				fmt.Println()
+				PrintWarning("Use --force to override conflicts.")
 			}
 			return err
 		}
 
 		if applyDryRun {
-			PrintInfo(fmt.Sprintf("Dry run - would apply %d operations", len(result.Plan.Operations)))
+			PrintSection("Dry Run")
+			PrintInfo(fmt.Sprintf("Would apply %s", PrintCount(len(result.Plan.Operations), "operation", "operations")))
+			if len(result.Plan.Operations) > 0 {
+				PrintSubsection("Operations:")
+				ops := make([]string, 0, len(result.Plan.Operations))
+				for _, op := range result.Plan.Operations {
+					var opType string
+					switch op.Type {
+					case "create_symlink":
+						opType = "symlink"
+					case "copy":
+						opType = "copy"
+					case "remove":
+						opType = "remove"
+					default:
+						opType = op.Type
+					}
+					ops = append(ops, fmt.Sprintf("%s: %s", opType, op.RelPath))
+				}
+				PrintList(ops, 1)
+			}
 			return nil
 		}
 
-		PrintSuccess(fmt.Sprintf("Applied %d operations successfully", len(result.Applied)))
-		PrintInfo(fmt.Sprintf("Workspace ID: %s", result.WorkspaceID))
+		PrintSuccess(fmt.Sprintf("Applied %s successfully", PrintCount(len(result.Applied), "operation", "operations")))
+		PrintLabelValue("Workspace ID", result.WorkspaceID)
 		return nil
 	},
 }
