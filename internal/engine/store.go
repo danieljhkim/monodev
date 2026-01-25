@@ -46,6 +46,8 @@ type StoreDetails struct {
 }
 
 // UseStore selects a store as the active store for the current repository.
+// If there's existing workspace state for a different store, it will be cleared
+// to avoid inconsistent state where applied=true but for the wrong store.
 func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 	// Discover repository
 	repoRoot, err := e.gitRepo.Discover(req.CWD)
@@ -57,6 +59,13 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 	if err != nil {
 		return fmt.Errorf("failed to compute repo fingerprint: %w", err)
 	}
+
+	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
+	if err != nil {
+		return fmt.Errorf("failed to compute workspace path: %w", err)
+	}
+
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 
 	// Verify store exists
 	exists, err := e.storeRepo.Exists(req.StoreID)
@@ -77,6 +86,21 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 		}
 	}
 
+	// If switching to a different store, mark workspace as not applied
+	// This prevents showing applied=true when the active store has changed
+	// User can still unapply to clean up old store's files
+	if repoState.ActiveStore != "" && repoState.ActiveStore != req.StoreID {
+		// Check if workspace state exists
+		workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+		if err == nil && workspaceState.Applied {
+			// Mark as not applied since we're switching stores
+			workspaceState.Applied = false
+			if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
+				return fmt.Errorf("failed to update workspace state: %w", err)
+			}
+		}
+	}
+
 	// Update active store
 	repoState.ActiveStore = req.StoreID
 
@@ -89,6 +113,7 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 }
 
 // CreateStore creates a new store and sets it as the active store for the current repository.
+// If there's existing workspace state for a different store, it will be cleared.
 func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error {
 	// Discover repository
 	repoRoot, err := e.gitRepo.Discover(req.CWD)
@@ -100,6 +125,13 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	if err != nil {
 		return fmt.Errorf("failed to compute repo fingerprint: %w", err)
 	}
+
+	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
+	if err != nil {
+		return fmt.Errorf("failed to compute workspace path: %w", err)
+	}
+
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 
 	// Create store metadata
 	meta := stores.NewStoreMeta(req.Name, req.Scope, e.clock.Now())
@@ -117,6 +149,19 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 			repoState = state.NewRepoState(repoFingerprint)
 		} else {
 			return fmt.Errorf("failed to load repo state: %w", err)
+		}
+	}
+
+	// If switching from a different store, mark workspace as not applied
+	if repoState.ActiveStore != "" && repoState.ActiveStore != req.StoreID {
+		// Check if workspace state exists
+		workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+		if err == nil && workspaceState.Applied {
+			// Mark as not applied since we're creating/switching to new store
+			workspaceState.Applied = false
+			if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
+				return fmt.Errorf("failed to update workspace state: %w", err)
+			}
 		}
 	}
 

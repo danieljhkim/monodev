@@ -39,9 +39,12 @@ func BuildApplyPlan(
 
 		// For each tracked path in this store
 		for _, trackedPath := range track.Tracked {
-			// Compute source and destination paths
-			sourcePath := filepath.Join(overlayRoot, trackedPath.Path)
-			destPath := filepath.Join(workspaceRoot, trackedPath.Path)
+			// trackedPath.Path is already relative to workspace root
+			relPath := trackedPath.Path
+
+			// Compute absolute source and destination paths for FS operations
+			sourcePath := filepath.Join(overlayRoot, relPath)
+			destPath := filepath.Join(workspaceRoot, relPath)
 
 			// Check if source path exists in store
 			sourceExists, err := fs.Exists(sourcePath)
@@ -63,20 +66,22 @@ func BuildApplyPlan(
 				pathType = "directory"
 			}
 
-			// Check for conflicts
-			conflict := checker.CheckPath(destPath, pathType, mode, storeID)
+			// Check for conflicts (checker now works with relative paths)
+			conflict := checker.CheckPath(relPath, destPath, pathType, mode, storeID)
 			if conflict != nil {
 				plan.AddConflict(*conflict)
 				continue
 			}
 
 			// Check if this path was already claimed by an earlier store
-			if previousStore, exists := pathOwners[destPath]; exists {
+			// Use relPath as the key for tracking ownership
+			if previousStore, exists := pathOwners[relPath]; exists {
 				// Later store takes precedence - add remove operation first
 				removeOp := Operation{
 					Type:       OpRemove,
 					SourcePath: "",
 					DestPath:   destPath,
+					RelPath:    relPath,
 					Store:      previousStore,
 				}
 				plan.AddOperation(removeOp)
@@ -89,6 +94,7 @@ func BuildApplyPlan(
 					Type:       OpCreateSymlink,
 					SourcePath: sourcePath,
 					DestPath:   destPath,
+					RelPath:    relPath,
 					Store:      storeID,
 				}
 			} else {
@@ -96,13 +102,14 @@ func BuildApplyPlan(
 					Type:       OpCopy,
 					SourcePath: sourcePath,
 					DestPath:   destPath,
+					RelPath:    relPath,
 					Store:      storeID,
 				}
 			}
 			plan.AddOperation(op)
 
-			// Mark this path as claimed by this store
-			pathOwners[destPath] = storeID
+			// Mark this path as claimed by this store (use relative path)
+			pathOwners[relPath] = storeID
 		}
 	}
 

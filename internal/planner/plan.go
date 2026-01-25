@@ -17,11 +17,14 @@ type Operation struct {
 	// Type is the operation type: "create_symlink", "copy", "remove"
 	Type string
 
-	// SourcePath is the source path in the store overlay
+	// SourcePath is the source path in the store overlay (absolute)
 	SourcePath string
 
-	// DestPath is the destination path in the workspace
+	// DestPath is the destination path in the workspace (absolute, for FS operations)
 	DestPath string
+
+	// RelPath is the relative path from workspace root (for state tracking)
+	RelPath string
 
 	// Store is the ID of the store contributing this operation
 	Store string

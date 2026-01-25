@@ -24,13 +24,15 @@ func NewConflictChecker(fs fsops.FS, workspace *state.WorkspaceState, force bool
 }
 
 // CheckPath checks for conflicts at the given destination path.
+// relPath is the relative path from workspace root (for state lookups)
+// destPath is the absolute path on filesystem (for existence checks)
 // Returns a Conflict if one is detected, or nil if the path is safe to use.
-func (c *ConflictChecker) CheckPath(destPath, incomingType, incomingMode, incomingStore string) *Conflict {
-	// Check if path exists on filesystem
+func (c *ConflictChecker) CheckPath(relPath, destPath, incomingType, incomingMode, incomingStore string) *Conflict {
+	// Check if path exists on filesystem (use absolute path)
 	exists, err := c.fs.Exists(destPath)
 	if err != nil {
 		return &Conflict{
-			Path:     destPath,
+			Path:     relPath,
 			Reason:   fmt.Sprintf("Failed to check path: %v", err),
 			Existing: "unknown",
 			Incoming: incomingType,
@@ -42,14 +44,14 @@ func (c *ConflictChecker) CheckPath(destPath, incomingType, incomingMode, incomi
 		return nil
 	}
 
-	// Path exists - check if it's managed by monodev
-	ownership, isManaged := c.workspace.Paths[destPath]
+	// Path exists - check if it's managed by monodev (use relative path for lookup)
+	ownership, isManaged := c.workspace.Paths[relPath]
 
 	if !isManaged {
 		// Unmanaged path exists - this is a conflict unless force is enabled
 		if !c.force {
 			return &Conflict{
-				Path:     destPath,
+				Path:     relPath,
 				Reason:   "Unmanaged file/directory exists at destination",
 				Existing: "unmanaged",
 				Incoming: incomingType,
@@ -65,7 +67,7 @@ func (c *ConflictChecker) CheckPath(destPath, incomingType, incomingMode, incomi
 	if ownership.Type != incomingMode {
 		if !c.force {
 			return &Conflict{
-				Path:     destPath,
+				Path:     relPath,
 				Reason:   fmt.Sprintf("Mode mismatch: existing is %s, incoming is %s", ownership.Type, incomingMode),
 				Existing: ownership.Type,
 				Incoming: incomingMode,
@@ -75,11 +77,11 @@ func (c *ConflictChecker) CheckPath(destPath, incomingType, incomingMode, incomi
 		return nil
 	}
 
-	// Check type conflict (file vs directory)
+	// Check type conflict (file vs directory) - use absolute path for filesystem check
 	existingInfo, err := c.fs.Lstat(destPath)
 	if err != nil {
 		return &Conflict{
-			Path:     destPath,
+			Path:     relPath,
 			Reason:   fmt.Sprintf("Failed to stat existing path: %v", err),
 			Existing: "unknown",
 			Incoming: incomingType,
@@ -96,7 +98,7 @@ func (c *ConflictChecker) CheckPath(destPath, incomingType, incomingMode, incomi
 				existingType = "directory"
 			}
 			return &Conflict{
-				Path:     destPath,
+				Path:     relPath,
 				Reason:   fmt.Sprintf("Type mismatch: existing is %s, incoming is %s", existingType, incomingType),
 				Existing: existingType,
 				Incoming: incomingType,
@@ -106,14 +108,14 @@ func (c *ConflictChecker) CheckPath(destPath, incomingType, incomingMode, incomi
 		return nil
 	}
 
-	// Validate symlink if in symlink mode
+	// Validate symlink if in symlink mode - use absolute path for filesystem check
 	if ownership.Type == "symlink" {
 		target, err := c.fs.Readlink(destPath)
 		if err != nil {
 			// Path exists but isn't a symlink or can't be read
 			if !c.force {
 				return &Conflict{
-					Path:     destPath,
+					Path:     relPath,
 					Reason:   "Expected symlink but found non-symlink",
 					Existing: "non-symlink",
 					Incoming: "symlink",
@@ -132,16 +134,17 @@ func (c *ConflictChecker) CheckPath(destPath, incomingType, incomingMode, incomi
 	return nil
 }
 
-// IsPathManaged returns true if the path is managed by monodev.
-func (c *ConflictChecker) IsPathManaged(destPath string) bool {
-	_, isManaged := c.workspace.Paths[destPath]
+// IsPathManaged returns true if the relative path is managed by monodev.
+func (c *ConflictChecker) IsPathManaged(relPath string) bool {
+	_, isManaged := c.workspace.Paths[relPath]
 	return isManaged
 }
 
 // GetOwnership returns the ownership info for a managed path.
 // Returns nil if the path is not managed.
-func (c *ConflictChecker) GetOwnership(destPath string) *state.PathOwnership {
-	if ownership, ok := c.workspace.Paths[destPath]; ok {
+// relPath should be relative from workspace root.
+func (c *ConflictChecker) GetOwnership(relPath string) *state.PathOwnership {
+	if ownership, ok := c.workspace.Paths[relPath]; ok {
 		return &ownership
 	}
 	return nil

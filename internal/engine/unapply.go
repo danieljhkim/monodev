@@ -4,18 +4,25 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
-// Unapply removes previously applied overlays from the workspace.
+// Unapply removes managed paths from the currently active store.
+//
+// Only removes paths that belong to the active store, not all managed paths.
+// This allows multiple stores to coexist in a workspace - unapply only affects
+// the currently active store's contributions.
 //
 // Algorithm:
-// 1. Discover repo and compute workspace ID
+// 1. Discover repo and load repo state to get active store
 // 2. Load workspace state (must exist)
-// 3. Remove all managed paths in deepest-first order
-// 4. Delete workspace state file
+// 3. Filter paths to only those from active store
+// 4. Remove filtered paths in deepest-first order
+// 5. Update workspace state (remove only the paths we deleted)
+// 6. If no paths remain, delete workspace state; otherwise save it
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
 	// Step 1: Discover repository
 	repoRoot, err := e.gitRepo.Discover(req.CWD)
@@ -36,16 +43,36 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	// Step 2: Compute workspace ID
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 
-	// Step 3: Load workspace state
+	// Step 3: Load repo state to get active store
+	repoState, err := e.stateStore.LoadRepoState(repoFingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load repo state: %w", err)
+	}
+
+	if repoState.ActiveStore == "" {
+		return nil, ErrNoActiveStore
+	}
+
+	// Step 4: Load workspace state
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: workspace has no applied overlays", ErrStateMissing)
+			return nil, fmt.Errorf("%w: workspace has no managed paths", ErrStateMissing)
 		}
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
 
-	if !workspaceState.Applied {
+	// Step 5: Filter paths to only those from the active store
+	// Workspace state now uses relative paths as keys
+	activeStorePaths := make([]string, 0)
+	for relPath, ownership := range workspaceState.Paths {
+		if ownership.Store == repoState.ActiveStore {
+			activeStorePaths = append(activeStorePaths, relPath)
+		}
+	}
+
+	// Check if there are any paths to remove from active store
+	if len(activeStorePaths) == 0 {
 		return &UnapplyResult{
 			Removed:     []string{},
 			WorkspaceID: workspaceID,
@@ -54,55 +81,62 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 
 	// If dry run, just return the list of paths that would be removed
 	if req.DryRun {
-		paths := make([]string, 0, len(workspaceState.Paths))
-		for path := range workspaceState.Paths {
-			paths = append(paths, path)
-		}
 		return &UnapplyResult{
-			Removed:     paths,
+			Removed:     activeStorePaths,
 			WorkspaceID: workspaceID,
 		}, nil
 	}
 
-	// Step 4: Remove all managed paths in deepest-first order
-	paths := make([]string, 0, len(workspaceState.Paths))
-	for path := range workspaceState.Paths {
-		paths = append(paths, path)
-	}
+	// Step 6: Remove active store's paths in deepest-first order
+	relPaths := activeStorePaths
 
 	// Sort paths by depth (deepest first)
-	sort.Slice(paths, func(i, j int) bool {
+	sort.Slice(relPaths, func(i, j int) bool {
 		// Count path separators to determine depth
-		depthI := countPathSeparators(paths[i])
-		depthJ := countPathSeparators(paths[j])
+		depthI := countPathSeparators(relPaths[i])
+		depthJ := countPathSeparators(relPaths[j])
 		if depthI != depthJ {
 			return depthI > depthJ // Deeper paths first
 		}
-		return paths[i] > paths[j] // Alphabetically for same depth
+		return relPaths[i] > relPaths[j] // Alphabetically for same depth
 	})
 
 	removed := []string{}
-	for _, path := range paths {
-		ownership := workspaceState.Paths[path]
+	for _, relPath := range relPaths {
+		ownership := workspaceState.Paths[relPath]
+
+		// Convert relative path to absolute for filesystem operations
+		absPath := filepath.Join(req.CWD, relPath)
 
 		// Validate the path before removing (unless force)
 		if !req.Force {
-			if err := e.validateManagedPath(path, ownership); err != nil {
-				return nil, fmt.Errorf("validation failed for %s: %w", path, err)
+			if err := e.validateManagedPath(absPath, ownership); err != nil {
+				return nil, fmt.Errorf("validation failed for %s: %w", relPath, err)
 			}
 		}
 
-		// Remove the path
-		if err := e.fs.RemoveAll(path); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("failed to remove %s: %w", path, err)
+		// Remove the path (use absolute path)
+		if err := e.fs.RemoveAll(absPath); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("failed to remove %s: %w", relPath, err)
 		}
 
-		removed = append(removed, path)
+		// Remove from workspace state
+		delete(workspaceState.Paths, relPath)
+		removed = append(removed, relPath)
 	}
 
-	// Step 5: Delete workspace state file
-	if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
-		return nil, fmt.Errorf("failed to delete workspace state: %w", err)
+	// Step 7: Update or delete workspace state
+	if len(workspaceState.Paths) == 0 {
+		// No more managed paths - delete workspace state
+		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
+			return nil, fmt.Errorf("failed to delete workspace state: %w", err)
+		}
+	} else {
+		// Other stores still have paths - update workspace state
+		workspaceState.Applied = false // Mark as not applied since we removed some paths
+		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
+			return nil, fmt.Errorf("failed to save workspace state: %w", err)
+		}
 	}
 
 	return &UnapplyResult{

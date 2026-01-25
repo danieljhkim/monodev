@@ -134,18 +134,22 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 				Timestamp: e.clock.Now(),
 			}
 
-			// Compute checksum for copy mode
+			// Compute checksum for copy mode (files only, not directories)
 			if req.Mode == "copy" {
-				checksum, err := e.hasher.HashFile(op.DestPath)
-				if err == nil {
-					ownership.Checksum = checksum
+				info, err := e.fs.Lstat(op.DestPath)
+				if err == nil && !info.IsDir() {
+					checksum, err := e.hasher.HashFile(op.DestPath)
+					if err == nil {
+						ownership.Checksum = checksum
+					}
 				}
 			}
 
-			workspaceState.Paths[op.DestPath] = ownership
+			// Use relative path as key for workspace state
+			workspaceState.Paths[op.RelPath] = ownership
 		} else {
-			// Remove operation - delete from workspace state
-			delete(workspaceState.Paths, op.DestPath)
+			// Remove operation - delete from workspace state (use relative path)
+			delete(workspaceState.Paths, op.RelPath)
 		}
 	}
 

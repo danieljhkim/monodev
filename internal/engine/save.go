@@ -59,8 +59,16 @@ type SaveResult struct {
 	Skipped []string
 }
 
-// Save copies workspace files to the active store.
-// Records saved paths in workspace state so unapply can remove them.
+// Save copies workspace files to the active store and records them in workspace state.
+//
+// Behavior:
+// - Copies files from workspace → store overlay
+// - Updates workspace state to mark paths as managed (adds to workspace.Paths)
+// - Does NOT set applied=true (that's only done by Apply)
+// - Does NOT create overlays (symlinks/copies) - that's Apply's job
+//
+// This allows tracking which files are managed by monodev even before overlays are created.
+// The workspace state is the "intent" layer, while Apply creates the actual overlays.
 func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error) {
 	// Discover repository
 	repoRoot, err := e.gitRepo.Discover(req.CWD)
@@ -100,10 +108,13 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 	overlayRoot := e.storeRepo.OverlayRoot(repoState.ActiveStore)
 
 	// Load or create workspace state
+	// Note: save updates workspace state to track managed files, but does NOT set applied=true
+	// Only the apply command sets applied=true when overlays are created
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
-			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "copy")
+			// Create new workspace state (applied=false by default)
+			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "symlink")
 			workspaceState.ActiveStore = repoState.ActiveStore
 			workspaceState.Stack = repoState.Stack
 		} else {
@@ -157,8 +168,8 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 				return nil, fmt.Errorf("failed to copy %s to store: %w", relPath, err)
 			}
 
-			// Compute checksum for drift detection (files only)
-			// Directories are left with empty checksum
+			// Record this path as managed in workspace state (but don't set applied=true)
+			// This marks the file as "tracked" by monodev even before overlays are created
 			checksum := ""
 			if trackedPath.Kind == "file" {
 				hash, err := e.hasher.HashFile(workspaceFilePath)
@@ -167,11 +178,9 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 				}
 			}
 
-			// Record this path as managed in workspace state
-			// Key by relative path, not absolute path
 			workspaceState.Paths[relPath] = state.PathOwnership{
 				Store:     repoState.ActiveStore,
-				Type:      "copy",
+				Type:      "copy", // Record as copy since it's the original file
 				Timestamp: now,
 				Checksum:  checksum,
 			}
@@ -212,8 +221,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 				return nil, fmt.Errorf("failed to copy %s to store: %w", relPath, err)
 			}
 
-			// Compute checksum for drift detection (files only)
-			// Directories are left with empty checksum
+			// Record this path as managed in workspace state (but don't set applied=true)
 			checksum := ""
 			info, err := e.fs.Lstat(workspaceFilePath)
 			if err == nil && !info.IsDir() {
@@ -223,11 +231,9 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 				}
 			}
 
-			// Record this path as managed in workspace state
-			// Key by relative path, not absolute path
 			workspaceState.Paths[relPath] = state.PathOwnership{
 				Store:     repoState.ActiveStore,
-				Type:      "copy",
+				Type:      "copy", // Record as copy since it's the original file
 				Timestamp: now,
 				Checksum:  checksum,
 			}
@@ -249,7 +255,8 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 		}
 
 		// Save workspace state to record managed paths
-		workspaceState.Applied = true
+		// NOTE: We do NOT set applied=true here - that's only done by the apply command
+		// This allows tracking which files are managed even before overlays are created
 		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 			return nil, fmt.Errorf("failed to save workspace state: %w", err)
 		}
