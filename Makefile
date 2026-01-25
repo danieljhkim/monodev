@@ -48,6 +48,13 @@ test: ## Run unit tests (fast, no system dependencies)
 test-quick: ## Run tests without verbose output (faster)
 	@go test ./internal/...
 
+test-coverage: ## Run unit tests with coverage report
+	@echo "Running unit tests with coverage..."
+	go test -v -coverprofile=coverage.out ./internal/...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "✓ Coverage report generated: coverage.html"
+	@go tool cover -func=coverage.out | grep total | awk '{print "✓ Total coverage: " $$3}'
+
 ##@ Development
 
 format: ## Format Go code

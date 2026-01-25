@@ -1,0 +1,109 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # create GitHub Releases + upload assets
+
+jobs:
+  build-release:
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      asset: ${{ steps.meta.outputs.asset }}
+      sha256: ${{ steps.sha.outputs.sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.4"
+
+      - name: Compute version
+        id: meta
+        shell: bash
+        run: |
+          # tag is like refs/tags/v0.2.1
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "asset=monodev_${VERSION}_darwin_arm64.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary (darwin/arm64)
+        shell: bash
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          GOOS=darwin GOARCH=arm64 go build \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o monodev ./cmd/monodev
+
+          ./monodev version
+
+      - name: Package tarball
+        shell: bash
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          ASSET="monodev_${VERSION}_darwin_arm64.tar.gz"
+          tar -czf "$ASSET" monodev
+          ls -lh "$ASSET"
+
+      - name: Compute sha256
+        id: sha
+        shell: bash
+        run: |
+          ASSET="${{ steps.meta.outputs.asset }}"
+          SHA="$(shasum -a 256 "$ASSET" | awk '{print $1}')"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "SHA256=$SHA"
+
+      - name: Create GitHub Release + upload asset
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.meta.outputs.version }}
+          files: ${{ steps.meta.outputs.asset }}
+          generate_release_notes: true
+
+  bump-homebrew-tap:
+    needs: build-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
+        with:
+          repository: danieljhkim/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Update formula
+        shell: bash
+        run: |
+          VERSION="${{ needs.build-release.outputs.version }}"
+          SHA="${{ needs.build-release.outputs.sha256 }}"
+          URL="https://github.com/danieljhkim/monodev/releases/download/v${VERSION}/monodev_${VERSION}_darwin_arm64.tar.gz"
+
+          FORMULA="tap/Formula/monodev.rb"
+
+          # Update url/sha256/version lines (assumes they exist)
+          perl -0777 -i -pe "s|^\s*url\s+\".*?\"|  url \"${URL}\"|m" "$FORMULA"
+          perl -0777 -i -pe "s|^\s*sha256\s+\".*?\"|  sha256 \"${SHA}\"|m" "$FORMULA"
+          perl -0777 -i -pe "s|^\s*version\s+\".*?\"|  version \"${VERSION}\"|m" "$FORMULA"
+
+          echo "Updated formula:"
+          sed -n '1,120p' "$FORMULA"
+
+      - name: Commit and push tap update
+        shell: bash
+        run: |
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add Formula/monodev.rb
+          git commit -m "monodev v${{ needs.build-release.outputs.version }}"
+          git push

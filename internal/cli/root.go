@@ -12,6 +12,7 @@ var (
 // rootCmd is the root command for monodev.
 var rootCmd = &cobra.Command{
 	Use:   "monodev",
+	Version: "dev",
 	Short: "Component-scoped development overlay manager",
 	Long: `monodev manages component-specific development overlays for large monorepos.
 
@@ -19,6 +20,14 @@ It lets you persist, re-apply, and manage dev-only files (Makefiles, IDE config,
 without polluting git history.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+}
+
+func SetVersion(v string) {
+	if v == "" {
+		return
+	}
+	rootCmd.Version = v
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
 }
 
 func init() {
