@@ -69,6 +69,7 @@ type StatusRequest struct {
 
 // StatusResult represents the current workspace status.
 type StatusResult struct {
+
 	// WorkspaceID is the workspace ID
 	WorkspaceID string
 
@@ -95,6 +96,21 @@ type StatusResult struct {
 
 	// TrackedPaths is the list of paths tracked in the active store
 	TrackedPaths []string
+
+	// AppliedStores is the list of stores that have been applied
+	AppliedStores []string
+
+	// All paths in the workspace
+	AllPaths []string
+
+	// AppliedStoreDetails contains per-store applied path counts
+	AppliedStoreDetails []AppliedStoreInfo
+
+	// TrackedPathDetails contains detailed info for tracked paths in active store
+	TrackedPathDetails []TrackedPathInfo
+
+	// ActiveStoreStatus is the application status of the active store
+	ActiveStoreStatus string // "Applied", "Not Applied", or "Partial"
 }
 
 // PathInfo contains information about an applied path.
@@ -104,6 +120,30 @@ type PathInfo struct {
 
 	// Type is the path type ("symlink" or "copy")
 	Type string
+}
+
+// AppliedStoreInfo contains information about an applied store.
+type AppliedStoreInfo struct {
+	// StoreID is the store identifier
+	StoreID string
+
+	// Mode is the overlay mode for this store
+	Mode string
+
+	// AppliedCount is the number of paths applied from this store
+	AppliedCount int
+}
+
+// TrackedPathInfo contains detailed information about a tracked path.
+type TrackedPathInfo struct {
+	// Path is the relative path
+	Path string
+
+	// IsApplied indicates if the path exists in workspace.Paths
+	IsApplied bool
+
+	// IsSaved indicates if the path exists in the store overlay
+	IsSaved bool
 }
 
 // StackApplyRequest represents a request to apply the configured stack.

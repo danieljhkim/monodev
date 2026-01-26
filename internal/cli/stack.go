@@ -68,11 +68,6 @@ var stackLsCmd = &cobra.Command{
 			PrintNumberedList(result.Stack, 1)
 		}
 
-		if result.ActiveStore != "" {
-			fmt.Println()
-			PrintLabelValue("Active Store", fmt.Sprintf("%s (applied last)", result.ActiveStore))
-		}
-
 		return nil
 	},
 }
@@ -187,7 +182,7 @@ var stackClearCmd = &cobra.Command{
 // stackApplyCmd applies all stores in the stack.
 var stackApplyCmd = &cobra.Command{
 	Use:   "apply",
-	Short: "Apply the stack (multiple stores) in dependency order",
+	Short: "Apply the stack (multiple stores) in dependency order ",
 	Long: `Apply all stores in the stack to the current workspace.
 Stores are applied in order, with later stores taking precedence on path conflicts.
 The active store is not affected - use 'monodev apply' separately for that.`,
@@ -204,13 +199,12 @@ The active store is not affected - use 'monodev apply' separately for that.`,
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
 
-		mode, _ := cmd.Flags().GetString("mode")
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 		req := &engine.StackApplyRequest{
 			CWD:    cwd,
-			Mode:   mode,
+			Mode:   "symlink", // Only symlink mode supported for now
 			Force:  force,
 			DryRun: dryRun,
 		}
@@ -313,7 +307,7 @@ func init() {
 	stackCmd.AddCommand(stackUnapplyCmd)
 
 	// Flags for stack apply
-	stackApplyCmd.Flags().StringP("mode", "m", "symlink", "Overlay mode: symlink or copy")
+	// Note: Only symlink mode is supported for stack operations for now
 	stackApplyCmd.Flags().BoolP("force", "f", false, "Force apply, overwriting conflicts")
 	stackApplyCmd.Flags().Bool("dry-run", false, "Show what would be applied without making changes")
 

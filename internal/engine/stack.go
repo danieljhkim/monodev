@@ -216,6 +216,7 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 	// Build apply plan using only stack stores (no active store)
 	orderedStores := append([]string{}, workspaceState.Stack...)
 
+	// Always detect conflicts (force=false for detection)
 	plan, err := planner.BuildApplyPlan(
 		workspaceState,
 		orderedStores,
@@ -223,7 +224,7 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 		req.CWD,
 		e.storeRepo,
 		e.fs,
-		req.Force,
+		false, // Always detect conflicts in planning phase
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build apply plan: %w", err)
@@ -375,9 +376,6 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		delete(workspaceState.Paths, relPath)
 		removed = append(removed, relPath)
 	}
-
-	// Clear stack
-	workspaceState.Stack = []string{}
 
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return nil, fmt.Errorf("failed to save workspace state: %w", err)

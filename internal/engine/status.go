@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/state"
 )
@@ -50,6 +51,9 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 				Type:  ownership.Type,
 			}
 		}
+
+		// Compute AppliedStoreDetails
+		result.AppliedStoreDetails = e.computeAppliedStoreDetails(workspaceState)
 	}
 
 	// Load tracked paths from active store
@@ -57,9 +61,134 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 		track, err := e.storeRepo.LoadTrack(result.ActiveStore)
 		if err == nil {
 			result.TrackedPaths = track.Paths()
+
+			// Compute TrackedPathDetails
+			result.TrackedPathDetails = e.computeTrackedPathDetails(result.ActiveStore, track.Paths(), workspaceState)
+
+			// Compute ActiveStoreStatus
+			result.ActiveStoreStatus = e.computeActiveStoreStatus(track.Paths(), result.TrackedPathDetails)
+		} else {
+			// Store might not exist or have no track file
+			result.ActiveStoreStatus = "Not Applied"
 		}
-		// Ignore errors - store might not exist or have no track file
+	} else {
+		result.ActiveStoreStatus = "Not Applied"
 	}
 
 	return result, nil
+}
+
+// computeAppliedStoreDetails computes per-store applied path counts.
+func (e *Engine) computeAppliedStoreDetails(workspaceState *state.WorkspaceState) []AppliedStoreInfo {
+	// Build a set of all unique stores (stack + active store)
+	storeSet := make(map[string]bool)
+	for _, storeID := range workspaceState.Stack {
+		storeSet[storeID] = true
+	}
+	if workspaceState.ActiveStore != "" {
+		storeSet[workspaceState.ActiveStore] = true
+	}
+
+	// Count paths per store
+	storeCounts := make(map[string]int)
+	storeModes := make(map[string]string)
+
+	for _, ownership := range workspaceState.Paths {
+		storeCounts[ownership.Store]++
+		// Capture the mode (should be consistent per store)
+		if _, exists := storeModes[ownership.Store]; !exists {
+			storeModes[ownership.Store] = ownership.Type
+		}
+	}
+
+	// Build result in stack order, then active store
+	var details []AppliedStoreInfo
+
+	// Add stack stores first
+	for _, storeID := range workspaceState.Stack {
+		if count, hasCount := storeCounts[storeID]; hasCount && count > 0 {
+			details = append(details, AppliedStoreInfo{
+				StoreID:      storeID,
+				Mode:         storeModes[storeID],
+				AppliedCount: count,
+			})
+		}
+	}
+
+	// Add active store if not already in stack
+	if workspaceState.ActiveStore != "" {
+		alreadyInStack := false
+		for _, storeID := range workspaceState.Stack {
+			if storeID == workspaceState.ActiveStore {
+				alreadyInStack = true
+				break
+			}
+		}
+		if !alreadyInStack {
+			if count, hasCount := storeCounts[workspaceState.ActiveStore]; hasCount && count > 0 {
+				details = append(details, AppliedStoreInfo{
+					StoreID:      workspaceState.ActiveStore,
+					Mode:         storeModes[workspaceState.ActiveStore],
+					AppliedCount: count,
+				})
+			}
+		}
+	}
+
+	return details
+}
+
+// computeTrackedPathDetails computes detailed info for tracked paths.
+func (e *Engine) computeTrackedPathDetails(activeStoreID string, trackedPaths []string, workspaceState *state.WorkspaceState) []TrackedPathInfo {
+	var details []TrackedPathInfo
+
+	overlayRoot := e.storeRepo.OverlayRoot(activeStoreID)
+
+	for _, trackedPath := range trackedPaths {
+		pathInfo := TrackedPathInfo{
+			Path:      trackedPath,
+			IsApplied: false,
+			IsSaved:   false,
+		}
+
+		// Check if applied (exists in workspace.Paths)
+		if workspaceState != nil {
+			if _, exists := workspaceState.Paths[trackedPath]; exists {
+				pathInfo.IsApplied = true
+			}
+		}
+
+		// Check if saved (exists in store overlay)
+		pathInOverlay := filepath.Join(overlayRoot, trackedPath)
+		exists, err := e.fs.Exists(pathInOverlay)
+		if err == nil && exists {
+			pathInfo.IsSaved = true
+		}
+
+		details = append(details, pathInfo)
+	}
+
+	return details
+}
+
+// computeActiveStoreStatus determines the application status of the active store.
+func (e *Engine) computeActiveStoreStatus(trackedPaths []string, details []TrackedPathInfo) string {
+	if len(trackedPaths) == 0 {
+		return "Not Applied"
+	}
+
+	appliedCount := 0
+	for _, detail := range details {
+		if detail.IsApplied {
+			appliedCount++
+		}
+	}
+
+	if appliedCount == len(trackedPaths) {
+		return "Applied"
+	} else if appliedCount == 0 {
+		return "Not Applied"
+	}
+
+	return "Partial"
 }

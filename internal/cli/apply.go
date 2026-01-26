@@ -11,15 +11,15 @@ import (
 )
 
 var (
-	applyMode   string
+	applyMode   string = "symlink"
 	applyForce  bool
 	applyDryRun bool
 )
 
 var applyCmd = &cobra.Command{
 	Use:   "apply [store-id]",
-	Short: "Apply a single store's overlays to the current workspace",
-	Long: `Apply the active store (or specified store) to the current working directory.
+	Short: "Apply a single store's overlays to the current workspace (symlink mode only)",
+	Long: `Apply the active store (or specified store) to the current working directory (symlink mode only).
 
 If [store-id] is provided, it overrides the active store for this apply.
 This command applies only a single store - use 'stack apply' to apply the stack.`,
@@ -92,7 +92,7 @@ This command applies only a single store - use 'stack apply' to apply the stack.
 }
 
 func init() {
-	applyCmd.Flags().StringVarP(&applyMode, "mode", "m", "symlink", "Overlay mode (symlink or copy)")
+	// applyCmd.Flags().StringVarP(&applyMode, "mode", "m", "symlink", "Overlay mode (symlink or copy)")
 	applyCmd.Flags().BoolVarP(&applyForce, "force", "f", false, "Force apply, overriding conflicts")
 	applyCmd.Flags().BoolVar(&applyDryRun, "dry-run", false, "Show what would be applied without applying")
 }

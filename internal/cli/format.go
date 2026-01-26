@@ -16,7 +16,7 @@ var (
 	infoColor    = color.New(color.FgCyan)
 	headerColor  = color.New(color.FgBlue, color.Bold)
 	labelColor   = color.New(color.FgWhite, color.Bold)
-	valueColor   = color.New(color.FgWhite)
+	valueColor   = color.New(color.FgHiBlack)
 	dimColor     = color.New(color.FgHiBlack)
 )
 
@@ -168,7 +168,7 @@ func PrintBadge(text string, clr *color.Color) {
 // PrintSeparator prints a visual separator line
 func PrintSeparator() {
 	initColors()
-	_, _ = dimColor.Println("  ──────────────────────────────────────────────────────────")
+	_, _ = labelColor.Println("\n  ──────────────────────────────────────────────────────────")
 }
 
 // PrintCount prints a count with proper formatting

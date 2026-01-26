@@ -42,7 +42,7 @@ var describeCmd = &cobra.Command{
 		PrintLabelValue("Updated", details.Meta.UpdatedAt.Format("2006-01-02 15:04:05"))
 
 		if len(details.TrackedPaths) > 0 {
-			PrintSubsection(fmt.Sprintf("Tracked Paths (%s)", PrintCount(len(details.TrackedPaths), "path", "paths")))
+			PrintSubsection(fmt.Sprintf("\nTracked Paths (%s)", PrintCount(len(details.TrackedPaths), "path", "paths")))
 			PrintList(details.TrackedPaths, 1)
 		} else {
 			PrintSubsection("Tracked Paths")
