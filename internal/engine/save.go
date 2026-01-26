@@ -5,34 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/danieljhkim/monodev/internal/state"
 )
-
-// validateRelPath validates a relative path for safety.
-// Returns an error if the path is invalid or unsafe.
-func validateRelPath(relPath string) error {
-	// Clean the path first
-	cleaned := filepath.Clean(relPath)
-
-	// Reject empty or current directory
-	if cleaned == "" || cleaned == "." {
-		return fmt.Errorf("invalid path: empty or current directory")
-	}
-
-	// Reject absolute paths
-	if filepath.IsAbs(cleaned) {
-		return fmt.Errorf("invalid path: must be relative, got absolute path %q", cleaned)
-	}
-
-	// Reject path traversal attempts
-	if strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, string(filepath.Separator)+"..") {
-		return fmt.Errorf("invalid path: path traversal not allowed in %q", cleaned)
-	}
-
-	return nil
-}
 
 // SaveRequest represents a request to save workspace files to the store.
 type SaveRequest struct {
@@ -91,39 +66,29 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 
-	// Load repo state to get active store
-	repoState, err := e.stateStore.LoadRepoState(repoFingerprint)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load repo state: %w", err)
-	}
-
-	if repoState.ActiveStore == "" {
-		return nil, ErrNoActiveStore
-	}
-
-	// Load track file to see what paths are tracked
-	track, err := e.storeRepo.LoadTrack(repoState.ActiveStore)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load track file: %w", err)
-	}
-
-	// Get the overlay root for the active store
-	overlayRoot := e.storeRepo.OverlayRoot(repoState.ActiveStore)
-
-	// Load or create workspace state
+	// Load workspace state to get active store
 	// Note: save updates workspace state to track managed files, but does NOT set applied=true
 	// Only the apply command sets applied=true when overlays are created
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Create new workspace state (applied=false by default)
-			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "symlink")
-			workspaceState.ActiveStore = repoState.ActiveStore
-			workspaceState.Stack = repoState.Stack
-		} else {
-			return nil, fmt.Errorf("failed to load workspace state: %w", err)
+			return nil, ErrNoActiveStore
 		}
+		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
+
+	if workspaceState.ActiveStore == "" {
+		return nil, ErrNoActiveStore
+	}
+
+	// Load track file to see what paths are tracked
+	track, err := e.storeRepo.LoadTrack(workspaceState.ActiveStore)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load track file: %w", err)
+	}
+
+	// Get the overlay root for the active store
+	overlayRoot := e.storeRepo.OverlayRoot(workspaceState.ActiveStore)
 
 	result := &SaveResult{
 		Saved:   []string{},
@@ -137,7 +102,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 		// Save all tracked paths, respecting the 'required' field
 		for _, trackedPath := range track.Tracked {
 			// Validate path before any file IO
-			if err := validateRelPath(trackedPath.Path); err != nil {
+			if err := e.fs.ValidateRelPath(trackedPath.Path); err != nil {
 				return nil, fmt.Errorf("invalid tracked path %q: %w", trackedPath.Path, err)
 			}
 
@@ -179,7 +144,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 			}
 
 			workspaceState.Paths[relPath] = state.PathOwnership{
-				Store:     repoState.ActiveStore,
+				Store:     workspaceState.ActiveStore,
 				Type:      "copy", // Record as copy since it's the original file
 				Timestamp: now,
 				Checksum:  checksum,
@@ -191,7 +156,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 		// Save specific paths (all treated as required)
 		for _, rawPath := range req.Paths {
 			// Validate path before any file IO
-			if err := validateRelPath(rawPath); err != nil {
+			if err := e.fs.ValidateRelPath(rawPath); err != nil {
 				return nil, fmt.Errorf("invalid path %q: %w", rawPath, err)
 			}
 
@@ -233,7 +198,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 			}
 
 			workspaceState.Paths[relPath] = state.PathOwnership{
-				Store:     repoState.ActiveStore,
+				Store:     workspaceState.ActiveStore,
 				Type:      "copy", // Record as copy since it's the original file
 				Timestamp: now,
 				Checksum:  checksum,
@@ -245,13 +210,13 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 
 	if !req.DryRun {
 		// Update store metadata (UpdatedAt timestamp)
-		meta, err := e.storeRepo.LoadMeta(repoState.ActiveStore)
+		meta, err := e.storeRepo.LoadMeta(workspaceState.ActiveStore)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load store metadata: %w", err)
 		}
 
 		meta.UpdatedAt = e.clock.Now()
-		if err := e.storeRepo.SaveMeta(repoState.ActiveStore, meta); err != nil {
+		if err := e.storeRepo.SaveMeta(workspaceState.ActiveStore, meta); err != nil {
 			return nil, fmt.Errorf("failed to save store metadata: %w", err)
 		}
 

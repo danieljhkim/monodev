@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // FS provides an abstraction for filesystem operations.
@@ -39,6 +40,9 @@ type FS interface {
 
 	// Exists checks if a path exists.
 	Exists(path string) (bool, error)
+
+	// ValidateRelPath validates a relative path for safety.
+	ValidateRelPath(relPath string) error
 }
 
 // RealFS implements FS using actual OS operations.
@@ -228,4 +232,28 @@ func (fs *RealFS) Exists(path string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// validateRelPath validates a relative path for safety.
+// Returns an error if the path is invalid or unsafe.
+func (fs *RealFS) ValidateRelPath(relPath string) error {
+	// Clean the path first
+	cleaned := filepath.Clean(relPath)
+
+	// Reject empty or current directory
+	if cleaned == "" || cleaned == "." {
+		return fmt.Errorf("invalid path: empty or current directory")
+	}
+
+	// Reject absolute paths
+	if filepath.IsAbs(cleaned) {
+		return fmt.Errorf("invalid path: must be relative, got absolute path %q", cleaned)
+	}
+
+	// Reject path traversal attempts
+	if strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, string(filepath.Separator)+"..") {
+		return fmt.Errorf("invalid path: path traversal not allowed in %q", cleaned)
+	}
+
+	return nil
 }

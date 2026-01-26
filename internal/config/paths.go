@@ -17,9 +17,6 @@ type Paths struct {
 	// Workspaces is the directory containing workspace state files
 	Workspaces string
 
-	// Repos is the directory containing repository state files
-	Repos string
-
 	// Config is the path to the global config file
 	Config string
 }
@@ -41,7 +38,6 @@ func DefaultPaths() (*Paths, error) {
 		Root:       root,
 		Stores:     filepath.Join(root, "stores"),
 		Workspaces: filepath.Join(root, "workspaces"),
-		Repos:      filepath.Join(root, "repos"),
 		Config:     filepath.Join(root, "config.yaml"),
 	}, nil
 }
@@ -52,7 +48,6 @@ func (p *Paths) EnsureDirectories() error {
 		p.Root,
 		p.Stores,
 		p.Workspaces,
-		p.Repos,
 	}
 
 	for _, dir := range dirs {

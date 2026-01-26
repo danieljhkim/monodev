@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
 
@@ -40,21 +41,30 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) error {
 		return fmt.Errorf("failed to compute repo fingerprint: %w", err)
 	}
 
-	// Load repo state to get active store
-	repoState, err := e.stateStore.LoadRepoState(repoFingerprint)
+	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
+	if err != nil {
+		return fmt.Errorf("failed to compute workspace path: %w", err)
+	}
+
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+
+	// Load workspace state to get active store
+	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return ErrNoActiveStore
 		}
-		return fmt.Errorf("failed to load repo state: %w", err)
+		return fmt.Errorf("failed to load workspace state: %w", err)
 	}
 
-	if repoState.ActiveStore == "" {
+	if workspaceState.ActiveStore == "" {
 		return ErrNoActiveStore
 	}
 
+	activeStore := workspaceState.ActiveStore
+
 	// Load current track file
-	track, err := e.storeRepo.LoadTrack(repoState.ActiveStore)
+	track, err := e.storeRepo.LoadTrack(activeStore)
 	if err != nil {
 		return fmt.Errorf("failed to load track file: %w", err)
 	}
@@ -88,18 +98,18 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) error {
 	}
 
 	// Save updated track file
-	if err := e.storeRepo.SaveTrack(repoState.ActiveStore, track); err != nil {
+	if err := e.storeRepo.SaveTrack(activeStore, track); err != nil {
 		return fmt.Errorf("failed to save track file: %w", err)
 	}
 
 	// Update store metadata (UpdatedAt timestamp)
-	meta, err := e.storeRepo.LoadMeta(repoState.ActiveStore)
+	meta, err := e.storeRepo.LoadMeta(activeStore)
 	if err != nil {
 		return fmt.Errorf("failed to load store metadata: %w", err)
 	}
 
 	meta.UpdatedAt = e.clock.Now()
-	if err := e.storeRepo.SaveMeta(repoState.ActiveStore, meta); err != nil {
+	if err := e.storeRepo.SaveMeta(activeStore, meta); err != nil {
 		return fmt.Errorf("failed to save store metadata: %w", err)
 	}
 
@@ -119,21 +129,30 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) error {
 		return fmt.Errorf("failed to compute repo fingerprint: %w", err)
 	}
 
-	// Load repo state to get active store
-	repoState, err := e.stateStore.LoadRepoState(repoFingerprint)
+	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
+	if err != nil {
+		return fmt.Errorf("failed to compute workspace path: %w", err)
+	}
+
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+
+	// Load workspace state to get active store
+	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return ErrNoActiveStore
 		}
-		return fmt.Errorf("failed to load repo state: %w", err)
+		return fmt.Errorf("failed to load workspace state: %w", err)
 	}
 
-	if repoState.ActiveStore == "" {
+	if workspaceState.ActiveStore == "" {
 		return ErrNoActiveStore
 	}
 
+	activeStore := workspaceState.ActiveStore
+
 	// Load current track file
-	track, err := e.storeRepo.LoadTrack(repoState.ActiveStore)
+	track, err := e.storeRepo.LoadTrack(activeStore)
 	if err != nil {
 		return fmt.Errorf("failed to load track file: %w", err)
 	}
@@ -154,18 +173,18 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) error {
 	track.Tracked = newTracked
 
 	// Save updated track file
-	if err := e.storeRepo.SaveTrack(repoState.ActiveStore, track); err != nil {
+	if err := e.storeRepo.SaveTrack(activeStore, track); err != nil {
 		return fmt.Errorf("failed to save track file: %w", err)
 	}
 
 	// Update store metadata (UpdatedAt timestamp)
-	meta, err := e.storeRepo.LoadMeta(repoState.ActiveStore)
+	meta, err := e.storeRepo.LoadMeta(activeStore)
 	if err != nil {
 		return fmt.Errorf("failed to load store metadata: %w", err)
 	}
 
 	meta.UpdatedAt = e.clock.Now()
-	if err := e.storeRepo.SaveMeta(repoState.ActiveStore, meta); err != nil {
+	if err := e.storeRepo.SaveMeta(activeStore, meta); err != nil {
 		return fmt.Errorf("failed to save store metadata: %w", err)
 	}
 

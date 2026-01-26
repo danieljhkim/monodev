@@ -10,16 +10,17 @@ import (
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
-// Unapply removes all managed paths from the workspace.
+// Unapply removes paths owned by the active store from the workspace.
 //
-// Removes paths from both the stack stores and the active store - essentially
-// reversing what 'apply' did. All paths tracked in workspace state are removed.
+// Only removes paths that were applied via 'monodev apply' (the active store).
+// Paths applied by the stack (via 'stack apply') are not affected.
+// Use 'stack unapply' to remove stack-applied paths.
 //
 // Algorithm:
 // 1. Discover repo and load workspace state (must exist)
-// 2. Collect all managed paths
+// 2. Collect paths owned by the active store
 // 3. Remove paths in deepest-first order
-// 4. Delete workspace state
+// 4. Update or delete workspace state
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
 	// Step 1: Discover repository
 	repoRoot, err := e.gitRepo.Discover(req.CWD)
@@ -49,44 +50,47 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
 
-	// Step 4: Collect all managed paths
-	allPaths := make([]string, 0, len(workspaceState.Paths))
-	for relPath := range workspaceState.Paths {
-		allPaths = append(allPaths, relPath)
+	// Step 4: Collect only paths owned by the active store (not stack stores)
+	activeStore := workspaceState.ActiveStore
+	activeStorePaths := []string{}
+	for relPath, ownership := range workspaceState.Paths {
+		if ownership.Store == activeStore {
+			activeStorePaths = append(activeStorePaths, relPath)
+		}
 	}
 
-	// Check if there are any paths to remove
-	if len(allPaths) == 0 {
+	// Check if there are any active store paths to remove
+	if len(activeStorePaths) == 0 {
 		return &UnapplyResult{
 			Removed:     []string{},
 			WorkspaceID: workspaceID,
+			message:     "nothing to remove",
 		}, nil
 	}
 
 	// If dry run, just return the list of paths that would be removed
 	if req.DryRun {
 		return &UnapplyResult{
-			Removed:     allPaths,
+			Removed:     activeStorePaths,
 			WorkspaceID: workspaceID,
+			message:     "dry run",
 		}, nil
 	}
 
-	// Step 5: Remove all paths in deepest-first order
-	relPaths := allPaths
-
+	// Step 5: Remove active store paths in deepest-first order
 	// Sort paths by depth (deepest first)
-	sort.Slice(relPaths, func(i, j int) bool {
+	sort.Slice(activeStorePaths, func(i, j int) bool {
 		// Count path separators to determine depth
-		depthI := countPathSeparators(relPaths[i])
-		depthJ := countPathSeparators(relPaths[j])
+		depthI := countPathSeparators(activeStorePaths[i])
+		depthJ := countPathSeparators(activeStorePaths[j])
 		if depthI != depthJ {
 			return depthI > depthJ // Deeper paths first
 		}
-		return relPaths[i] > relPaths[j] // Alphabetically for same depth
+		return activeStorePaths[i] > activeStorePaths[j] // Alphabetically for same depth
 	})
 
 	removed := []string{}
-	for _, relPath := range relPaths {
+	for _, relPath := range activeStorePaths {
 		ownership := workspaceState.Paths[relPath]
 
 		// Convert relative path to absolute for filesystem operations
@@ -109,15 +113,18 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		removed = append(removed, relPath)
 	}
 
-	// Step 6: Delete workspace state (all paths removed)
+	// Step 6: Update workspace state (clear active store, preserve stack)
+	// workspaceState.ActiveStore = ""
+	workspaceState.Applied = false
+	workspaceState.PruneAppliedStores()
+
 	if len(workspaceState.Paths) == 0 {
 		// No more managed paths - delete workspace state
 		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace state: %w", err)
 		}
 	} else {
-		// Other stores still have paths - update workspace state
-		workspaceState.Applied = false // Mark as not applied since we removed some paths
+		// Stack stores still have paths - save workspace state
 		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 			return nil, fmt.Errorf("failed to save workspace state: %w", err)
 		}

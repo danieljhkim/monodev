@@ -73,6 +73,7 @@ func (m *mockFS) Symlink(oldname, newname string) error                        {
 func (m *mockFS) Copy(src, dst string) error                                   { return nil }
 func (m *mockFS) AtomicWrite(path string, data []byte, perm os.FileMode) error { return nil }
 func (m *mockFS) ReadFile(path string) ([]byte, error)                         { return nil, nil }
+func (m *mockFS) ValidateRelPath(relPath string) error                         { return nil }
 
 // mockFileInfo is a simple implementation of os.FileInfo
 type mockFileInfo struct {

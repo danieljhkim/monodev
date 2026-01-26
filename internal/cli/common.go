@@ -33,7 +33,7 @@ func newEngine() (*engine.Engine, error) {
 	gitRepo := gitx.NewRealGitRepo()
 	hasher := hash.NewSHA256Hasher()
 	clk := &clock.RealClock{}
-	stateStore := state.NewFileStateStore(fs, paths.Workspaces, paths.Repos)
+	stateStore := state.NewFileStateStore(fs, paths.Workspaces)
 	storeRepo := stores.NewFileStoreRepo(fs, paths.Stores)
 
 	// Create engine

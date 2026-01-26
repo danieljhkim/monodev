@@ -19,6 +19,7 @@ func TestUnapply_DeepestFirstRemoval(t *testing.T) {
 	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
 	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
 	workspaceState.Applied = true
+	workspaceState.ActiveStore = "store1" // Set active store so unapply knows which paths to remove
 	workspaceState.Paths = map[string]state.PathOwnership{
 		"scripts": {
 			Store: "store1",
@@ -107,6 +108,7 @@ func TestUnapply_StateCleanup(t *testing.T) {
 	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
 	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
 	workspaceState.Applied = true
+	workspaceState.ActiveStore = "store1" // Set active store
 	workspaceState.Paths = map[string]state.PathOwnership{
 		"file1.txt": {
 			Store: "store1",
@@ -153,16 +155,19 @@ func TestUnapply_PartialRemoval(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup workspace state with paths from multiple stores
+	// Active store is "store1", stack has "store2"
 	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
 	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
 	workspaceState.Applied = true
+	workspaceState.ActiveStore = "store1"     // Active store
+	workspaceState.Stack = []string{"store2"} // Stack store
 	workspaceState.Paths = map[string]state.PathOwnership{
 		"file1.txt": {
-			Store: "store1",
+			Store: "store1", // From active store
 			Type:  "symlink",
 		},
 		"file2.txt": {
-			Store: "store2",
+			Store: "store2", // From stack store
 			Type:  "symlink",
 		},
 	}
@@ -172,7 +177,7 @@ func TestUnapply_PartialRemoval(t *testing.T) {
 	fs.symlinks[filepath.Join(cwd, "file1.txt")] = "/store1/file1.txt"
 	fs.symlinks[filepath.Join(cwd, "file2.txt")] = "/store2/file2.txt"
 
-	// Unapply (removes all managed paths)
+	// Unapply (removes only active store paths, not stack paths)
 	req := &engine.UnapplyRequest{
 		CWD: cwd,
 	}
@@ -182,15 +187,23 @@ func TestUnapply_PartialRemoval(t *testing.T) {
 		t.Fatalf("Unapply() error = %v", err)
 	}
 
-	// Verify all paths were removed
-	if len(result.Removed) != 2 {
-		t.Errorf("expected 2 paths removed, got %d", len(result.Removed))
+	// Verify only active store path was removed (file1.txt from store1)
+	if len(result.Removed) != 1 {
+		t.Errorf("expected 1 path removed (active store only), got %d", len(result.Removed))
 	}
 
-	// Verify workspace state was deleted (all paths removed)
-	_, err = stateStore.LoadWorkspace(workspaceID)
-	if err == nil {
-		t.Error("expected workspace state to be deleted after removing all paths")
+	// Verify workspace state still exists (stack path remains)
+	updatedState, err := stateStore.LoadWorkspace(workspaceID)
+	if err != nil {
+		t.Fatalf("expected workspace state to exist (stack path remains): %v", err)
+	}
+
+	// Verify only stack path remains
+	if len(updatedState.Paths) != 1 {
+		t.Errorf("expected 1 path remaining (stack path), got %d", len(updatedState.Paths))
+	}
+	if _, exists := updatedState.Paths["file2.txt"]; !exists {
+		t.Error("expected file2.txt (stack path) to remain in workspace state")
 	}
 }
 
@@ -202,6 +215,7 @@ func TestUnapply_DryRun(t *testing.T) {
 	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
 	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
 	workspaceState.Applied = true
+	workspaceState.ActiveStore = "store1" // Set active store
 	workspaceState.Paths = map[string]state.PathOwnership{
 		"test.txt": {
 			Store: "store1",
@@ -253,6 +267,7 @@ func TestUnapply_DriftDetection(t *testing.T) {
 	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
 	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "copy")
 	workspaceState.Applied = true
+	workspaceState.ActiveStore = "store1" // Set active store
 
 	originalChecksum := "original-hash"
 	workspaceState.Paths = map[string]state.PathOwnership{
@@ -303,6 +318,7 @@ func TestUnapply_ForceMode(t *testing.T) {
 	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
 	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
 	workspaceState.Applied = true
+	workspaceState.ActiveStore = "store1" // Set active store
 	workspaceState.Paths = map[string]state.PathOwnership{
 		"file.txt": {
 			Store: "store1",
@@ -387,6 +403,7 @@ func TestUnapply_NestedDirectories(t *testing.T) {
 	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
 	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
 	workspaceState.Applied = true
+	workspaceState.ActiveStore = "store1" // Set active store
 	workspaceState.Paths = map[string]state.PathOwnership{
 		"a": {
 			Store: "store1",

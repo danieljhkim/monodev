@@ -34,12 +34,7 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
 
-	// Load repo state (may not exist)
-	repoState, err := e.stateStore.LoadRepoState(repoFingerprint)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("failed to load repo state: %w", err)
-	}
-
+	// Build result from workspace state if it exists
 	result := &StatusResult{
 		WorkspaceID:     workspaceID,
 		RepoFingerprint: repoFingerprint,
@@ -66,13 +61,6 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 				Type:  ownership.Type,
 			}
 		}
-	}
-
-	// If repo state exists, use it for stack and active store
-	// (repo state is the source of truth for these)
-	if repoState != nil {
-		result.Stack = repoState.Stack
-		result.ActiveStore = repoState.ActiveStore
 	}
 
 	// Load tracked paths from active store

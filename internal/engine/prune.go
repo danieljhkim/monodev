@@ -48,21 +48,28 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
 	}
 
-	// Load repo state to get active store
-	repoState, err := e.stateStore.LoadRepoState(repoFingerprint)
+	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
+	}
+
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+
+	// Load workspace state to get active store
+	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrNoActiveStore
 		}
-		return nil, fmt.Errorf("failed to load repo state: %w", err)
+		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
 
-	if repoState.ActiveStore == "" {
+	if workspaceState.ActiveStore == "" {
 		return nil, ErrNoActiveStore
 	}
 
 	// Load track file to get tracked paths
-	track, err := e.storeRepo.LoadTrack(repoState.ActiveStore)
+	track, err := e.storeRepo.LoadTrack(workspaceState.ActiveStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load track file: %w", err)
 	}
@@ -74,7 +81,7 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 	}
 
 	// Get overlay root
-	overlayRoot := e.storeRepo.OverlayRoot(repoState.ActiveStore)
+	overlayRoot := e.storeRepo.OverlayRoot(workspaceState.ActiveStore)
 
 	// Find all files in overlay directory
 	var untrackedPaths []string
@@ -123,7 +130,7 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 	}
 
 	result := &PruneResult{
-		StoreID:      repoState.ActiveStore,
+		StoreID:      workspaceState.ActiveStore,
 		DeletedPaths: untrackedPaths,
 		DryRun:       req.DryRun,
 	}
@@ -140,7 +147,7 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 
 	// If not force mode, ask for confirmation
 	if !req.Force {
-		fmt.Printf("The following %d path(s) will be deleted from store '%s':\n", len(untrackedPaths), repoState.ActiveStore)
+		fmt.Printf("The following %d path(s) will be deleted from store '%s':\n", len(untrackedPaths), workspaceState.ActiveStore)
 		for _, p := range untrackedPaths {
 			fmt.Printf("  - %s\n", p)
 		}
@@ -158,14 +165,8 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 		}
 	}
 
-	// Compute workspace ID for current workspace
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
-	}
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Load workspace state if it exists
+	// Reload workspace state to get latest version
+	// (we need to reload because we might have modified it)
 	workspaceState, wsErr := e.stateStore.LoadWorkspace(workspaceID)
 	hasWorkspaceState := wsErr == nil
 
@@ -184,7 +185,7 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 		if hasWorkspaceState {
 			if pathInfo, exists := workspaceState.Paths[path]; exists {
 				// Only remove if it belongs to the active store
-				if pathInfo.Store == repoState.ActiveStore {
+				if pathInfo.Store == workspaceState.ActiveStore {
 					// Remove the overlay from workspace (symlink or copied file)
 					workspacePath := filepath.Join(req.CWD, path)
 					if err := e.fs.RemoveAll(workspacePath); err != nil && !os.IsNotExist(err) {
@@ -199,6 +200,8 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 		}
 	}
 
+	workspaceState.PruneAppliedStores()
+
 	// Save updated workspace state if we modified it
 	if hasWorkspaceState {
 		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
@@ -207,13 +210,13 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 	}
 
 	// Update store metadata (UpdatedAt timestamp)
-	meta, err := e.storeRepo.LoadMeta(repoState.ActiveStore)
+	meta, err := e.storeRepo.LoadMeta(workspaceState.ActiveStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load store metadata: %w", err)
 	}
 
 	meta.UpdatedAt = e.clock.Now()
-	if err := e.storeRepo.SaveMeta(repoState.ActiveStore, meta); err != nil {
+	if err := e.storeRepo.SaveMeta(workspaceState.ActiveStore, meta); err != nil {
 		return nil, fmt.Errorf("failed to save store metadata: %w", err)
 	}
 

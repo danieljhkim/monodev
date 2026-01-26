@@ -17,9 +17,11 @@ var (
 
 var unapplyCmd = &cobra.Command{
 	Use:   "unapply",
-	Short: "Remove previously applied overlays",
-	Long:  `Remove all overlays that were previously applied to the current workspace.`,
-	Args:  cobra.NoArgs,
+	Short: "Remove active store's overlays from the workspace",
+	Long: `Remove overlays applied by the active store from the current workspace.
+
+Paths applied by the stack are not affected - use 'stack unapply' for that.`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		eng, err := newEngine()
 		if err != nil {

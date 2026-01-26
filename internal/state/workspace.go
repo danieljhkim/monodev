@@ -20,11 +20,22 @@ type WorkspaceState struct {
 	// Stack is the ordered list of stores applied (excluding active store)
 	Stack []string `json:"stack"`
 
+	// AppliedStores is the list of stores that have been applied
+	AppliedStores []AppliedStore `json:"appliedStores"`
+
 	// ActiveStore is the store that was active when overlays were applied
 	ActiveStore string `json:"activeStore"`
 
 	// Paths maps destination paths to their ownership information
 	Paths map[string]PathOwnership `json:"paths"`
+}
+
+type AppliedStore struct {
+	// Store is the ID of the store that has been applied
+	Store string `json:"store"`
+
+	// Mode is the overlay mode ("symlink" or "copy")
+	Type string `json:"type"`
 }
 
 // PathOwnership describes which store owns a specific path and how it was applied.
@@ -42,19 +53,6 @@ type PathOwnership struct {
 	Checksum string `json:"checksum,omitempty"`
 }
 
-// RepoState represents repository-level state (stack and active store).
-// This persists the store stack and active store selection per repository.
-type RepoState struct {
-	// Fingerprint is the repository fingerprint
-	Fingerprint string `json:"fingerprint"`
-
-	// Stack is the ordered list of stores to apply
-	Stack []string `json:"stack"`
-
-	// ActiveStore is the currently selected store
-	ActiveStore string `json:"activeStore"`
-}
-
 // NewWorkspaceState creates a new empty WorkspaceState.
 func NewWorkspaceState(repo, workspacePath, mode string) *WorkspaceState {
 	return &WorkspaceState{
@@ -63,16 +61,42 @@ func NewWorkspaceState(repo, workspacePath, mode string) *WorkspaceState {
 		Applied:       false,
 		Mode:          mode,
 		Stack:         []string{},
+		AppliedStores: []AppliedStore{},
 		ActiveStore:   "",
 		Paths:         make(map[string]PathOwnership),
 	}
 }
 
-// NewRepoState creates a new empty RepoState.
-func NewRepoState(fingerprint string) *RepoState {
-	return &RepoState{
-		Fingerprint: fingerprint,
-		Stack:       []string{},
-		ActiveStore: "",
+func (ws *WorkspaceState) AddAppliedStore(store string, mode string) {
+	ws.RemoveAppliedStore(store)
+	ws.AppliedStores = append(ws.AppliedStores, AppliedStore{Store: store, Type: mode})
+}
+
+func (ws *WorkspaceState) RemoveAppliedStore(store string) {
+	for i, appliedStore := range ws.AppliedStores {
+		if appliedStore.Store == store {
+			ws.AppliedStores = append(ws.AppliedStores[:i], ws.AppliedStores[i+1:]...)
+			break
+		}
 	}
+}
+
+func (ws *WorkspaceState) GetAppliedStore(store string) *AppliedStore {
+	for _, appliedStore := range ws.AppliedStores {
+		if appliedStore.Store == store {
+			return &appliedStore
+		}
+	}
+	return nil
+}
+
+func (ws *WorkspaceState) PruneAppliedStores() {
+	// removes applied stores list that do not have a path in the workspace
+	newAppliedStores := []AppliedStore{}
+	for _, appliedStore := range ws.AppliedStores {
+		if appliedStore.Store != ws.ActiveStore {
+			newAppliedStores = append(newAppliedStores, appliedStore)
+		}
+	}
+	ws.AppliedStores = newAppliedStores
 }

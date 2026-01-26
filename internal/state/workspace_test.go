@@ -38,23 +38,6 @@ func TestNewWorkspaceState(t *testing.T) {
 	}
 }
 
-func TestNewRepoState(t *testing.T) {
-	rs := NewRepoState("fingerprint123")
-
-	if rs.Fingerprint != "fingerprint123" {
-		t.Errorf("expected Fingerprint='fingerprint123', got %q", rs.Fingerprint)
-	}
-	if rs.Stack == nil {
-		t.Error("expected Stack to be initialized")
-	}
-	if len(rs.Stack) != 0 {
-		t.Errorf("expected empty Stack, got %d items", len(rs.Stack))
-	}
-	if rs.ActiveStore != "" {
-		t.Errorf("expected empty ActiveStore, got %q", rs.ActiveStore)
-	}
-}
-
 func TestWorkspaceState_Serialization(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -181,66 +164,6 @@ func TestWorkspaceState_Serialization(t *testing.T) {
 				} else {
 					t.Errorf("Paths[%q] missing in unmarshaled state", path)
 				}
-			}
-		})
-	}
-}
-
-func TestRepoState_Serialization(t *testing.T) {
-	tests := []struct {
-		name  string
-		state *RepoState
-	}{
-		{
-			name:  "empty state",
-			state: NewRepoState("fingerprint1"),
-		},
-		{
-			name: "state with stack and active store",
-			state: &RepoState{
-				Fingerprint: "fingerprint1",
-				Stack:       []string{"store1", "store2"},
-				ActiveStore: "store3",
-			},
-		},
-		{
-			name: "state with empty stack",
-			state: &RepoState{
-				Fingerprint: "fingerprint1",
-				Stack:       []string{},
-				ActiveStore: "store1",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Marshal to JSON
-			data, err := json.Marshal(tt.state)
-			if err != nil {
-				t.Fatalf("Marshal() error = %v", err)
-			}
-
-			// Unmarshal back
-			var unmarshaled RepoState
-			if err := json.Unmarshal(data, &unmarshaled); err != nil {
-				t.Fatalf("Unmarshal() error = %v", err)
-			}
-
-			// Verify all fields match
-			if unmarshaled.Fingerprint != tt.state.Fingerprint {
-				t.Errorf("Fingerprint: got %q, want %q", unmarshaled.Fingerprint, tt.state.Fingerprint)
-			}
-			if len(unmarshaled.Stack) != len(tt.state.Stack) {
-				t.Errorf("Stack length: got %d, want %d", len(unmarshaled.Stack), len(tt.state.Stack))
-			}
-			for i, store := range tt.state.Stack {
-				if i < len(unmarshaled.Stack) && unmarshaled.Stack[i] != store {
-					t.Errorf("Stack[%d]: got %q, want %q", i, unmarshaled.Stack[i], store)
-				}
-			}
-			if unmarshaled.ActiveStore != tt.state.ActiveStore {
-				t.Errorf("ActiveStore: got %q, want %q", unmarshaled.ActiveStore, tt.state.ActiveStore)
 			}
 		})
 	}

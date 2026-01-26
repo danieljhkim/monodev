@@ -22,51 +22,15 @@ import (
 // 7. Return result
 func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, error) {
 	// Step 1: Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotInRepo, err)
-	}
-
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
+		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
 	// Step 2: Compute workspace ID
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 
-	// Step 3: Load or create repo state
-	repoState, err := e.stateStore.LoadRepoState(repoFingerprint)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Create new repo state
-			repoState = state.NewRepoState(repoFingerprint)
-		} else {
-			return nil, fmt.Errorf("failed to load repo state: %w", err)
-		}
-	}
-
-	// Step 4: Resolve stores to apply
-	var orderedStores []string
-	if req.StoreID != "" {
-		// Explicit store ID provided - use stack + this store
-		orderedStores = append([]string{}, repoState.Stack...)
-		orderedStores = append(orderedStores, req.StoreID)
-	} else {
-		// Use stack + active store
-		if repoState.ActiveStore == "" {
-			return nil, ErrNoActiveStore
-		}
-		orderedStores = append([]string{}, repoState.Stack...)
-		orderedStores = append(orderedStores, repoState.ActiveStore)
-	}
-
-	// Step 5: Load or create workspace state
+	// Step 3: Load or create workspace state
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -76,6 +40,18 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 			return nil, fmt.Errorf("failed to load workspace state: %w", err)
 		}
 	}
+
+	// Step 4: Resolve store to apply (single store only, NOT the stack)
+	var storeToApply string
+	if req.StoreID != "" {
+		storeToApply = req.StoreID
+	} else {
+		if workspaceState.ActiveStore == "" {
+			return nil, ErrNoActiveStore
+		}
+		storeToApply = workspaceState.ActiveStore
+	}
+	orderedStores := []string{storeToApply}
 
 	// If workspace state exists, verify mode matches
 	if workspaceState.Applied && workspaceState.Mode != req.Mode && !req.Force {
@@ -153,15 +129,12 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		}
 	}
 
-	// Update workspace state metadata
+	// Update workspace state metadata (only active store, preserve stack)
 	workspaceState.Applied = true
 	workspaceState.Mode = req.Mode
-	workspaceState.Stack = repoState.Stack
-	if req.StoreID != "" {
-		workspaceState.ActiveStore = req.StoreID
-	} else {
-		workspaceState.ActiveStore = repoState.ActiveStore
-	}
+	// Note: Stack is NOT modified here - apply is for single stores only
+	workspaceState.ActiveStore = storeToApply
+	workspaceState.AddAppliedStore(storeToApply, req.Mode)
 
 	// Step 8: Persist workspace state atomically
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {

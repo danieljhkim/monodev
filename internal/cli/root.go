@@ -42,7 +42,7 @@ func init() {
 		Short: "Print the monodev CLI version",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Fprintln(os.Stdout, rootCmd.Version)
+			_, _ = fmt.Fprintln(os.Stdout, rootCmd.Version)
 		},
 	})
 

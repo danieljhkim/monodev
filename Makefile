@@ -1,4 +1,4 @@
-.PHONY: help build install clean test format all test-integration test-coverage lint vet deps
+.PHONY: help build install install-user go-install clean test format all test-integration test-coverage lint vet deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -9,6 +9,11 @@ BUILD_DIR := bin
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
+
+# Installation variables (can be overridden)
+DESTDIR ?=
+PREFIX ?= /usr/local
+INSTALL_DIR := $(DESTDIR)$(PREFIX)/bin
 
 # Go build flags
 LDFLAGS := -ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
@@ -28,10 +33,34 @@ build: ## Build the Go binary
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) cmd/monodev/main.go
 	@echo "✓ Built $(BUILD_DIR)/$(BINARY_NAME)"
 
-install: build ## Build and install to /usr/local/bin
-	@echo "Installing $(BINARY_NAME) to /usr/local/bin..."
-	sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
-	@echo "✓ Installed to /usr/local/bin/$(BINARY_NAME)"
+install: build ## Build and install to $(PREFIX)/bin (default: /usr/local/bin). Override with: make install PREFIX=/custom/path
+	@echo "Installing $(BINARY_NAME) to $(INSTALL_DIR)..."
+	@mkdir -p $(INSTALL_DIR)
+	@if [ -w $(INSTALL_DIR) ]; then \
+		cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME); \
+	else \
+		sudo cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME); \
+	fi
+	@echo "✓ Installed to $(INSTALL_DIR)/$(BINARY_NAME)"
+
+install-user: build ## Build and install to user's local bin directory (~/bin or ~/.local/bin)
+	@echo "Installing $(BINARY_NAME) to user bin directory..."
+	@if [ -d $$HOME/bin ]; then \
+		INSTALL_PATH=$$HOME/bin; \
+	elif [ -d $$HOME/.local/bin ]; then \
+		INSTALL_PATH=$$HOME/.local/bin; \
+	else \
+		INSTALL_PATH=$$HOME/bin; \
+		mkdir -p $$INSTALL_PATH; \
+	fi; \
+	cp $(BUILD_DIR)/$(BINARY_NAME) $$INSTALL_PATH/$(BINARY_NAME); \
+	echo "✓ Installed to $$INSTALL_PATH/$(BINARY_NAME)"; \
+	echo "  Make sure $$INSTALL_PATH is in your PATH"
+
+go-install: ## Install using 'go install' (recommended for development)
+	@echo "Installing $(BINARY_NAME) using 'go install'..."
+	@go install $(LDFLAGS) ./cmd/monodev
+	@echo "✓ Installed using go install (to $$(go env GOPATH)/bin or $$(go env GOBIN))"
 
 clean: ## Remove build artifacts and test coverage files
 	@echo "Cleaning build artifacts and test files..."

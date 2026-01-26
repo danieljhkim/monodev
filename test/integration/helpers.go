@@ -1,8 +1,10 @@
 package integration
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,6 +140,28 @@ func (fs *testFS) ReadFile(path string) ([]byte, error) {
 	return nil, os.ErrNotExist
 }
 
+func (fs *testFS) ValidateRelPath(relPath string) error {
+	// Clean the path first
+	cleaned := filepath.Clean(relPath)
+
+	// Reject empty or current directory
+	if cleaned == "" || cleaned == "." {
+		return fmt.Errorf("invalid path: empty or current directory")
+	}
+
+	// Reject absolute paths
+	if filepath.IsAbs(cleaned) {
+		return fmt.Errorf("invalid path: must be relative, got absolute path %q", cleaned)
+	}
+
+	// Reject path traversal attempts
+	if strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, string(filepath.Separator)+"..") {
+		return fmt.Errorf("invalid path: path traversal not allowed in %q", cleaned)
+	}
+
+	return nil
+}
+
 // mockFileInfo implements os.FileInfo
 type mockFileInfo struct {
 	name  string
@@ -156,13 +180,11 @@ func (m *mockFileInfo) Sys() interface{}   { return nil }
 // testStateStore is an in-memory state store for testing
 type testStateStore struct {
 	workspaces map[string]*state.WorkspaceState
-	repos      map[string]*state.RepoState
 }
 
 func newTestStateStore() *testStateStore {
 	return &testStateStore{
 		workspaces: make(map[string]*state.WorkspaceState),
-		repos:      make(map[string]*state.RepoState),
 	}
 }
 
@@ -194,22 +216,6 @@ func (s *testStateStore) SaveWorkspace(id string, ws *state.WorkspaceState) erro
 
 func (s *testStateStore) DeleteWorkspace(id string) error {
 	delete(s.workspaces, id)
-	return nil
-}
-
-func (s *testStateStore) LoadRepoState(fingerprint string) (*state.RepoState, error) {
-	if rs, ok := s.repos[fingerprint]; ok {
-		rsCopy := *rs
-		rsCopy.Stack = append([]string{}, rs.Stack...)
-		return &rsCopy, nil
-	}
-	return nil, os.ErrNotExist
-}
-
-func (s *testStateStore) SaveRepoState(fingerprint string, rs *state.RepoState) error {
-	rsCopy := *rs
-	rsCopy.Stack = append([]string{}, rs.Stack...)
-	s.repos[fingerprint] = &rsCopy
 	return nil
 }
 
@@ -268,7 +274,6 @@ func setupTestEngine(t *testing.T) (*engine.Engine, *testFS, *testStateStore, *t
 		Root:       "/test",
 		Stores:     "/test/stores",
 		Workspaces: "/test/workspaces",
-		Repos:      "/test/repos",
 		Config:     "/test/config.yaml",
 	}
 

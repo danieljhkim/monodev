@@ -18,10 +18,11 @@ var (
 
 var applyCmd = &cobra.Command{
 	Use:   "apply [store-id]",
-	Short: "Apply store overlays to the current workspace",
-	Long: `Apply the store stack (plus the active store) to the current working directory.
+	Short: "Apply a single store's overlays to the current workspace",
+	Long: `Apply the active store (or specified store) to the current working directory.
 
-If [store-id] is provided, it temporarily overrides the active store for this apply.`,
+If [store-id] is provided, it overrides the active store for this apply.
+This command applies only a single store - use 'stack apply' to apply the stack.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		eng, err := newEngine()

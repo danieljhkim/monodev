@@ -30,10 +30,11 @@ func TestApply_FullCycle(t *testing.T) {
 	}
 	storeRepo.setTrack(storeID, track)
 
-	// Setup repo state with active store
-	repoState := state.NewRepoState("repo-fingerprint-123")
-	repoState.ActiveStore = storeID
-	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	// Setup workspace state with active store
+	setupWorkspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
+	setupWS := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
+	setupWS.ActiveStore = storeID
+	_ = stateStore.SaveWorkspace(setupWorkspaceID, setupWS)
 
 	// Apply
 	req := &engine.ApplyRequest{
@@ -103,9 +104,11 @@ func TestApply_Idempotency(t *testing.T) {
 	}
 	storeRepo.setTrack(storeID, track)
 
-	repoState := state.NewRepoState("repo-fingerprint-123")
-	repoState.ActiveStore = storeID
-	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	// Setup workspace state with active store
+	setupWorkspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
+	setupWS := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
+	setupWS.ActiveStore = storeID
+	_ = stateStore.SaveWorkspace(setupWorkspaceID, setupWS)
 
 	req := &engine.ApplyRequest{
 		CWD:  "/repo/workspace",
@@ -161,9 +164,11 @@ func TestApply_StatePersistence(t *testing.T) {
 	}
 	storeRepo.setTrack(storeID, track)
 
-	repoState := state.NewRepoState("repo-fingerprint-123")
-	repoState.ActiveStore = storeID
-	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	// Setup workspace state with active store
+	setupWorkspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
+	setupWS := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "copy")
+	setupWS.ActiveStore = storeID
+	_ = stateStore.SaveWorkspace(setupWorkspaceID, setupWS)
 
 	// Apply
 	req := &engine.ApplyRequest{
@@ -236,9 +241,11 @@ func TestApply_DryRun(t *testing.T) {
 	}
 	storeRepo.setTrack(storeID, track)
 
-	repoState := state.NewRepoState("repo-fingerprint-123")
-	repoState.ActiveStore = storeID
-	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	// Setup workspace state with active store
+	setupWorkspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
+	setupWS := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
+	setupWS.ActiveStore = storeID
+	_ = stateStore.SaveWorkspace(setupWorkspaceID, setupWS)
 
 	// Dry run apply
 	req := &engine.ApplyRequest{
@@ -268,11 +275,19 @@ func TestApply_DryRun(t *testing.T) {
 		t.Error("expected no symlink to be created in dry-run mode")
 	}
 
-	// Verify workspace state was NOT saved (dry-run)
+	// Verify workspace state was NOT modified (dry-run)
 	workspaceID := result.WorkspaceID
-	_, err = stateStore.LoadWorkspace(workspaceID)
-	if err == nil {
-		t.Error("expected workspace state to not be saved in dry-run mode")
+	ws, err := stateStore.LoadWorkspace(workspaceID)
+	if err != nil {
+		t.Fatalf("failed to load workspace state: %v", err)
+	}
+
+	// Workspace state should still have Applied=false and no paths
+	if ws.Applied {
+		t.Error("expected workspace to not be applied in dry-run mode")
+	}
+	if len(ws.Paths) != 0 {
+		t.Errorf("expected 0 paths in workspace state, got %d", len(ws.Paths))
 	}
 }
 
@@ -294,9 +309,11 @@ func TestApply_CopyMode(t *testing.T) {
 	}
 	storeRepo.setTrack(storeID, track)
 
-	repoState := state.NewRepoState("repo-fingerprint-123")
-	repoState.ActiveStore = storeID
-	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	// Setup workspace state with active store
+	setupWorkspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
+	setupWS := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "copy")
+	setupWS.ActiveStore = storeID
+	_ = stateStore.SaveWorkspace(setupWorkspaceID, setupWS)
 
 	// Apply in copy mode
 	req := &engine.ApplyRequest{
@@ -369,11 +386,12 @@ func TestApply_MultipleStores(t *testing.T) {
 	}
 	storeRepo.setTrack(store2, track2)
 
-	// Setup repo state with stack + active store
-	repoState := state.NewRepoState("repo-fingerprint-123")
-	repoState.Stack = []string{store1}
-	repoState.ActiveStore = store2
-	_ = stateStore.SaveRepoState("repo-fingerprint-123", repoState)
+	// Setup workspace state with stack + active store
+	setupWorkspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
+	setupWS := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
+	setupWS.Stack = []string{store1}
+	setupWS.ActiveStore = store2
+	_ = stateStore.SaveWorkspace(setupWorkspaceID, setupWS)
 
 	// Apply
 	req := &engine.ApplyRequest{
