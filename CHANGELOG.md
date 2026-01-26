@@ -9,6 +9,18 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ---
 
+## [0.2.0] — 2026-01-25
+
+### Added
+- Stack commands (stack apply/unapply) for managing multiple stores in one go.
+
+### Changed
+- Renamed `use` to `checkout` for clarity.
+- Renamed `save` to `commit` for clarity.
+- Removed 'copy' mode for now.
+- Better error handling and output formatting.
+- `monodev apply/unapply` only works on the "active store" now.
+
 ## [0.1.0] — Initial release
 
 ### Added
