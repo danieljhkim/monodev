@@ -160,7 +160,7 @@ func TestStatusCommand_JSONOutput(t *testing.T) {
 	}
 }
 
-func TestUseCommand_InvalidArgs(t *testing.T) {
+func TestCheckoutCommand_InvalidArgs(t *testing.T) {
 	workspaceDir, cleanup := setupTestEnv(t)
 	defer cleanup()
 
@@ -171,13 +171,13 @@ func TestUseCommand_InvalidArgs(t *testing.T) {
 	}()
 
 	// Test with no args (should fail)
-	rootCmd.SetArgs([]string{"use"})
+	rootCmd.SetArgs([]string{"checkout"})
 	var buf bytes.Buffer
 	rootCmd.SetErr(&buf)
 
 	err := rootCmd.Execute()
 	if err == nil {
-		t.Error("expected error for use command with no args")
+		t.Error("expected error for checkout command with no args")
 	}
 }
 
@@ -303,7 +303,7 @@ func TestApplyCommand_Flags(t *testing.T) {
 	}
 }
 
-func TestUseCommand_Flags(t *testing.T) {
+func TestCheckoutCommand_Flags(t *testing.T) {
 	workspaceDir, cleanup := setupTestEnv(t)
 	defer cleanup()
 
@@ -317,10 +317,10 @@ func TestUseCommand_Flags(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"new flag", []string{"use", "test-store", "--new"}},
-		{"scope flag", []string{"use", "test-store", "--scope", "global"}},
-		{"description flag", []string{"use", "test-store", "--description", "test desc"}},
-		{"all flags", []string{"use", "test-store", "--new", "--scope", "component", "--description", "test"}},
+		{"new flag", []string{"checkout", "test-store", "--new"}},
+		{"scope flag", []string{"checkout", "test-store", "--scope", "global"}},
+		{"description flag", []string{"checkout", "test-store", "--description", "test desc"}},
+		{"all flags", []string{"checkout", "test-store", "--new", "--scope", "component", "--description", "test"}},
 	}
 
 	for _, tt := range tests {
@@ -368,7 +368,7 @@ func TestGlobalJSONFlag(t *testing.T) {
 }
 
 func TestCommandHelp(t *testing.T) {
-	commands := []string{"apply", "unapply", "status", "use", "track", "list"}
+	commands := []string{"apply", "unapply", "status", "checkout", "track", "list"}
 
 	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {

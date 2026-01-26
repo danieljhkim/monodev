@@ -8,35 +8,35 @@ import (
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
-// SaveRequest represents a request to save workspace files to the store.
-type SaveRequest struct {
+// CommitRequest represents a request to commit workspace files to the store.
+type CommitRequest struct {
 	// CWD is the current working directory
 	CWD string
 
-	// Paths is the list of paths to save (relative to CWD)
-	// If empty and All is false, saves nothing
+	// Paths is the list of paths to commit (relative to CWD)
+	// If empty and All is false, commits nothing
 	Paths []string
 
-	// All saves all tracked paths
+	// All commits all tracked paths
 	All bool
 
-	// DryRun shows what would be saved without actually saving
+	// DryRun shows what would be committed without actually committing
 	DryRun bool
 }
 
-// SaveResult represents the result of a save operation.
-type SaveResult struct {
-	// Saved is the list of paths that were saved
-	Saved []string
+// CommitResult represents the result of a commit operation.
+type CommitResult struct {
+	// Committed is the list of paths that were committed
+	Committed []string
 
 	// Skipped is the list of paths that were skipped (e.g., symlinks in symlink mode)
 	Skipped []string
 
-	// Missing is the list of paths that could not be saved because they don't exist in workspace
+	// Missing is the list of paths that could not be committed because they don't exist in workspace
 	Missing []string
 }
 
-// Save copies workspace files to the active store and records them in workspace state.
+// Commit copies workspace files to the active store and records them in workspace state.
 //
 // Behavior:
 // - Copies files from workspace → store overlay
@@ -46,7 +46,7 @@ type SaveResult struct {
 //
 // This allows tracking which files are managed by monodev even before overlays are created.
 // The workspace state is the "intent" layer, while Apply creates the actual overlays.
-func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error) {
+func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult, error) {
 	// Discover repository
 	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
@@ -71,16 +71,16 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 	// Get the overlay root for the active store
 	overlayRoot := e.storeRepo.OverlayRoot(workspaceState.ActiveStore)
 
-	result := &SaveResult{
-		Saved:   []string{},
-		Skipped: []string{},
-		Missing: []string{},
+	result := &CommitResult{
+		Committed: []string{},
+		Skipped:   []string{},
+		Missing:   []string{},
 	}
 
 	now := e.clock.Now()
 
 	if req.All {
-		// Save all tracked paths, respecting the 'required' field
+		// Commit all tracked paths, respecting the 'required' field
 		for _, trackedPath := range track.Tracked {
 			// Validate path before any file IO
 			if err := e.fs.ValidateRelPath(trackedPath.Path); err != nil {
@@ -105,7 +105,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 			}
 
 			if req.DryRun {
-				result.Saved = append(result.Saved, relPath)
+				result.Committed = append(result.Committed, relPath)
 				continue
 			}
 
@@ -131,10 +131,10 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 				Checksum:  checksum,
 			}
 
-			result.Saved = append(result.Saved, relPath)
+			result.Committed = append(result.Committed, relPath)
 		}
 	} else {
-		// Save specific paths (all treated as required)
+		// Commit specific paths (all treated as required)
 		for _, rawPath := range req.Paths {
 			// Validate path before any file IO
 			if err := e.fs.ValidateRelPath(rawPath); err != nil {
@@ -159,7 +159,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 			}
 
 			if req.DryRun {
-				result.Saved = append(result.Saved, relPath)
+				result.Committed = append(result.Committed, relPath)
 				continue
 			}
 
@@ -185,7 +185,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 				Checksum:  checksum,
 			}
 
-			result.Saved = append(result.Saved, relPath)
+			result.Committed = append(result.Committed, relPath)
 		}
 	}
 
@@ -201,7 +201,7 @@ func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error
 			return nil, fmt.Errorf("failed to save store metadata: %w", err)
 		}
 
-		// Save workspace state to record managed paths
+		// Commit workspace state to record managed paths
 		// NOTE: We do NOT set applied=true here - that's only done by the apply command
 		// This allows tracking which files are managed even before overlays are created
 		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {

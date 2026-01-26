@@ -17,18 +17,11 @@ It lets you:
 
 ---
 
-## CLI Preview
-
-![CLI Preview](docs/assets/cli_preview.png)
-
----
-
 ## Quick Start
 
 Platform support: macOS (Apple Silicon only)
 
 ```bash
-# install
 brew install danieljhkim/tap/monodev
 
 monodev version
@@ -39,131 +32,126 @@ monodev help
 ## Core ideas
 
 - **Stores**  
-  Named overlay sets stored outside the repo (`~/.monodev/stores`).
+Named overlay artifacts are stored here: (`~/.monodev/stores/<store-id>/`).
 
-- **Stacking**  
-  Multiple stores can be composed:
-  ```
-  global → profile → component
-  ```
-  Later stores override earlier ones.
-
-- **Modes**
-  - `symlink` (default): store is source of truth
-  - `copy`: workspace is detached; `save` syncs back
-
-- **Safety**
-  - Explicit apply / unapply
-  - No implicit deletes
-  - Conflict detection + `--force` escape hatch
+- **Workspaces**  
+Named workspaces within any directory within a repo. Each workspace has its own active store. (`.monodev/workspaces/<workspace-id>.json`)
 
 ---
 
-## Example workflow
+## Basic workflow
 
-Basic create, save & apply:
+### Basic create, track, commit & apply:
 
 ```bash
-# create and select a store
-monodev use -n services/search/indexer
+# create and check out a store (similar to `git checkout` but doesn't apply overlays yet)
+# this also sets the store as "active store" for the current directory
+monodev checkout -n my-component-store 
 
-# track dev-only files
+# track dev-only files for the "active store" (similar to `git add`)
 monodev track Makefile .cursor scripts/dev .claude .vscode
 
-# persist workspace → store
-monodev save --all
+# persist the tracked files to the store (similar to `git commit`)
+monodev commit --all
 
-# removes the saved artifacts from current workspace
+# removes the "active store" overlays from the current directory
 monodev unapply
 
-# you can also add global-scoped stores like below:
-monodev use -n python --scope global
-monodev track .gitignore .venv requirements.txt 
-monodev save --all
-
-# later, in another repo:
-monodev use python
-# this will add those artifacts to the current dir
-monodev apply
-# when you are done, simply unapply:
-monodev unapply
+# later, in another component directory:
+monodev checkout my-component-store
+monodev apply # this will add those artifacts to the current dir
+monodev unapply # this will remove the overlays from the current dir
 ```
 
-Applying multiple stores at once:
+### How it works
 
-```bash
-# if you want to apply multiple existing stores, add to stack
-monodev stack add python
-monodev stack add services/search/indexer
+When you invoke `monodev checkout <store-id>` under a specific directory within a repo, a workspace file is created in `.monodev/workspaces/<workspace-id>.json`. This file contains the metadata for the workspace, including the active store, the applied stores, and the tracked paths.
 
-# applies python + services/search/indexer store overlays
-monodev apply
+The `workspace-id` is derived from the repo fingerprint and the relative path to the workspace. So when you cd into to a different directory, you will not have an "active store" for that directory. And when you cd back to the original component directory, the active store is restored. 
 
-# removes them all
-monodev unapply
-```
+This means you can have multiple active stores for different component directories within the same repo.
+
+When you invoke `monodev apply` with the active store, the overlays are applied to the current directory. This is done by creating symlinks of the tracked paths to the current directory.
+
+You can use `monodev status` to see the current workspace status and applied overlays.
+
+![monodev status](docs/assets/monodev_status.png)
 
 ---
 
 ## Commands
 
-### Core
+### Core commands
 
-- `monodev use <store-id>`  
-  Select an existing store as the active store.
+These are the core commands you will use most often. You can still apply multiple store overlays using these commands multiple times. 
 
-- `monodev use -n <store-id> [--scope global|component] [--description "some details"]`  
-  Create a new store and set it as the active store.
+When there are conflicts (i.e. multiple stores claim the same path), you can use `--force` to override them. When conflicts are overridden, your latest actions (unapply, apply) will take precedence.
+
+```bash
+# this shows the current workspace status and applied overlays
+monodev status
+
+# this lists all available stores
+monodev list
+
+# this shows the detailed metadata and tracked paths for a store
+monodev describe <store-id>
+
+# this sets the active store (store must already exist)
+monodev checkout <store-id>
+
+# this creates a new store and sets it as the active store
+monodev checkout -n <store-id> [--scope global|component] [--description "some details"]
+
+# this tracks a path in the active store (.monodev/<store-id>/track.json is updated)
+monodev track <path>
+
+# this untracks a path in the active store (.monodev/<store-id>/track.json is updated)
+monodev untrack <path>
+
+# persist the tracked paths in the active store (.monodev/<store-id>/overlay is updated)
+monodev commit <path>
+
+# persist all tracked paths in the active store
+monodev commit --all
+
+# this applies the "active store's" overlays to the current workspace
+monodev apply [--force] [--dry-run]
+
+# this removes the "active store's" applied overlays from the current workspace
+monodev unapply [--force] [--dry-run]
+
+```
 
 ### Stack management
 
-- `monodev stack ls`  
-  List stores in the current stack (in order).
+To easily manage multiple stores in one go, you can use the stack command. 
 
-- `monodev stack add <store-id>`  
-  Add a store to the end of the stack.
+Stack isn't technically required (you can still use `monodev apply/unapply` multiple times), but it's a convenient way to manage multiple stores. 
 
-- `monodev stack pop [<store-id>]`  
-  Remove a store from the stack. If no ID is provided, pop the last store.
+When using stack, the "active store" is not affected - use `monodev apply/unapply` separately for that.
 
-- `monodev stack clear`  
-  Remove all stores from the stack.
+When there are conflicts (i.e. multiple stores claim the same path), you can use `--force` to override them - later stores take precedence.
 
-### Tracking & persistence
+```bash
+# list all stores in the stack
+monodev stack ls
 
-- `monodev track <path>...`  
-  Track one or more paths in the active store (metadata only).
+# add a store to the stack
+monodev stack add <store-id>
 
-- `monodev untrack <path>...`  
-  Stop tracking one or more paths in the active store.
+# remove a store from the stack
+monodev stack pop [<store-id>]
 
-- `monodev save [<path>...]`  
-  Persist workspace content into the active store.
+# clear the stack
+monodev stack clear
 
-- `monodev save --all`  
-  Persist all tracked paths into the active store.
+# apply the stack to the current workspace
+monodev stack apply [--force] [--dry-run]
 
-- `monodev prune`  
-  Remove store overlay content for paths that are no longer tracked.
-
-### Workspace mutation
-
-- `monodev apply`  
-  Apply the store stack (plus active store) to the current directory.
-
-- `monodev unapply`  
-  Remove previously applied overlays from the current directory.
-
-### Inspection
-
-- `monodev status`  
-  Show the current workspace status and applied overlays.
-
-- `monodev list`  
-  List available stores.
-
-- `monodev describe <store-id>`  
-  Show detailed metadata and tracked paths for a store.
+# remove the stack-applied overlays from the current workspace
+monodev stack unapply [--force] [--dry-run]
+```
 
 ---
 

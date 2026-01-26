@@ -11,22 +11,22 @@ import (
 )
 
 var (
-	saveAll    bool
-	saveDryRun bool
+	commitAll    bool
+	commitDryRun bool
 )
 
-var saveCmd = &cobra.Command{
-	Use:   "save [path]...",
-	Short: "Save workspace files to the active store",
+var commitCmd = &cobra.Command{
+	Use:   "commit [path]...",
+	Short: "Commit workspace files to the active store",
 	Long: `Copy workspace files to the active store.
 
-In symlink mode, only NEW paths (not already managed) are saved.
-In copy mode, all specified paths are saved.`,
+In symlink mode, only NEW paths (not already managed) are committed.
+In copy mode, all specified paths are committed.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Require either paths or --all
-		if len(args) == 0 && !saveAll {
-			return fmt.Errorf("must specify paths to save or use --all flag")
+		if len(args) == 0 && !commitAll {
+			return fmt.Errorf("must specify paths to commit or use --all flag")
 		}
 
 		eng, err := newEngine()
@@ -40,24 +40,24 @@ In copy mode, all specified paths are saved.`,
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
 
-		req := &engine.SaveRequest{
+		req := &engine.CommitRequest{
 			CWD:    cwd,
 			Paths:  args,
-			All:    saveAll,
-			DryRun: saveDryRun,
+			All:    commitAll,
+			DryRun: commitDryRun,
 		}
 
-		result, err := eng.Save(ctx, req)
+		result, err := eng.Commit(ctx, req)
 		if err != nil {
 			return err
 		}
 
-		if saveDryRun {
+		if commitDryRun {
 			PrintSection("Dry Run")
-			PrintInfo(fmt.Sprintf("Would save %s", PrintCount(len(result.Saved), "path", "paths")))
-			if len(result.Saved) > 0 {
-				PrintSubsection("Paths to save:")
-				PrintList(result.Saved, 1)
+			PrintInfo(fmt.Sprintf("Would commit %s", PrintCount(len(result.Committed), "path", "paths")))
+			if len(result.Committed) > 0 {
+				PrintSubsection("Paths to commit:")
+				PrintList(result.Committed, 1)
 			}
 			if len(result.Missing) > 0 {
 				fmt.Println()
@@ -67,7 +67,7 @@ In copy mode, all specified paths are saved.`,
 			return nil
 		}
 
-		PrintSuccess(fmt.Sprintf("Saved %s", PrintCount(len(result.Saved), "path", "paths")))
+		PrintSuccess(fmt.Sprintf("Committed %s", PrintCount(len(result.Committed), "path", "paths")))
 		if len(result.Skipped) > 0 {
 			PrintWarning(fmt.Sprintf("Skipped %s (already managed or not tracked)", PrintCount(len(result.Skipped), "path", "paths")))
 		}
@@ -80,6 +80,6 @@ In copy mode, all specified paths are saved.`,
 }
 
 func init() {
-	saveCmd.Flags().BoolVar(&saveAll, "all", false, "Save all tracked paths")
-	saveCmd.Flags().BoolVar(&saveDryRun, "dry-run", false, "Show what would be saved without saving")
+	commitCmd.Flags().BoolVar(&commitAll, "all", false, "Commit all tracked paths")
+	commitCmd.Flags().BoolVar(&commitDryRun, "dry-run", false, "Show what would be committed without committing")
 }

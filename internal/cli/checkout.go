@@ -10,14 +10,8 @@ import (
 	"github.com/danieljhkim/monodev/internal/engine"
 )
 
-var (
-	createNew  bool
-	storeScope string
-	storeDesc  string
-)
-
-var useCmd = &cobra.Command{
-	Use:   "use <store-id>",
+var checkoutCmd = &cobra.Command{
+	Use:   "checkout <store-id>",
 	Short: "Select a store as active",
 	Long: `Select an existing store as the active store for the current repository.
 
@@ -36,6 +30,11 @@ Use -n to create a new store if it doesn't exist.`,
 		if err != nil {
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
+
+		// Get flag values
+		createNew, _ := cmd.Flags().GetBool("new")
+		storeScope, _ := cmd.Flags().GetString("scope")
+		storeDesc, _ := cmd.Flags().GetString("description")
 
 		// If -n flag is set, create the store (which also sets it as active)
 		if createNew {
@@ -62,7 +61,7 @@ Use -n to create a new store if it doesn't exist.`,
 			StoreID: storeID,
 		}
 		if err := eng.UseStore(ctx, useReq); err != nil {
-			return fmt.Errorf("failed to use store: %w", err)
+			return err
 		}
 
 		PrintSuccess(fmt.Sprintf("Active store set to: %s", storeID))
@@ -71,7 +70,7 @@ Use -n to create a new store if it doesn't exist.`,
 }
 
 func init() {
-	useCmd.Flags().BoolVarP(&createNew, "new", "n", false, "Create a new store")
-	useCmd.Flags().StringVar(&storeScope, "scope", "component", "Store scope (global, profile, component)")
-	useCmd.Flags().StringVar(&storeDesc, "description", "", "Store description")
+	checkoutCmd.Flags().BoolP("new", "n", false, "Create a new store")
+	checkoutCmd.Flags().String("scope", "component", "Store scope (global, profile, component)")
+	checkoutCmd.Flags().String("description", "", "Store description")
 }

@@ -110,7 +110,7 @@ var statusCmd = &cobra.Command{
 			fmt.Println()
 			PrintSubsection("Tracked Paths:")
 
-			headers := []string{"path", "applied?", "saved?"}
+			headers := []string{"path", "applied?", "commited?"}
 			rows := [][]string{}
 
 			for _, tp := range result.TrackedPathDetails {

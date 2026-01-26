@@ -129,17 +129,8 @@ func (c *ConflictChecker) CheckPath(relPath, destPath, incomingType, incomingMod
 		_ = target
 	}
 
-	if !c.force {
-		return &Conflict{
-			Path:     relPath,
-			Reason:   "Conflict detected",
-			Existing: ownership.Type,
-			Incoming: incomingType,
-		}
-	}
-
-	// No conflict - this is a store-to-store override
-	// Later stores take precedence, so this is allowed
+	// All compatibility checks passed (same mode, same type, valid state)
+	// This is a store-to-store override - later stores take precedence
 	return nil
 }
 

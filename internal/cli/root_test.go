@@ -77,8 +77,8 @@ func TestSetVersion(t *testing.T) {
 
 func TestRootCommand_Subcommands(t *testing.T) {
 	subcommands := []string{
-		"apply", "unapply", "status", "use", "track", "untrack",
-		"save", "prune", "list", "describe", "stack",
+		"apply", "unapply", "status", "checkout", "track", "untrack",
+		"commit", "prune", "list", "describe", "stack",
 	}
 
 	for _, cmd := range subcommands {
