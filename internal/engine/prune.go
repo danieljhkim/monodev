@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/danieljhkim/monodev/internal/state"
 )
 
 // PruneRequest represents a request to prune untracked files from a store.
@@ -38,29 +36,13 @@ type PruneResult struct {
 // Prune deletes overlay store content for paths that are no longer tracked.
 func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, error) {
 	// Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotInRepo, err)
+		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
-	}
-
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Load workspace state to get active store
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNoActiveStore
-		}
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
 

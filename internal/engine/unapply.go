@@ -23,19 +23,9 @@ import (
 // 4. Update or delete workspace state
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
 	// Step 1: Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotInRepo, err)
-	}
-
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
+		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
 	// Step 2: Compute workspace ID

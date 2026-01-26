@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/state"
@@ -49,32 +48,14 @@ type SaveResult struct {
 // The workspace state is the "intent" layer, while Apply creates the actual overlays.
 func (e *Engine) Save(ctx context.Context, req *SaveRequest) (*SaveResult, error) {
 	// Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotInRepo, err)
+		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
-	}
-
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Load workspace state to get active store
-	// Note: save updates workspace state to track managed files, but does NOT set applied=true
-	// Only the apply command sets applied=true when overlays are created
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNoActiveStore
-		}
-		return nil, fmt.Errorf("failed to load workspace state: %w", err)
+		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
 
 	if workspaceState.ActiveStore == "" {

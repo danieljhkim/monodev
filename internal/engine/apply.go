@@ -3,15 +3,11 @@ package engine
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
-// Apply applies store overlays to the workspace following the algorithm from PLAN.md.
-//
 // Algorithm steps:
 // 1. Resolve stores (stack + active store)
 // 2. Discover repo and compute workspace ID
@@ -21,27 +17,16 @@ import (
 // 6. Persist workspace state
 // 7. Return result
 func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, error) {
-	// Step 1: Discover repository
 	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	// Step 2: Compute workspace ID
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Step 3: Load or create workspace state
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, req.Mode)
 	if err != nil {
-		if os.IsNotExist(err) {
-			// Create new workspace state
-			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, req.Mode)
-		} else {
-			return nil, fmt.Errorf("failed to load workspace state: %w", err)
-		}
+		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
 
-	// Step 4: Resolve store to apply (single store only, NOT the stack)
 	var storeToApply string
 	if req.StoreID != "" {
 		storeToApply = req.StoreID
@@ -54,11 +39,11 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	orderedStores := []string{storeToApply}
 
 	// If workspace state exists, verify mode matches
-	if workspaceState.Applied && workspaceState.Mode != req.Mode && !req.Force {
+	if workspaceState.Applied && workspaceState.Mode != req.Mode {
+		// TODO: add force option - too overcomplicated for now
 		return nil, fmt.Errorf("%w: existing mode is %s, requested mode is %s", ErrValidation, workspaceState.Mode, req.Mode)
 	}
 
-	// Step 6: Preflight checks - generate plan
 	plan, err := planner.BuildApplyPlan(
 		workspaceState,
 		orderedStores,
@@ -72,7 +57,6 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		return nil, fmt.Errorf("failed to build apply plan: %w", err)
 	}
 
-	// Check for conflicts
 	if plan.HasConflicts() && !req.Force {
 		return &ApplyResult{
 			Plan:            plan,
@@ -83,7 +67,6 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		}, fmt.Errorf("%w: %d conflicts detected", ErrConflict, len(plan.Conflicts))
 	}
 
-	// If dry run, return plan without executing
 	if req.DryRun {
 		return &ApplyResult{
 			Plan:            plan,
@@ -94,7 +77,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		}, nil
 	}
 
-	// Step 7: Apply overlays
+	// Apply overlays
 	appliedOps := []planner.Operation{}
 	for _, op := range plan.Operations {
 		if err := e.executeOperation(op); err != nil {
@@ -121,10 +104,8 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 				}
 			}
 
-			// Use relative path as key for workspace state
 			workspaceState.Paths[op.RelPath] = ownership
 		} else {
-			// Remove operation - delete from workspace state (use relative path)
 			delete(workspaceState.Paths, op.RelPath)
 		}
 	}
@@ -148,64 +129,4 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		RepoFingerprint: repoFingerprint,
 		WorkspacePath:   workspacePath,
 	}, nil
-}
-
-// executeOperation executes a single operation.
-func (e *Engine) executeOperation(op planner.Operation) error {
-	switch op.Type {
-	case planner.OpRemove:
-		return e.executeRemove(op)
-	case planner.OpCreateSymlink:
-		return e.executeCreateSymlink(op)
-	case planner.OpCopy:
-		return e.executeCopy(op)
-	default:
-		return fmt.Errorf("unknown operation type: %s", op.Type)
-	}
-}
-
-// executeRemove removes a path.
-func (e *Engine) executeRemove(op planner.Operation) error {
-	// Check if path exists
-	exists, err := e.fs.Exists(op.DestPath)
-	if err != nil {
-		return fmt.Errorf("failed to check if path exists: %w", err)
-	}
-	if !exists {
-		// Path doesn't exist - nothing to remove
-		return nil
-	}
-
-	// Remove the path
-	if err := e.fs.RemoveAll(op.DestPath); err != nil {
-		return fmt.Errorf("failed to remove path: %w", err)
-	}
-
-	return nil
-}
-
-// executeCreateSymlink creates a symlink.
-func (e *Engine) executeCreateSymlink(op planner.Operation) error {
-	// Create parent directory if needed
-	parentDir := filepath.Dir(op.DestPath)
-	if err := e.fs.MkdirAll(parentDir, 0755); err != nil {
-		return fmt.Errorf("failed to create parent directory: %w", err)
-	}
-
-	// Create symlink
-	if err := e.fs.Symlink(op.SourcePath, op.DestPath); err != nil {
-		return fmt.Errorf("failed to create symlink: %w", err)
-	}
-
-	return nil
-}
-
-// executeCopy copies a file or directory.
-func (e *Engine) executeCopy(op planner.Operation) error {
-	// Copy the path
-	if err := e.fs.Copy(op.SourcePath, op.DestPath); err != nil {
-		return fmt.Errorf("failed to copy: %w", err)
-	}
-
-	return nil
 }

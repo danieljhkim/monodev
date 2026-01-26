@@ -31,19 +31,9 @@ type UntrackRequest struct {
 // Track adds paths to the active store's track file.
 func (e *Engine) Track(ctx context.Context, req *TrackRequest) error {
 	// Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrNotInRepo, err)
-	}
-
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
-	if err != nil {
-		return fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return fmt.Errorf("failed to compute workspace path: %w", err)
+		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
@@ -118,22 +108,10 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) error {
 
 // Untrack removes paths from the active store's track file.
 func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) error {
-	// Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrNotInRepo, err)
+		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
-
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
-	if err != nil {
-		return fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return fmt.Errorf("failed to compute workspace path: %w", err)
-	}
-
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 
 	// Load workspace state to get active store

@@ -82,21 +82,38 @@ func (ws *WorkspaceState) RemoveAppliedStore(store string) {
 }
 
 func (ws *WorkspaceState) GetAppliedStore(store string) *AppliedStore {
-	for _, appliedStore := range ws.AppliedStores {
-		if appliedStore.Store == store {
-			return &appliedStore
+	for i := range ws.AppliedStores {
+		if ws.AppliedStores[i].Store == store {
+			return &ws.AppliedStores[i]
 		}
 	}
 	return nil
 }
 
+// removes the applied stores list based on the paths in the workspace
 func (ws *WorkspaceState) PruneAppliedStores() {
-	// removes applied stores list that do not have a path in the workspace
 	newAppliedStores := []AppliedStore{}
 	for _, appliedStore := range ws.AppliedStores {
-		if appliedStore.Store != ws.ActiveStore {
-			newAppliedStores = append(newAppliedStores, appliedStore)
+		for _, path := range ws.Paths {
+			if path.Store == appliedStore.Store {
+				newAppliedStores = append(newAppliedStores, appliedStore)
+				break
+			}
 		}
+	}
+	ws.AppliedStores = newAppliedStores
+}
+
+// updates the applied stores list based on the paths in the workspace
+func (ws *WorkspaceState) RefreshAppliedStores() {
+	newAppliedStores := []AppliedStore{}
+	appliedStoresMap := make(map[string]struct{})
+	for _, path := range ws.Paths {
+		appliedStoresMap[path.Store] = struct{}{}
+	}
+
+	for key := range appliedStoresMap { // TODO: just one mode for now per workspace
+		newAppliedStores = append(newAppliedStores, AppliedStore{Store: key, Type: ws.Mode})
 	}
 	ws.AppliedStores = newAppliedStores
 }

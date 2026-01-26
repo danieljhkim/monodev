@@ -59,25 +59,12 @@ type StackClearRequest struct {
 
 // StackList returns the current store stack for the workspace.
 func (e *Engine) StackList(ctx context.Context, req *StackListRequest) (*StackListResult, error) {
-	// Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotInRepo, err)
-	}
-
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
+		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Load workspace state
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -98,23 +85,14 @@ func (e *Engine) StackList(ctx context.Context, req *StackListRequest) (*StackLi
 
 // StackAdd adds a store to the stack.
 func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
-	// Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrNotInRepo, err)
+		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
-
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
 	if err != nil {
-		return fmt.Errorf("failed to compute repo fingerprint: %w", err)
+		return fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return fmt.Errorf("failed to compute workspace path: %w", err)
-	}
-
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 
 	// Verify store exists
 	exists, err := e.storeRepo.Exists(req.StoreID)
@@ -123,17 +101,6 @@ func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
 	}
 	if !exists {
 		return fmt.Errorf("%w: store %s does not exist", ErrNotFound, req.StoreID)
-	}
-
-	// Load or create workspace state
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Create new workspace state
-			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "symlink")
-		} else {
-			return fmt.Errorf("failed to load workspace state: %w", err)
-		}
 	}
 
 	// Check for duplicates
@@ -156,31 +123,14 @@ func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
 // If StoreID is empty, removes the last store (LIFO).
 // If StoreID is specified, removes that specific store.
 func (e *Engine) StackPop(ctx context.Context, req *StackPopRequest) (*StackPopResult, error) {
-	// Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotInRepo, err)
+		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
-	}
-
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Load workspace state
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: stack is empty", ErrNotFound)
-		}
-		return nil, fmt.Errorf("failed to load workspace state: %w", err)
+		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
 
 	if len(workspaceState.Stack) == 0 {
@@ -211,7 +161,6 @@ func (e *Engine) StackPop(ctx context.Context, req *StackPopRequest) (*StackPopR
 		workspaceState.Stack = newStack
 	}
 
-	// Save workspace state
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return nil, fmt.Errorf("failed to save workspace state: %w", err)
 	}
@@ -223,38 +172,19 @@ func (e *Engine) StackPop(ctx context.Context, req *StackPopRequest) (*StackPopR
 
 // StackClear removes all stores from the stack.
 func (e *Engine) StackClear(ctx context.Context, req *StackClearRequest) error {
-	// Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrNotInRepo, err)
+		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
 	if err != nil {
-		return fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return fmt.Errorf("failed to compute workspace path: %w", err)
-	}
-
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Load workspace state
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// No workspace state yet, nothing to clear
-			return nil
-		}
-		return fmt.Errorf("failed to load workspace state: %w", err)
+		return fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
 
 	// Clear stack
 	workspaceState.Stack = []string{}
 
-	// Save workspace state
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return fmt.Errorf("failed to save workspace state: %w", err)
 	}
@@ -265,45 +195,25 @@ func (e *Engine) StackClear(ctx context.Context, req *StackClearRequest) error {
 // StackApply applies all stores in the configured stack to the workspace.
 // This does not include the active store - only stores added via 'stack add'.
 func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*StackApplyResult, error) {
-	// Step 1: Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotInRepo, err)
+		return nil, fmt.Errorf("failed to discover workspace: %w", err)
+	}
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
 
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
-	}
-
-	// Step 2: Compute workspace ID
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Step 3: Load workspace state
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: no workspace state (use 'stack add' first)", ErrValidation)
-		}
-		return nil, fmt.Errorf("failed to load workspace state: %w", err)
-	}
-
-	// Check if stack is empty
 	if len(workspaceState.Stack) == 0 {
 		return nil, fmt.Errorf("%w: stack is empty (use 'stack add' first)", ErrValidation)
 	}
 
 	// If workspace state exists, verify mode matches
-	if workspaceState.Applied && workspaceState.Mode != req.Mode && !req.Force {
+	if workspaceState.Applied && workspaceState.Mode != req.Mode {
 		return nil, fmt.Errorf("%w: existing mode is %s, requested mode is %s", ErrValidation, workspaceState.Mode, req.Mode)
 	}
 
-	// Step 5: Build apply plan using only stack stores (no active store)
+	// Build apply plan using only stack stores (no active store)
 	orderedStores := append([]string{}, workspaceState.Stack...)
 
 	plan, err := planner.BuildApplyPlan(
@@ -341,7 +251,7 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 		}, nil
 	}
 
-	// Step 6: Apply overlays
+	// Apply overlays
 	appliedOps := []planner.Operation{}
 	for _, op := range plan.Operations {
 		if err := e.executeOperation(op); err != nil {
@@ -376,12 +286,8 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 		}
 	}
 
-	// Update workspace state metadata
-	workspaceState.Applied = true
-	workspaceState.Mode = req.Mode
-	// Note: Stack and ActiveStore remain unchanged
+	workspaceState.RefreshAppliedStores()
 
-	// Step 7: Persist workspace state atomically
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return nil, fmt.Errorf("failed to save workspace state: %w", err)
 	}
@@ -396,37 +302,20 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 }
 
 // StackUnapply removes only paths applied by the stack stores.
-// Paths applied by the active store are not affected.
+// Paths applied by the active store are not affected, unless they overlap
 func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*StackUnapplyResult, error) {
-	// Step 1: Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotInRepo, err)
+		return nil, fmt.Errorf("failed to discover workspace: %w", err)
+	}
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
+	}
+	if len(workspaceState.Stack) == 0 {
+		return nil, fmt.Errorf("%w: stack is empty", ErrValidation)
 	}
 
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
-	}
-
-	// Step 2: Compute workspace ID
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Step 3: Load workspace state
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: workspace has no managed paths", ErrStateMissing)
-		}
-		return nil, fmt.Errorf("failed to load workspace state: %w", err)
-	}
-
-	// Step 4: Filter to only paths owned by stores in workspaceState.Stack
 	stackStores := make(map[string]bool)
 	for _, store := range workspaceState.Stack {
 		stackStores[store] = true
@@ -439,7 +328,6 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		}
 	}
 
-	// Check if there are any stack paths to remove
 	if len(stackPaths) == 0 {
 		return &StackUnapplyResult{
 			Removed:     []string{},
@@ -447,7 +335,6 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		}, nil
 	}
 
-	// If dry run, just return the list of paths that would be removed
 	if req.DryRun {
 		return &StackUnapplyResult{
 			Removed:     stackPaths,
@@ -455,7 +342,7 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		}, nil
 	}
 
-	// Step 5: Remove stack paths in deepest-first order
+	// Remove stack paths in deepest-first order
 	sort.Slice(stackPaths, func(i, j int) bool {
 		depthI := countPathSeparators(stackPaths[i])
 		depthJ := countPathSeparators(stackPaths[j])
@@ -489,20 +376,11 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		removed = append(removed, relPath)
 	}
 
-	// Step 6: Update workspace state (clear stack, keep active store paths)
+	// Clear stack
 	workspaceState.Stack = []string{}
 
-	// Check if there are any remaining paths
-	if len(workspaceState.Paths) == 0 {
-		// No more managed paths - delete workspace state
-		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
-			return nil, fmt.Errorf("failed to delete workspace state: %w", err)
-		}
-	} else {
-		// Active store still has paths - save workspace state
-		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
-			return nil, fmt.Errorf("failed to save workspace state: %w", err)
-		}
+	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
+		return nil, fmt.Errorf("failed to save workspace state: %w", err)
 	}
 
 	return &StackUnapplyResult{

@@ -67,12 +67,13 @@ func TestListCommand_NoStores(t *testing.T) {
 	}
 
 	output := bufOut.String() + bufErr.String()
-	// The output may be empty or contain "No stores found"
-	// Both are valid - just verify command executed successfully
-	if err != nil {
-		t.Errorf("list command failed: %v", err)
+	if output != "" {
+		// Should be valid JSON
+		var v interface{}
+		if err := json.Unmarshal([]byte(output), &v); err != nil {
+			t.Errorf("expected valid JSON output, got error: %v, output: %q", err, output)
+		}
 	}
-	_ = output // Output validation is optional
 }
 
 func TestListCommand_JSONOutput(t *testing.T) {

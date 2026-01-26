@@ -10,20 +10,9 @@ import (
 
 // Status returns the current status of the workspace.
 func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult, error) {
-	// Discover repository
-	repoRoot, err := e.gitRepo.Discover(req.CWD)
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotInRepo, err)
-	}
-
-	repoFingerprint, err := e.gitRepo.Fingerprint(repoRoot)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute repo fingerprint: %w", err)
-	}
-
-	workspacePath, err := e.gitRepo.RelPath(repoRoot, req.CWD)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compute workspace path: %w", err)
+		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
