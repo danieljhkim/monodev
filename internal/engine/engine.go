@@ -105,12 +105,13 @@ func (e *Engine) executeCopy(op planner.Operation) error {
 func (e *Engine) DiscoverWorkspace(cwd string) (root, fingerprint, workspacePath string, err error) {
 	root, err = e.gitRepo.Discover(cwd)
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to discover git repo: %w", err)
+		fmt.Printf("failed to discover git repo. Using absolute path for workspace fingerprint: %v\n", err)
+		root = cwd
 	}
 
 	fingerprint, err = e.gitRepo.Fingerprint(root)
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to get repo fingerprint: %w", err)
+		return "", "", "", fmt.Errorf("failed to get workspace fingerprint: %w", err)
 	}
 
 	workspacePath, err = e.gitRepo.RelPath(root, cwd)

@@ -17,7 +17,7 @@ var untrackCmd = &cobra.Command{
 
 This command does NOT:
 - Modify workspace files
-- Delete store overlay content (use 'prune' for that)
+- Delete store overlay content
 
 It only removes the paths from track.json metadata.`,
 	Args: cobra.MinimumNArgs(1),

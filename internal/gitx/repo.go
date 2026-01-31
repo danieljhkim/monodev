@@ -70,16 +70,13 @@ func (g *RealGitRepo) Fingerprint(root string) (string, error) {
 	cmd.Dir = root
 	output, err := cmd.Output()
 
-	var remoteURL string
+	var remoteURL string = "unknown"
 	if err == nil {
 		remoteURL = strings.TrimSpace(string(output))
 	}
 
 	// Compute fingerprint from root path + remote URL
-	data := absRoot
-	if remoteURL != "" {
-		data = data + "|" + remoteURL
-	}
+	data := absRoot + "|" + remoteURL
 
 	hash := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(hash[:]), nil

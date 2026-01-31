@@ -54,10 +54,10 @@ func init() {
 	rootCmd.AddCommand(trackCmd)
 	rootCmd.AddCommand(untrackCmd)
 	rootCmd.AddCommand(commitCmd)
-	rootCmd.AddCommand(pruneCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(describeCmd)
 	rootCmd.AddCommand(stackCmd)
+	rootCmd.AddCommand(deleteCmd)
 }
 
 // Execute executes the root command.
