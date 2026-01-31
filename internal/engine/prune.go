@@ -41,7 +41,7 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}

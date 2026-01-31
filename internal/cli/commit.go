@@ -18,11 +18,8 @@ var (
 var commitCmd = &cobra.Command{
 	Use:   "commit [path]...",
 	Short: "Commit workspace files to the active store",
-	Long: `Copy workspace files to the active store.
-
-In symlink mode, only NEW paths (not already managed) are committed.
-In copy mode, all specified paths are committed.`,
-	Args: cobra.ArbitraryArgs,
+	Long:  `Copy workspace files to the active store, for resuable overlay artifacts.`,
+	Args:  cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Require either paths or --all
 		if len(args) == 0 && !commitAll {

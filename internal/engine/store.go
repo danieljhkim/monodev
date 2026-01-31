@@ -65,7 +65,7 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Create new workspace state
-			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "symlink")
+			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "copy")
 		} else {
 			return fmt.Errorf("failed to load workspace state: %w", err)
 		}
@@ -113,7 +113,7 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Create new workspace state
-			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "symlink")
+			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "copy")
 		} else {
 			return fmt.Errorf("failed to load workspace state: %w", err)
 		}

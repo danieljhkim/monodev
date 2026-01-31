@@ -84,10 +84,27 @@ func (fs *RealFS) Symlink(oldname, newname string) error {
 }
 
 // Copy copies a file or directory from src to dst.
+// Follows symlinks to copy the target content, not the symlink itself.
 func (fs *RealFS) Copy(src, dst string) error {
-	srcInfo, err := os.Lstat(src)
+	// Use Stat (not Lstat) to follow symlinks and get the actual type
+	srcInfo, err := os.Stat(src)
 	if err != nil {
 		return fmt.Errorf("failed to stat source: %w", err)
+	}
+
+	// Check if destination exists and remove it if type mismatch
+	dstInfo, err := os.Lstat(dst)
+	if err == nil {
+		// Destination exists - check for type mismatch
+		if srcInfo.IsDir() != dstInfo.IsDir() {
+			// Source and destination types don't match, remove destination
+			if err := os.RemoveAll(dst); err != nil {
+				return fmt.Errorf("failed to remove existing destination: %w", err)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		// Error other than "not exists"
+		return fmt.Errorf("failed to stat destination: %w", err)
 	}
 
 	if srcInfo.IsDir() {
@@ -98,6 +115,15 @@ func (fs *RealFS) Copy(src, dst string) error {
 
 // copyFile copies a single file from src to dst.
 func (fs *RealFS) copyFile(src, dst string, mode os.FileMode) error {
+	// Defensive check: verify source is not a directory
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		return fmt.Errorf("failed to stat source: %w", err)
+	}
+	if srcInfo.IsDir() {
+		return fmt.Errorf("copyFile called on directory %q - this is a bug", src)
+	}
+
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("failed to open source: %w", err)

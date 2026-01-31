@@ -103,18 +103,17 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		removed = append(removed, relPath)
 	}
 
-	// Step 6: Update workspace state (clear active store, preserve stack)
-	// workspaceState.ActiveStore = ""
-	workspaceState.Applied = false
-	workspaceState.PruneAppliedStores()
-
+	// Step 6: Update or delete workspace state
+	// If all paths are removed, delete the state file entirely
 	if len(workspaceState.Paths) == 0 {
-		// No more managed paths - delete workspace state
 		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace state: %w", err)
 		}
 	} else {
-		// Stack stores still have paths - save workspace state
+		// Some paths remain (e.g., from stack stores), update the state
+		workspaceState.Applied = false
+		workspaceState.PruneAppliedStores()
+
 		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 			return nil, fmt.Errorf("failed to save workspace state: %w", err)
 		}
@@ -138,21 +137,8 @@ func (e *Engine) validateManagedPath(path string, ownership state.PathOwnership)
 		return nil
 	}
 
-	// For symlinks, validate the target
-	if ownership.Type == "symlink" {
-		target, err := e.fs.Readlink(path)
-		if err != nil {
-			return fmt.Errorf("expected symlink but got error reading link: %w", err)
-		}
-
-		// We could validate the target matches the store path here,
-		// but that requires knowing which store owned it.
-		// For now, just verify it's a symlink.
-		_ = target
-	}
-
-	// For copies, we could check the checksum
-	if ownership.Type == "copy" && ownership.Checksum != "" {
+	// For copies, check the checksum to detect drift
+	if ownership.Checksum != "" {
 		currentHash, err := e.hasher.HashFile(path)
 		if err == nil && currentHash != ownership.Checksum {
 			// File has been modified - this is drift

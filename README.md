@@ -51,7 +51,13 @@ monodev checkout -n my-component-store
 # track dev-only files for the "active store" (similar to `git add`)
 monodev track Makefile .cursor scripts/dev .claude .vscode
 
+# check status of the current workspace
+monodev status
+
 # persist the tracked files to the store (similar to `git commit`)
+monodev commit --all
+
+# if you modifed the tracked files, you can commit them again to update the store
 monodev commit --all
 
 # removes the "active store" overlays from the current directory
@@ -67,11 +73,11 @@ monodev unapply # this will remove the overlays from the current dir
 
 When you invoke `monodev checkout <store-id>` under a specific directory within a repo, a workspace file is created in `.monodev/workspaces/<workspace-id>.json`. This file contains the metadata for the workspace, including the active store, the applied stores, and the tracked paths.
 
-The `workspace-id` is derived from the repo fingerprint and the relative path to the workspace. So when you cd into to a different directory, you will not have an "active store" for that directory. And when you cd back to the original component directory, the active store is restored. 
+The `workspace-id` is derived from the repo fingerprint (git hash) and the relative path to the workspace. So when you cd into to a different directory, you will not have an "active store" for that directory. And when you cd back to the original component directory, the active store is restored. 
 
 This means you can have multiple active stores for different component directories within the same repo.
 
-When you invoke `monodev apply` with the active store, the overlays are applied to the current directory. This is done by creating symlinks of the tracked paths to the current directory.
+When you invoke `monodev apply` with the active store, the overlays are applied to the current directory. This is done by creating copies of the tracked paths to the current directory.
 
 You can use `monodev status` to see the current workspace status and applied overlays.
 

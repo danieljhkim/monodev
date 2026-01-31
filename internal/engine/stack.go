@@ -89,7 +89,7 @@ func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
 	if err != nil {
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -128,7 +128,7 @@ func (e *Engine) StackPop(ctx context.Context, req *StackPopRequest) (*StackPopR
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -177,7 +177,7 @@ func (e *Engine) StackClear(ctx context.Context, req *StackClearRequest) error {
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -199,7 +199,7 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -309,7 +309,7 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "symlink")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}

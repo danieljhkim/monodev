@@ -52,24 +52,19 @@ var statusCmd = &cobra.Command{
 		}
 		PrintLabelValue("Mode", modeDisplay)
 
-		// Applied Stores Table
-		if len(result.AppliedStoreDetails) > 0 {
-			fmt.Println()
-			PrintSubsection("Applied Stores:")
-
-			headers := []string{"storeId", "path", "mode"}
-			rows := [][]string{}
-
-			for key, store := range result.Paths {
-				rows = append(rows, []string{
-					store.Store,
-					key,
-					store.Type,
-				})
-			}
-
-			PrintTable(headers, rows)
+		fmt.Println()
+		// existing paths in the workspace
+		PrintSubsection("Applied Stores:")
+		headers := []string{"storeId", "path", "mode"}
+		rows := [][]string{}
+		for key, store := range result.Paths {
+			rows = append(rows, []string{
+				store.Store,
+				key,
+				store.Type,
+			})
 		}
+		PrintTable(headers, rows)
 
 		// Stack Display
 		if len(result.Stack) > 0 {

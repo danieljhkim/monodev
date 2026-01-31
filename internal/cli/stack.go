@@ -76,7 +76,7 @@ var stackLsCmd = &cobra.Command{
 var stackAddCmd = &cobra.Command{
 	Use:   "add <store-id>",
 	Short: "Add a store to the stack",
-	Long:  `Add a store to the stack. The store will be applied before the active store.`,
+	Long:  `Add a store to the stack. The stores in the stack are applied in order, with later stores taking precedence on path conflicts.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		storeID := args[0]
@@ -102,7 +102,7 @@ var stackAddCmd = &cobra.Command{
 		}
 
 		PrintSuccess(fmt.Sprintf("Added store to stack: %s", storeID))
-		PrintInfo(fmt.Sprintf("Store '%s' will be applied before the active store.", storeID))
+		PrintInfo(fmt.Sprintf("Store '%s' will be applied in the order of the stack.", storeID))
 		return nil
 	},
 }
@@ -201,10 +201,11 @@ The active store is not affected - use 'monodev apply' separately for that.`,
 
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		applyMode := "copy" // cmd.Flags().GetString("mode")
 
 		req := &engine.StackApplyRequest{
 			CWD:    cwd,
-			Mode:   "symlink", // Only symlink mode supported for now
+			Mode:   applyMode,
 			Force:  force,
 			DryRun: dryRun,
 		}
@@ -307,9 +308,9 @@ func init() {
 	stackCmd.AddCommand(stackUnapplyCmd)
 
 	// Flags for stack apply
-	// Note: Only symlink mode is supported for stack operations for now
 	stackApplyCmd.Flags().BoolP("force", "f", false, "Force apply, overwriting conflicts")
 	stackApplyCmd.Flags().Bool("dry-run", false, "Show what would be applied without making changes")
+	// stackApplyCmd.Flags().StringP("mode", "m", "copy", "Overlay mode: symlink or copy")
 
 	// Flags for stack unapply
 	stackUnapplyCmd.Flags().BoolP("force", "f", false, "Force removal even if validation fails")

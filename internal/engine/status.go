@@ -154,7 +154,9 @@ func (e *Engine) computeTrackedPathDetails(activeStoreID string, trackedPaths []
 		// Check if applied (exists in workspace.Paths)
 		if workspaceState != nil {
 			if _, exists := workspaceState.Paths[trackedPath]; exists {
-				pathInfo.IsApplied = true
+				if workspaceState.Paths[trackedPath].Store == activeStoreID {
+					pathInfo.IsApplied = true
+				}
 			}
 		}
 
