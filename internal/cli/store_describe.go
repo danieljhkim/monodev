@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var describeCmd = &cobra.Command{
+var storeDescribeCmd = &cobra.Command{
 	Use:   "describe <store-id>",
 	Short: "Show store details",
 	Long:  `Display detailed information about a store.`,

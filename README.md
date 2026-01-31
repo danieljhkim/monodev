@@ -73,7 +73,7 @@ monodev unapply # this will remove the overlays from the current dir
 
 When you invoke `monodev checkout <store-id>` under a specific directory within a repo, a workspace file is created in `.monodev/workspaces/<workspace-id>.json`. This file contains the metadata for the workspace, including the active store, the applied stores, and the tracked paths.
 
-The `workspace-id` is derived from the repo fingerprint (git hash) and the relative path to the workspace. So when you cd into to a different directory, you will not have an "active store" for that directory. And when you cd back to the original component directory, the active store is restored. 
+The `workspace-id` is derived from the repo fingerprint (hashed git remote URL + absolute path) and the relative path to the workspace. So when you cd into to a different directory, you will not have an "active store" for that directory. And when you cd back to the original component directory, the active store is restored. 
 
 This means you can have multiple active stores for different component directories within the same repo.
 
@@ -98,10 +98,13 @@ When there are conflicts (i.e. multiple stores claim the same path), you can use
 monodev status
 
 # this lists all available stores
-monodev list
+monodev store ls
 
 # this shows the detailed metadata and tracked paths for a store
-monodev describe <store-id>
+monodev store describe <store-id>
+
+# this deletes a store and all its overlay artifacts
+monodev store rm <store-id>
 
 # this sets the active store (store must already exist)
 monodev checkout <store-id>
@@ -127,6 +130,19 @@ monodev apply [--force] [--dry-run]
 # this removes the "active store's" applied overlays from the current workspace
 monodev unapply [--force] [--dry-run]
 
+```
+
+### Workspace management
+
+```bash
+# list all workspaces
+monodev workspace ls
+
+# show detailed information about a workspace
+monodev workspace describe <workspace-id>
+
+# delete a workspace
+monodev workspace rm <workspace-id>
 ```
 
 ### Stack management

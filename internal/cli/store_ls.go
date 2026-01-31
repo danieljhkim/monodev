@@ -6,8 +6,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var listCmd = &cobra.Command{
-	Use:   "list",
+var storeLsCmd = &cobra.Command{
+	Use:   "ls",
 	Short: "List all stores",
 	Long:  `Display all available stores.`,
 	Args:  cobra.NoArgs,

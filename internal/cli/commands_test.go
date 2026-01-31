@@ -45,7 +45,7 @@ func setupTestEnv(t *testing.T) (string, func()) {
 	return workspaceDir, cleanup
 }
 
-func TestListCommand_NoStores(t *testing.T) {
+func TestStoreLsCommand_NoStores(t *testing.T) {
 	workspaceDir, cleanup := setupTestEnv(t)
 	defer cleanup()
 
@@ -56,7 +56,7 @@ func TestListCommand_NoStores(t *testing.T) {
 		_ = os.Chdir(oldDir)
 	}()
 
-	rootCmd.SetArgs([]string{"list"})
+	rootCmd.SetArgs([]string{"store", "ls"})
 	var bufOut, bufErr bytes.Buffer
 	rootCmd.SetOut(&bufOut)
 	rootCmd.SetErr(&bufErr)
@@ -76,7 +76,7 @@ func TestListCommand_NoStores(t *testing.T) {
 	}
 }
 
-func TestListCommand_JSONOutput(t *testing.T) {
+func TestStoreLsCommand_JSONOutput(t *testing.T) {
 	workspaceDir, cleanup := setupTestEnv(t)
 	defer cleanup()
 
@@ -86,7 +86,7 @@ func TestListCommand_JSONOutput(t *testing.T) {
 		_ = os.Chdir(oldDir)
 	}()
 
-	rootCmd.SetArgs([]string{"list", "--json"})
+	rootCmd.SetArgs([]string{"store", "ls", "--json"})
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 
@@ -347,7 +347,7 @@ func TestGlobalJSONFlag(t *testing.T) {
 	}()
 
 	// Test that --json flag works globally
-	rootCmd.SetArgs([]string{"list", "--json"})
+	rootCmd.SetArgs([]string{"store", "ls", "--json"})
 	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 
@@ -368,7 +368,7 @@ func TestGlobalJSONFlag(t *testing.T) {
 }
 
 func TestCommandHelp(t *testing.T) {
-	commands := []string{"apply", "unapply", "status", "checkout", "track", "list"}
+	commands := []string{"apply", "unapply", "status", "checkout", "track", "store", "workspace"}
 
 	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {

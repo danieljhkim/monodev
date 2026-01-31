@@ -51,13 +51,12 @@ func init() {
 	rootCmd.AddCommand(unapplyCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(checkoutCmd)
+	rootCmd.AddCommand(commitCmd)
 	rootCmd.AddCommand(trackCmd)
 	rootCmd.AddCommand(untrackCmd)
-	rootCmd.AddCommand(commitCmd)
-	rootCmd.AddCommand(listCmd)
-	rootCmd.AddCommand(describeCmd)
+	rootCmd.AddCommand(storeCmd)
+	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(stackCmd)
-	rootCmd.AddCommand(deleteCmd)
 }
 
 // Execute executes the root command.

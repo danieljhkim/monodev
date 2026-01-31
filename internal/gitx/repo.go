@@ -70,7 +70,7 @@ func (g *RealGitRepo) Fingerprint(root string) (string, error) {
 	cmd.Dir = root
 	output, err := cmd.Output()
 
-	var remoteURL string = "unknown"
+	remoteURL := "unknown"
 	if err == nil {
 		remoteURL = strings.TrimSpace(string(output))
 	}

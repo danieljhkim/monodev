@@ -1,6 +1,9 @@
 package engine
 
-import "github.com/danieljhkim/monodev/internal/planner"
+import (
+	"github.com/danieljhkim/monodev/internal/planner"
+	"github.com/danieljhkim/monodev/internal/state"
+)
 
 // ApplyRequest represents a request to apply store overlays.
 type ApplyRequest struct {
@@ -198,4 +201,74 @@ type StackUnapplyResult struct {
 
 	// WorkspaceID is the workspace ID
 	WorkspaceID string
+}
+
+// DeleteStoreRequest represents a request to delete a store.
+type DeleteStoreRequest struct {
+	StoreID string
+	Force   bool // Skip safety checks
+	DryRun  bool // Preview only
+}
+
+// DeleteStoreResult represents the result of deleting a store.
+type DeleteStoreResult struct {
+	StoreID            string
+	AffectedWorkspaces []WorkspaceUsage
+	DryRun             bool
+	Deleted            bool
+}
+
+// WorkspaceUsage describes how a workspace uses a store.
+type WorkspaceUsage struct {
+	WorkspaceID      string
+	WorkspacePath    string
+	IsActive         bool
+	InStack          bool
+	AppliedPathCount int
+}
+
+// ListWorkspacesResult represents the result of listing workspaces.
+type ListWorkspacesResult struct {
+	Workspaces []WorkspaceInfo
+}
+
+// WorkspaceInfo contains summary information about a workspace.
+type WorkspaceInfo struct {
+	WorkspaceID      string
+	WorkspacePath    string
+	Repo             string
+	Applied          bool
+	Mode             string
+	ActiveStore      string
+	StackCount       int
+	AppliedPathCount int
+}
+
+// DescribeWorkspaceResult represents the result of describing a workspace.
+type DescribeWorkspaceResult struct {
+	WorkspaceID   string
+	WorkspacePath string
+	Repo          string
+	Applied       bool
+	Mode          string
+	ActiveStore   string
+	Stack         []string
+	AppliedStores []state.AppliedStore
+	Paths         map[string]state.PathOwnership
+}
+
+// DeleteWorkspaceRequest represents a request to delete a workspace.
+type DeleteWorkspaceRequest struct {
+	WorkspaceID string
+	Force       bool
+	DryRun      bool
+}
+
+// DeleteWorkspaceResult represents the result of deleting a workspace.
+type DeleteWorkspaceResult struct {
+	WorkspaceID   string
+	WorkspacePath string
+	Deleted       bool
+	DryRun        bool
+	PathsRemoved  int
 }

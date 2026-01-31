@@ -78,7 +78,7 @@ func TestSetVersion(t *testing.T) {
 func TestRootCommand_Subcommands(t *testing.T) {
 	subcommands := []string{
 		"apply", "unapply", "status", "checkout", "track", "untrack",
-		"commit", "prune", "list", "describe", "stack",
+		"commit", "store", "workspace", "stack",
 	}
 
 	for _, cmd := range subcommands {
@@ -89,6 +89,52 @@ func TestRootCommand_Subcommands(t *testing.T) {
 			}
 			if subCmd == nil {
 				t.Errorf("Find(%q) returned nil command", cmd)
+			}
+		})
+	}
+}
+
+func TestStoreCommand_Subcommands(t *testing.T) {
+	storeSubcommands := []string{"ls", "rm", "describe"}
+
+	for _, cmd := range storeSubcommands {
+		t.Run(cmd, func(t *testing.T) {
+			subCmd, _, err := rootCmd.Find([]string{"store", cmd})
+			if err != nil {
+				t.Errorf("Find(%q) error = %v", []string{"store", cmd}, err)
+			}
+			if subCmd == nil {
+				t.Errorf("Find(%q) returned nil command", []string{"store", cmd})
+			}
+		})
+	}
+}
+
+func TestWorkspaceCommand_Subcommands(t *testing.T) {
+	workspaceSubcommands := []string{"ls", "rm", "describe"}
+
+	for _, cmd := range workspaceSubcommands {
+		t.Run(cmd, func(t *testing.T) {
+			subCmd, _, err := rootCmd.Find([]string{"workspace", cmd})
+			if err != nil {
+				t.Errorf("Find(%q) error = %v", []string{"workspace", cmd}, err)
+			}
+			if subCmd == nil {
+				t.Errorf("Find(%q) returned nil command", []string{"workspace", cmd})
+			}
+		})
+	}
+}
+
+func TestOldCommands_NotRegistered(t *testing.T) {
+	oldCommands := []string{"list", "delete", "describe", "prune"}
+
+	for _, cmd := range oldCommands {
+		t.Run(cmd, func(t *testing.T) {
+			subCmd, _, err := rootCmd.Find([]string{cmd})
+			// These commands should not be found at the root level
+			if err == nil && subCmd != nil && subCmd.Name() == cmd {
+				t.Errorf("Old command %q should not be registered at root level", cmd)
 			}
 		})
 	}

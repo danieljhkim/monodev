@@ -9,6 +9,27 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ---
 
+## [0.2.1] — 2026-01-31
+
+### Breaking Changes
+- Reorganized CLI commands into parent commands:
+  - `monodev list` → `monodev store ls`
+  - `monodev delete <store-id>` → `monodev store rm <store-id>`
+  - `monodev describe <store-id>` → `monodev store describe <store-id>`
+  - Removed `monodev prune` command (not registered, functionality removed)
+- Added new `workspace` parent command for managing workspace state:
+  - `monodev workspace ls` - List all workspaces
+  - `monodev workspace describe <workspace-id>` - Show workspace details
+  - `monodev workspace rm <workspace-id>` - Delete workspace state file
+- Removed symlink support for now.
+
+### Added
+- New engine methods for workspace management:
+  - `ListWorkspaces()` - Enumerate all workspace state files
+  - `DescribeWorkspace()` - Get detailed workspace information
+  - `DeleteWorkspace()` - Delete workspace state file with safety checks
+- Support for non-git repositories.
+
 ## [0.2.0] — 2026-01-25
 
 ### Added
