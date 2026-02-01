@@ -1,3 +1,14 @@
+// Package fsops provides filesystem operations with safety guarantees.
+//
+// All filesystem mutations in monodev go through the FS interface, which
+// provides abstractions for common operations along with path validation
+// to prevent directory traversal attacks and other security issues.
+//
+// Key features:
+//   - Atomic writes using temp file + rename
+//   - Path validation for relative paths and identifiers
+//   - Symlink-aware operations
+//   - Testable via the FS interface
 package fsops
 
 import (

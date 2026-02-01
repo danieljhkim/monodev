@@ -1,3 +1,14 @@
+// Package stores manages store repositories and overlay files.
+//
+// A store is a named collection of dev-only files (editor config, scripts, etc.)
+// that can be applied to workspaces. Stores are persisted in ~/.monodev/stores/
+// with each store containing metadata, tracked paths, and overlay files.
+//
+// Key components:
+//   - StoreRepo: Interface for managing store lifecycle (create, load, delete)
+//   - StoreMeta: Store metadata (description, scope, timestamps)
+//   - TrackFile: List of paths tracked by the store
+//   - Overlay directory: Contains the actual files managed by the store
 package stores
 
 import (
