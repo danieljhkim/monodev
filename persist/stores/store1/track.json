@@ -4,10 +4,6 @@
     {
       "path": "test1.txt",
       "kind": "file"
-    },
-    {
-      "path": "test2.txt",
-      "kind": "file"
     }
   ]
 }
