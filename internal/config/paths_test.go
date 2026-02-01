@@ -39,7 +39,7 @@ func TestDefaultPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("respects MONODEV_ROOT environment variable", func(t *testing.T) {
+	t.Run("respects MONODEV_ROOT environment variable (highest priority)", func(t *testing.T) {
 		customRoot := "/custom/monodev/path"
 
 		oldRoot := os.Getenv("MONODEV_ROOT")
@@ -62,6 +62,147 @@ func TestDefaultPaths(t *testing.T) {
 		}
 		if paths.Workspaces != filepath.Join(customRoot, "workspaces") {
 			t.Errorf("Workspaces should be under custom root, got: %s", paths.Workspaces)
+		}
+	})
+
+	t.Run("uses repo-local .monodev when it exists", func(t *testing.T) {
+		// Clear MONODEV_ROOT env var
+		oldRoot := os.Getenv("MONODEV_ROOT")
+		defer os.Setenv("MONODEV_ROOT", oldRoot)
+		os.Unsetenv("MONODEV_ROOT")
+
+		// Create a temporary git repo with .monodev
+		tmpDir, err := os.MkdirTemp("", "config-test-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		// Create .git directory
+		gitDir := filepath.Join(tmpDir, ".git")
+		if err := os.Mkdir(gitDir, 0755); err != nil {
+			t.Fatalf("failed to create .git: %v", err)
+		}
+
+		// Create .monodev directory
+		monodevDir := filepath.Join(tmpDir, ".monodev")
+		if err := os.Mkdir(monodevDir, 0755); err != nil {
+			t.Fatalf("failed to create .monodev: %v", err)
+		}
+
+		// Change to the temp directory
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get cwd: %v", err)
+		}
+		defer os.Chdir(oldWd)
+
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
+		paths, err := DefaultPaths()
+		if err != nil {
+			t.Fatalf("DefaultPaths failed: %v", err)
+		}
+
+		// Should use repo-local .monodev
+		// Use filepath.EvalSymlinks to handle /private prefix on macOS
+		expectedRoot, _ := filepath.EvalSymlinks(monodevDir)
+		actualRoot, _ := filepath.EvalSymlinks(paths.Root)
+		if actualRoot != expectedRoot {
+			t.Errorf("Expected repo-local .monodev at %s, got %s", expectedRoot, actualRoot)
+		}
+	})
+
+	t.Run("falls back to global ~/.monodev when no repo-local exists", func(t *testing.T) {
+		// Clear MONODEV_ROOT env var
+		oldRoot := os.Getenv("MONODEV_ROOT")
+		defer os.Setenv("MONODEV_ROOT", oldRoot)
+		os.Unsetenv("MONODEV_ROOT")
+
+		// Create a temporary git repo WITHOUT .monodev
+		tmpDir, err := os.MkdirTemp("", "config-test-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		// Create .git directory
+		gitDir := filepath.Join(tmpDir, ".git")
+		if err := os.Mkdir(gitDir, 0755); err != nil {
+			t.Fatalf("failed to create .git: %v", err)
+		}
+
+		// Change to the temp directory
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get cwd: %v", err)
+		}
+		defer os.Chdir(oldWd)
+
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
+		paths, err := DefaultPaths()
+		if err != nil {
+			t.Fatalf("DefaultPaths failed: %v", err)
+		}
+
+		// Should use global ~/.monodev
+		home, _ := os.UserHomeDir()
+		expectedRoot := filepath.Join(home, ".monodev")
+		if paths.Root != expectedRoot {
+			t.Errorf("Expected global .monodev at %s, got %s", expectedRoot, paths.Root)
+		}
+	})
+
+	t.Run("MONODEV_ROOT takes precedence over repo-local", func(t *testing.T) {
+		customRoot := "/custom/monodev/path"
+
+		oldRoot := os.Getenv("MONODEV_ROOT")
+		defer os.Setenv("MONODEV_ROOT", oldRoot)
+		os.Setenv("MONODEV_ROOT", customRoot)
+
+		// Create a temporary git repo with .monodev
+		tmpDir, err := os.MkdirTemp("", "config-test-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		// Create .git directory
+		gitDir := filepath.Join(tmpDir, ".git")
+		if err := os.Mkdir(gitDir, 0755); err != nil {
+			t.Fatalf("failed to create .git: %v", err)
+		}
+
+		// Create .monodev directory
+		monodevDir := filepath.Join(tmpDir, ".monodev")
+		if err := os.Mkdir(monodevDir, 0755); err != nil {
+			t.Fatalf("failed to create .monodev: %v", err)
+		}
+
+		// Change to the temp directory
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get cwd: %v", err)
+		}
+		defer os.Chdir(oldWd)
+
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
+		paths, err := DefaultPaths()
+		if err != nil {
+			t.Fatalf("DefaultPaths failed: %v", err)
+		}
+
+		// MONODEV_ROOT should take precedence
+		if paths.Root != customRoot {
+			t.Errorf("Expected MONODEV_ROOT %s to take precedence, got %s", customRoot, paths.Root)
 		}
 	})
 }

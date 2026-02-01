@@ -58,6 +58,7 @@ func init() {
 	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(stackCmd)
 	rootCmd.AddCommand(diffCmd)
+	rootCmd.AddCommand(initCmd)
 }
 
 // Execute executes the root command.

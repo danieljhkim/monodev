@@ -27,24 +27,72 @@ type Paths struct {
 }
 
 // DefaultPaths returns the default paths for monodev.
-// Paths can be overridden with environment variables:
-// - MONODEV_ROOT: Override the root directory
+// Path resolution priority:
+// 1. MONODEV_ROOT environment variable (highest priority)
+// 2. Repo-local .monodev (if exists and we're in a git repo)
+// 3. ~/.monodev (fallback - existing behavior)
 func DefaultPaths() (*Paths, error) {
-	root := os.Getenv("MONODEV_ROOT")
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user home directory: %w", err)
-		}
-		root = filepath.Join(home, ".monodev")
+	// Priority 1: MONODEV_ROOT env var
+	if root := os.Getenv("MONODEV_ROOT"); root != "" {
+		return buildPaths(root), nil
 	}
 
+	// Priority 2: Repo-local .monodev
+	if cwd, err := os.Getwd(); err == nil {
+		if repoRoot, err := discoverGitRoot(cwd); err == nil {
+			repoLocalPath := filepath.Join(repoRoot, ".monodev")
+			if pathExists(repoLocalPath) {
+				return buildPaths(repoLocalPath), nil
+			}
+		}
+	}
+
+	// Priority 3: Global ~/.monodev (fallback)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user home directory: %w", err)
+	}
+	return buildPaths(filepath.Join(home, ".monodev")), nil
+}
+
+// buildPaths constructs a Paths struct from a root directory.
+func buildPaths(root string) *Paths {
 	return &Paths{
 		Root:       root,
 		Stores:     filepath.Join(root, "stores"),
 		Workspaces: filepath.Join(root, "workspaces"),
 		Config:     filepath.Join(root, "config.yaml"),
-	}, nil
+	}
+}
+
+// discoverGitRoot walks up from cwd to find .git directory.
+func discoverGitRoot(cwd string) (string, error) {
+	absPath, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", err
+	}
+
+	current := absPath
+	for {
+		gitDir := filepath.Join(current, ".git")
+		if info, err := os.Stat(gitDir); err == nil {
+			if info.IsDir() || info.Mode().IsRegular() {
+				return current, nil
+			}
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("not in a git repository")
+		}
+		current = parent
+	}
+}
+
+// pathExists checks if a path exists.
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // EnsureDirectories creates all necessary directories if they don't exist.
