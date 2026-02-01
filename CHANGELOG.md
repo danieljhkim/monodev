@@ -9,6 +9,11 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ---
 
+## [0.2.2] — 2026-01-31
+
+### Added
+- New `monodev diff` command for comparing workspace and store overlays.
+
 ## [0.2.1] — 2026-01-31
 
 ### Breaking Changes
