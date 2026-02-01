@@ -232,9 +232,16 @@ func (r *FileStoreRepo) SaveTrack(id string, track *TrackFile) error {
 }
 
 // OverlayRoot returns the path to the overlay directory for a store.
+// Returns an empty string if the store ID is invalid.
+// Callers should validate store IDs using Exists() before calling this method.
 func (r *FileStoreRepo) OverlayRoot(id string) string {
-	// Note: We don't validate here as this is a read-only operation
-	// and validation should happen at the call site
+	// Validate store ID for safety even for read-only operations
+	// to prevent exposing internal paths to untrusted IDs
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		// For this read-only operation, return a safe invalid path
+		// rather than panicking. Callers should validate IDs beforehand.
+		return ""
+	}
 	return filepath.Join(r.storesDir, id, "overlay")
 }
 
