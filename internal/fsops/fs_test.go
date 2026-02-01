@@ -143,7 +143,11 @@ func TestRealFS_Exists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Errorf("failed to remove temp dir: %v", err)
+		}
+	}()
 
 	t.Run("existing file", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "exists.txt")
@@ -189,7 +193,11 @@ func TestRealFS_MkdirAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Errorf("failed to remove temp dir: %v", err)
+		}
+	}()
 
 	t.Run("create nested directories", func(t *testing.T) {
 		nestedPath := filepath.Join(tmpDir, "a", "b", "c")
@@ -226,7 +234,11 @@ func TestRealFS_AtomicWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Errorf("failed to remove temp dir: %v", err)
+		}
+	}()
 
 	t.Run("write to new file", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "atomic-new.txt")
@@ -281,7 +293,11 @@ func TestRealFS_ReadFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Errorf("failed to remove temp dir: %v", err)
+		}
+	}()
 
 	t.Run("read existing file", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "read-test.txt")
@@ -315,7 +331,11 @@ func TestRealFS_Remove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Errorf("failed to remove temp dir: %v", err)
+		}
+	}()
 
 	t.Run("remove existing file", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "remove-me.txt")

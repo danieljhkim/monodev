@@ -46,6 +46,7 @@ func PrintSubsection(title string) {
 // PrintSuccess prints a success message with a checkmark
 func PrintSuccess(msg string) {
 	initColors()
+	fmt.Println()
 	_, _ = successColor.Printf("✓ %s\n", msg)
 }
 

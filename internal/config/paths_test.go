@@ -10,8 +10,14 @@ func TestDefaultPaths(t *testing.T) {
 	t.Run("returns paths based on home directory", func(t *testing.T) {
 		// Clear MONODEV_ROOT env var
 		oldRoot := os.Getenv("MONODEV_ROOT")
-		defer os.Setenv("MONODEV_ROOT", oldRoot)
-		os.Unsetenv("MONODEV_ROOT")
+		defer func() {
+			if err := os.Setenv("MONODEV_ROOT", oldRoot); err != nil {
+				t.Errorf("failed to restore MONODEV_ROOT: %v", err)
+			}
+		}()
+		if err := os.Unsetenv("MONODEV_ROOT"); err != nil {
+			t.Fatalf("failed to unset MONODEV_ROOT: %v", err)
+		}
 
 		paths, err := DefaultPaths()
 		if err != nil {
@@ -43,9 +49,15 @@ func TestDefaultPaths(t *testing.T) {
 		customRoot := "/custom/monodev/path"
 
 		oldRoot := os.Getenv("MONODEV_ROOT")
-		defer os.Setenv("MONODEV_ROOT", oldRoot)
+		defer func() {
+			if err := os.Setenv("MONODEV_ROOT", oldRoot); err != nil {
+				t.Errorf("failed to restore MONODEV_ROOT: %v", err)
+			}
+		}()
 
-		os.Setenv("MONODEV_ROOT", customRoot)
+		if err := os.Setenv("MONODEV_ROOT", customRoot); err != nil {
+			t.Fatalf("failed to set MONODEV_ROOT: %v", err)
+		}
 
 		paths, err := DefaultPaths()
 		if err != nil {
@@ -68,15 +80,25 @@ func TestDefaultPaths(t *testing.T) {
 	t.Run("uses repo-local .monodev when it exists", func(t *testing.T) {
 		// Clear MONODEV_ROOT env var
 		oldRoot := os.Getenv("MONODEV_ROOT")
-		defer os.Setenv("MONODEV_ROOT", oldRoot)
-		os.Unsetenv("MONODEV_ROOT")
+		defer func() {
+			if err := os.Setenv("MONODEV_ROOT", oldRoot); err != nil {
+				t.Errorf("failed to restore MONODEV_ROOT: %v", err)
+			}
+		}()
+		if err := os.Unsetenv("MONODEV_ROOT"); err != nil {
+			t.Fatalf("failed to unset MONODEV_ROOT: %v", err)
+		}
 
 		// Create a temporary git repo with .monodev
 		tmpDir, err := os.MkdirTemp("", "config-test-*")
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() {
+			if err := os.RemoveAll(tmpDir); err != nil {
+				t.Errorf("failed to remove temp dir: %v", err)
+			}
+		}()
 
 		// Create .git directory
 		gitDir := filepath.Join(tmpDir, ".git")
@@ -95,7 +117,11 @@ func TestDefaultPaths(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get cwd: %v", err)
 		}
-		defer os.Chdir(oldWd)
+		defer func() {
+			if err := os.Chdir(oldWd); err != nil {
+				t.Errorf("failed to restore working directory: %v", err)
+			}
+		}()
 
 		if err := os.Chdir(tmpDir); err != nil {
 			t.Fatalf("failed to chdir: %v", err)
@@ -118,15 +144,25 @@ func TestDefaultPaths(t *testing.T) {
 	t.Run("falls back to global ~/.monodev when no repo-local exists", func(t *testing.T) {
 		// Clear MONODEV_ROOT env var
 		oldRoot := os.Getenv("MONODEV_ROOT")
-		defer os.Setenv("MONODEV_ROOT", oldRoot)
-		os.Unsetenv("MONODEV_ROOT")
+		defer func() {
+			if err := os.Setenv("MONODEV_ROOT", oldRoot); err != nil {
+				t.Errorf("failed to restore MONODEV_ROOT: %v", err)
+			}
+		}()
+		if err := os.Unsetenv("MONODEV_ROOT"); err != nil {
+			t.Fatalf("failed to unset MONODEV_ROOT: %v", err)
+		}
 
 		// Create a temporary git repo WITHOUT .monodev
 		tmpDir, err := os.MkdirTemp("", "config-test-*")
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() {
+			if err := os.RemoveAll(tmpDir); err != nil {
+				t.Errorf("failed to remove temp dir: %v", err)
+			}
+		}()
 
 		// Create .git directory
 		gitDir := filepath.Join(tmpDir, ".git")
@@ -139,7 +175,11 @@ func TestDefaultPaths(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get cwd: %v", err)
 		}
-		defer os.Chdir(oldWd)
+		defer func() {
+			if err := os.Chdir(oldWd); err != nil {
+				t.Errorf("failed to restore working directory: %v", err)
+			}
+		}()
 
 		if err := os.Chdir(tmpDir); err != nil {
 			t.Fatalf("failed to chdir: %v", err)
@@ -162,15 +202,25 @@ func TestDefaultPaths(t *testing.T) {
 		customRoot := "/custom/monodev/path"
 
 		oldRoot := os.Getenv("MONODEV_ROOT")
-		defer os.Setenv("MONODEV_ROOT", oldRoot)
-		os.Setenv("MONODEV_ROOT", customRoot)
+		defer func() {
+			if err := os.Setenv("MONODEV_ROOT", oldRoot); err != nil {
+				t.Errorf("failed to restore MONODEV_ROOT: %v", err)
+			}
+		}()
+		if err := os.Setenv("MONODEV_ROOT", customRoot); err != nil {
+			t.Fatalf("failed to set MONODEV_ROOT: %v", err)
+		}
 
 		// Create a temporary git repo with .monodev
 		tmpDir, err := os.MkdirTemp("", "config-test-*")
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() {
+			if err := os.RemoveAll(tmpDir); err != nil {
+				t.Errorf("failed to remove temp dir: %v", err)
+			}
+		}()
 
 		// Create .git directory
 		gitDir := filepath.Join(tmpDir, ".git")
@@ -189,7 +239,11 @@ func TestDefaultPaths(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get cwd: %v", err)
 		}
-		defer os.Chdir(oldWd)
+		defer func() {
+			if err := os.Chdir(oldWd); err != nil {
+				t.Errorf("failed to restore working directory: %v", err)
+			}
+		}()
 
 		if err := os.Chdir(tmpDir); err != nil {
 			t.Fatalf("failed to chdir: %v", err)
@@ -213,7 +267,11 @@ func TestPaths_EnsureDirectories(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() {
+			if err := os.RemoveAll(tmpDir); err != nil {
+				t.Errorf("failed to remove temp dir: %v", err)
+			}
+		}()
 
 		paths := &Paths{
 			Root:       filepath.Join(tmpDir, "monodev"),
@@ -241,7 +299,11 @@ func TestPaths_EnsureDirectories(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() {
+			if err := os.RemoveAll(tmpDir); err != nil {
+				t.Errorf("failed to remove temp dir: %v", err)
+			}
+		}()
 
 		paths := &Paths{
 			Root:       filepath.Join(tmpDir, "monodev"),
@@ -273,7 +335,11 @@ func TestPaths_EnsureDirectories(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() {
+			if err := os.RemoveAll(tmpDir); err != nil {
+				t.Errorf("failed to remove temp dir: %v", err)
+			}
+		}()
 
 		// Use deeply nested paths
 		deepRoot := filepath.Join(tmpDir, "a", "b", "c", "monodev")

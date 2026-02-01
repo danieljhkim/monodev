@@ -61,6 +61,11 @@ var commitCmd = &cobra.Command{
 				PrintWarning(fmt.Sprintf("Would skip %s (not found in workspace):", PrintCount(len(result.Missing), "missing path", "missing paths")))
 				PrintList(result.Missing, 1)
 			}
+			if len(result.Removed) > 0 {
+				fmt.Println()
+				PrintInfo(fmt.Sprintf("Would remove %s from store (no longer tracked):", PrintCount(len(result.Removed), "path", "paths")))
+				PrintList(result.Removed, 1)
+			}
 			return nil
 		}
 
@@ -71,6 +76,10 @@ var commitCmd = &cobra.Command{
 		if len(result.Missing) > 0 {
 			PrintWarning(fmt.Sprintf("Missing %s (not found in workspace):", PrintCount(len(result.Missing), "path", "paths")))
 			PrintList(result.Missing, 1)
+		}
+		if len(result.Removed) > 0 {
+			PrintInfo(fmt.Sprintf("Removed %s from store (no longer tracked):", PrintCount(len(result.Removed), "path", "paths")))
+			PrintList(result.Removed, 1)
 		}
 		return nil
 	},

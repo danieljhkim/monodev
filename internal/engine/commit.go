@@ -3,9 +3,12 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/danieljhkim/monodev/internal/state"
+	"github.com/danieljhkim/monodev/internal/stores"
 )
 
 // CommitRequest represents a request to commit workspace files to the store.
@@ -34,6 +37,9 @@ type CommitResult struct {
 
 	// Missing is the list of paths that could not be committed because they don't exist in workspace
 	Missing []string
+
+	// Removed is the list of paths that were removed from the store (no longer tracked)
+	Removed []string
 }
 
 // Commit copies workspace files to the active store and records them in workspace state.
@@ -75,6 +81,7 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 		Committed: []string{},
 		Skipped:   []string{},
 		Missing:   []string{},
+		Removed:   []string{},
 	}
 
 	now := e.clock.Now()
@@ -133,6 +140,13 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 
 			result.Committed = append(result.Committed, relPath)
 		}
+
+		// Clean up orphaned files from overlay that are no longer tracked
+		removed, err := e.cleanupOrphanedFiles(overlayRoot, track.Tracked, req.DryRun)
+		if err != nil {
+			return nil, fmt.Errorf("failed to cleanup orphaned files: %w", err)
+		}
+		result.Removed = removed
 	} else {
 		// Commit specific paths (all treated as required)
 		for _, rawPath := range req.Paths {
@@ -210,4 +224,102 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	}
 
 	return result, nil
+}
+
+// cleanupOrphanedFiles removes files from the overlay directory that are no longer tracked.
+// It walks the overlay directory and removes any paths that are not in the tracked list.
+// Returns the list of removed paths (relative to overlay root).
+// If dryRun is true, it only identifies orphaned files without removing them.
+func (e *Engine) cleanupOrphanedFiles(overlayRoot string, trackedPaths []stores.TrackedPath, dryRun bool) ([]string, error) {
+	// Build set of tracked paths for quick lookup
+	trackedSet := make(map[string]bool)
+	for _, tp := range trackedPaths {
+		cleanPath := filepath.Clean(tp.Path)
+		trackedSet[cleanPath] = true
+	}
+
+	var removed []string
+
+	// Check if overlay directory exists
+	exists, err := e.fs.Exists(overlayRoot)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check overlay directory: %w", err)
+	}
+	if !exists {
+		// No overlay directory, nothing to clean
+		return removed, nil
+	}
+
+	// Walk the overlay directory to find orphaned files
+	err = filepath.Walk(overlayRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip the overlay root itself
+		if path == overlayRoot {
+			return nil
+		}
+
+		// Get path relative to overlay root
+		relPath, err := filepath.Rel(overlayRoot, path)
+		if err != nil {
+			return fmt.Errorf("failed to get relative path: %w", err)
+		}
+
+		// Check if this path or any of its parents is tracked
+		isTracked := false
+		checkPath := relPath
+		for {
+			if trackedSet[checkPath] {
+				isTracked = true
+				break
+			}
+
+			// Check parent
+			parent := filepath.Dir(checkPath)
+			if parent == "." || parent == "/" {
+				break
+			}
+			checkPath = parent
+		}
+
+		// If not tracked, mark for removal
+		if !isTracked {
+			// Skip if we've already marked a parent for removal
+			alreadyMarked := false
+			for _, removedPath := range removed {
+				if strings.HasPrefix(relPath, removedPath+string(filepath.Separator)) {
+					alreadyMarked = true
+					break
+				}
+			}
+
+			if !alreadyMarked {
+				removed = append(removed, relPath)
+				// Skip descending into this directory if it's a directory
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk overlay directory: %w", err)
+	}
+
+	// Remove orphaned paths (in reverse order to remove children before parents)
+	if !dryRun {
+		for i := len(removed) - 1; i >= 0; i-- {
+			orphanedPath := filepath.Join(overlayRoot, removed[i])
+			if err := e.fs.RemoveAll(orphanedPath); err != nil {
+				return nil, fmt.Errorf("failed to remove orphaned path %s: %w", removed[i], err)
+			}
+		}
+	}
+
+	return removed, nil
 }

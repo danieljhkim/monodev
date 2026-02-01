@@ -1,19 +1,13 @@
 # monodev
 
-I frequently work with a giant monorepo consisting of countless components nested at varying depths. Because of its scale, it has a noticeable memory footprint on my machine and imposes subotimal landscape for AI agents. 
+Most codebases suffer from "local file drift." We generate debug scripts, AI scratchpads (.cursorrules, .claude, etc.), and task notes that live alongside our code but don't belong in the repo. These files are either accidentally committed (clutter) or deleted too soon (lost knowledge).
 
-To work around this, I selectively open individual components as isolated IDE workspaces, manually excluding irrelevant directories via settings.json. And during developing, I would additionally add various component-specific artifacts such as .cursor, Makefile, AGENTS.md, run.py, etc. 
+`monodev` introduces a third space: **Local-First Overlays**. It keeps your dev-only artifacts persistent and portable without ever leaking them into your Git history.
 
-Long story short, these dev/component specific artifacts cannot easily be commited and persisted methodically, making their reusability difficult across different branches and sessions.
-
-So I created `monodev`.
-
-`monodev` is a local-only CLI for managing **reusable development overlays** (scripts, editor config, agent-instructions, Makefiles, etc.) across large monorepos.
-
-It lets you:
-- keep dev-only files out of git
-- persist them safely per component or profile
-- re-apply and remove them deterministically
+The Monodev Way:
+- **Invisible**: Keeps "git status" clean.
+- **Persistent**: Your notes, scripts, and agent files survive branch switches.
+- **Portable**: Push/Pull your local state via hidden orphan branches.
 
 ---
 
@@ -22,9 +16,19 @@ It lets you:
 Platform support: macOS (Apple Silicon only)
 
 ```bash
+# 1. Install
 brew install danieljhkim/tap/monodev
 
-monodev version
+# 2. Create your first store and track a file
+monodev checkout -n my-debug-tools
+monodev track debug_helper.py
+monodev commit --all
+
+# 3. Remove the overlay after done working
+monodev unapply
+
+# 4. Reapply again later when needed
+monodev apply
 
 monodev help
 ```
@@ -194,20 +198,59 @@ monodev stack apply [--force] [--dry-run]
 monodev stack unapply [--force] [--dry-run]
 ```
 
+### Remote persistence
+
+Share stores across machines and teams using Git-based remote persistence. Stores are pushed to a separate orphan branch (`monodev/persist` by default) to keep them isolated from your main repository history.
+
+```bash
+monodev init # initialize the .monodev directory in the repository root
+
+# Configure which Git remote to use for persistence
+monodev remote use origin
+
+# Show current remote configuration
+monodev remote show
+
+# Set a custom persistence branch (optional)
+monodev remote set-branch monodev/custom
+
+# Push existing stores to remote
+monodev push <store-id>...
+
+# Pull stores from remote
+monodev pull <store-id>...
+
+# Pull and verify checksums
+monodev pull <store-id>... --verify
+
+# Force pull (overwrite local stores)
+monodev pull <store-id>... --force
+```
+
+**How it works:**
+
+1. Remote configuration is stored locally at `.monodev/remote.json`
+2. Stores are materialized to `.monodev/persist/stores/` before pushing
+3. A separate Git repository is created at `.monodev/.git` with an orphan branch
+4. The orphan branch is pushed to your configured remote
+5. When pulling, stores are fetched and dematerialized to `~/.monodev/stores/`
+
+This approach keeps persistence separate from your main Git history while leveraging Git's compression and deduplication.
+
 ---
 
-## What monodev is (and isn’t)
+## What monodev is (and isn't)
 
 **Is**
 - per-workspace dev overlay manager
-- designed for monorepos
+- designed for monorepos and large codebases
 - deterministic
+- portable
 
 **Is not**
 - a build system
 - a dependency manager
 - a replacement for dotfiles or Nix
-- always reversible
 
 ---
 

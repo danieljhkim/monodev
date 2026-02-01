@@ -11,8 +11,11 @@ import (
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/gitx"
 	"github.com/danieljhkim/monodev/internal/hash"
+	"github.com/danieljhkim/monodev/internal/persist"
+	"github.com/danieljhkim/monodev/internal/remote"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
+	"github.com/danieljhkim/monodev/internal/sync"
 )
 
 // newEngine creates a new engine with real implementations of all dependencies.
@@ -38,6 +41,33 @@ func newEngine() (*engine.Engine, error) {
 
 	// Create engine
 	return engine.New(gitRepo, storeRepo, stateStore, fs, hasher, clk, *paths), nil
+}
+
+// newSyncer creates a new syncer with real implementations of all dependencies.
+func newSyncer() (*sync.Syncer, error) {
+	// Get default paths
+	paths, err := config.DefaultPaths()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config paths: %w", err)
+	}
+
+	// Ensure directories exist
+	if err := paths.EnsureDirectories(); err != nil {
+		return nil, fmt.Errorf("failed to ensure directories: %w", err)
+	}
+
+	// Create real implementations
+	fs := fsops.NewRealFS()
+	hasher := hash.NewSHA256Hasher()
+	clk := &clock.RealClock{}
+	stateStore := state.NewFileStateStore(fs, paths.Workspaces)
+	storeRepo := stores.NewFileStoreRepo(fs, paths.Stores)
+	gitPersist := remote.NewRealGitPersistence()
+	configStore := remote.NewFileRemoteConfigStore(fs)
+	snapshotMgr := persist.NewSnapshotManager(fs)
+
+	// Create syncer
+	return sync.New(gitPersist, storeRepo, stateStore, snapshotMgr, configStore, fs, hasher, clk), nil
 }
 
 // formatJSON formats a value as JSON.

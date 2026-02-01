@@ -59,6 +59,9 @@ func init() {
 	rootCmd.AddCommand(stackCmd)
 	rootCmd.AddCommand(diffCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(pushCmd)
+	rootCmd.AddCommand(pullCmd)
+	rootCmd.AddCommand(remoteCmd)
 }
 
 // Execute executes the root command.
