@@ -101,6 +101,9 @@ type mockGitRepo struct{}
 func (m *mockGitRepo) Discover(path string) (string, error)          { return "", nil }
 func (m *mockGitRepo) Fingerprint(repoRoot string) (string, error)   { return "", nil }
 func (m *mockGitRepo) RelPath(repoRoot, path string) (string, error) { return "", nil }
+func (m *mockGitRepo) GetFingerprintComponents(root string) (string, string, error) {
+	return "", "", nil
+}
 
 type mockHasher struct{}
 

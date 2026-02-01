@@ -10,14 +10,15 @@ import (
 
 var (
 	// Color functions - will be nil if output is not a TTY
-	successColor = color.New(color.FgGreen, color.Bold)
-	warningColor = color.New(color.FgYellow, color.Bold)
-	errorColor   = color.New(color.FgRed, color.Bold)
-	infoColor    = color.New(color.FgCyan)
-	headerColor  = color.New(color.FgBlue, color.Bold)
-	labelColor   = color.New(color.FgWhite, color.Bold)
-	valueColor   = color.New(color.FgHiBlack)
-	dimColor     = color.New(color.FgHiBlack)
+	successColor   = color.New(color.FgGreen, color.Bold)
+	warningColor   = color.New(color.FgYellow, color.Bold)
+	errorColor     = color.New(color.FgRed, color.Bold)
+	infoColor      = color.New(color.FgCyan)
+	headerColor    = color.New(color.FgBlue, color.Bold)
+	subHeaderColor = color.New(color.FgHiBlue)
+	labelColor     = color.New(color.FgWhite)
+	valueColor     = color.New(color.FgHiBlack)
+	dimColor       = color.New(color.FgHiBlack)
 )
 
 // initColors initializes color output - fatih/color handles TTY detection automatically
@@ -38,7 +39,8 @@ func PrintSection(title string) {
 // PrintSubsection prints a subsection header
 func PrintSubsection(title string) {
 	initColors()
-	_, _ = infoColor.Printf("  %s\n", title)
+	_, _ = subHeaderColor.Printf("  %s\n", title)
+	fmt.Println()
 }
 
 // PrintSuccess prints a success message with a checkmark
@@ -123,7 +125,7 @@ func PrintTable(headers []string, rows [][]string) {
 		if i > 0 {
 			fmt.Print("  ")
 		}
-		_, _ = headerColor.Printf("%-*s", colWidths[i], header)
+		_, _ = infoColor.Printf("%-*s", colWidths[i], header)
 	}
 	fmt.Println()
 
@@ -168,7 +170,7 @@ func PrintBadge(text string, clr *color.Color) {
 // PrintSeparator prints a visual separator line
 func PrintSeparator() {
 	initColors()
-	_, _ = labelColor.Println("\n  ──────────────────────────────────────────────────────────")
+	_, _ = labelColor.Println("\n  ──────────────────────────────────────────────────────────────────────────────")
 }
 
 // PrintCount prints a count with proper formatting

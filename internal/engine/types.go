@@ -82,6 +82,12 @@ type StatusResult struct {
 	// WorkspacePath is the relative path from repo root
 	WorkspacePath string
 
+	// AbsolutePath is the absolute path to the repository root
+	AbsolutePath string
+
+	// GitURL is the git remote origin URL (empty if not a git repo)
+	GitURL string
+
 	// Applied indicates if overlays are currently applied
 	Applied bool
 
@@ -147,6 +153,9 @@ type TrackedPathInfo struct {
 
 	// IsSaved indicates if the path exists in the store overlay
 	IsSaved bool
+
+	// IsModified indicates if the workspace version differs from the store overlay
+	IsModified bool
 }
 
 // StackApplyRequest represents a request to apply the configured stack.
@@ -271,4 +280,55 @@ type DeleteWorkspaceResult struct {
 	Deleted       bool
 	DryRun        bool
 	PathsRemoved  int
+}
+
+// DiffRequest represents a request to diff workspace files against store overlay.
+type DiffRequest struct {
+	// CWD is the current working directory
+	CWD string
+
+	// StoreID is an optional store ID to diff against (default: active store)
+	StoreID string
+
+	// ShowContent indicates whether to show actual diff content (unified diff)
+	ShowContent bool
+
+	// NameOnly shows only filenames without status indicators
+	NameOnly bool
+
+	// NameStatus shows filenames with status indicators (M, A, D)
+	NameStatus bool
+}
+
+// DiffResult represents the result of a diff operation.
+type DiffResult struct {
+	// WorkspaceID is the workspace identifier
+	WorkspaceID string
+
+	// StoreID is the store that was diffed against
+	StoreID string
+
+	// Files contains all diffed files with their status
+	Files []DiffFileInfo
+}
+
+// DiffFileInfo contains information about a single diffed file.
+type DiffFileInfo struct {
+	// Path is the relative path from workspace root
+	Path string
+
+	// Status is the diff status: "modified", "added", "removed", "unchanged"
+	Status string
+
+	// WorkspaceHash is the hash of the file in the workspace (empty if doesn't exist)
+	WorkspaceHash string
+
+	// StoreHash is the hash of the file in store overlay (empty if doesn't exist)
+	StoreHash string
+
+	// UnifiedDiff contains the unified diff content (if ShowContent is true)
+	UnifiedDiff string
+
+	// IsDir indicates if the path is a directory
+	IsDir bool
 }

@@ -20,6 +20,9 @@ type GitRepo interface {
 
 	// RelPath computes the relative path from repo root to the given absolute path.
 	RelPath(root, absPath string) (string, error)
+
+	// GetFingerprintComponents returns the absolute path and git URL used to compute the fingerprint.
+	GetFingerprintComponents(root string) (absPath string, gitURL string, err error)
 }
 
 // RealGitRepo implements GitRepo using actual git commands.
@@ -107,10 +110,33 @@ func (g *RealGitRepo) RelPath(root, absPath string) (string, error) {
 	return relPath, nil
 }
 
+// GetFingerprintComponents returns the absolute path and git URL used to compute the fingerprint.
+func (g *RealGitRepo) GetFingerprintComponents(root string) (string, string, error) {
+	// Get the absolute path of the root
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	// Try to get the remote origin URL
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	cmd.Dir = root
+	output, err := cmd.Output()
+
+	gitURL := ""
+	if err == nil {
+		gitURL = strings.TrimSpace(string(output))
+	}
+
+	return absRoot, gitURL, nil
+}
+
 // FakeGitRepo implements GitRepo with predetermined values for testing.
 type FakeGitRepo struct {
 	root        string
 	fingerprint string
+	absPath     string
+	gitURL      string
 	err         error
 }
 
@@ -119,6 +145,18 @@ func NewFakeGitRepo(root, fingerprint string) *FakeGitRepo {
 	return &FakeGitRepo{
 		root:        root,
 		fingerprint: fingerprint,
+		absPath:     root,
+		gitURL:      "git@github.com:test/repo.git",
+	}
+}
+
+// NewFakeGitRepoWithComponents creates a new FakeGitRepo with custom components.
+func NewFakeGitRepoWithComponents(root, fingerprint, absPath, gitURL string) *FakeGitRepo {
+	return &FakeGitRepo{
+		root:        root,
+		fingerprint: fingerprint,
+		absPath:     absPath,
+		gitURL:      gitURL,
 	}
 }
 
@@ -159,4 +197,12 @@ func (g *FakeGitRepo) RelPath(root, absPath string) (string, error) {
 	}
 
 	return relPath, nil
+}
+
+// GetFingerprintComponents returns the predetermined components.
+func (g *FakeGitRepo) GetFingerprintComponents(root string) (string, string, error) {
+	if g.err != nil {
+		return "", "", g.err
+	}
+	return g.absPath, g.gitURL, nil
 }

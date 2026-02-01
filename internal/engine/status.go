@@ -11,9 +11,15 @@ import (
 
 // Status returns the current status of the workspace.
 func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult, error) {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
+	}
+
+	// Get fingerprint components (absolute path and git URL)
+	absPath, gitURL, err := e.gitRepo.GetFingerprintComponents(root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get fingerprint components: %w", err)
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
@@ -29,6 +35,8 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 		WorkspaceID:     workspaceID,
 		RepoFingerprint: repoFingerprint,
 		WorkspacePath:   workspacePath,
+		AbsolutePath:    absPath,
+		GitURL:          gitURL,
 		Applied:         false,
 		Mode:            "",
 		Stack:           []string{},
@@ -144,11 +152,21 @@ func (e *Engine) computeTrackedPathDetails(activeStoreID string, trackedPaths []
 
 	overlayRoot := e.storeRepo.OverlayRoot(activeStoreID)
 
+	// Load track file to get path kinds (file vs dir)
+	track, _ := e.storeRepo.LoadTrack(activeStoreID)
+	pathKindMap := make(map[string]string)
+	if track != nil {
+		for _, tp := range track.Tracked {
+			pathKindMap[tp.Path] = tp.Kind
+		}
+	}
+
 	for _, trackedPath := range trackedPaths {
 		pathInfo := TrackedPathInfo{
-			Path:      trackedPath,
-			IsApplied: false,
-			IsSaved:   false,
+			Path:       trackedPath,
+			IsApplied:  false,
+			IsSaved:    false,
+			IsModified: false,
 		}
 
 		// Check if applied (exists in workspace.Paths)
@@ -167,10 +185,44 @@ func (e *Engine) computeTrackedPathDetails(activeStoreID string, trackedPaths []
 			pathInfo.IsSaved = true
 		}
 
+		// Check if modified by comparing workspace and store overlay
+		pathInfo.IsModified = e.isPathModified(trackedPath, overlayRoot, pathKindMap[trackedPath])
+
 		details = append(details, pathInfo)
 	}
 
 	return details
+}
+
+// isPathModified checks if a tracked path is modified in the workspace compared to the store overlay.
+func (e *Engine) isPathModified(trackedPath, overlayRoot, kind string) bool {
+	// Get workspace root
+	cwd, _ := os.Getwd()
+	root, _, _, err := e.DiscoverWorkspace(cwd)
+	if err != nil {
+		return false
+	}
+
+	workspacePath := filepath.Join(root, trackedPath)
+	storePath := filepath.Join(overlayRoot, trackedPath)
+
+	if kind == "dir" {
+		// For directories, check if any files within are modified
+		dirFiles, err := e.compareDirPath(root, overlayRoot, workspacePath, storePath, trackedPath, false)
+		if err != nil {
+			return false
+		}
+		for _, file := range dirFiles {
+			if file.Status == "modified" || file.Status == "added" || file.Status == "removed" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// For files, use comparePath
+	fileInfo := e.comparePath(workspacePath, storePath, trackedPath, kind, false)
+	return fileInfo.Status == "modified" || fileInfo.Status == "added" || fileInfo.Status == "removed"
 }
 
 // computeActiveStoreStatus determines the application status of the active store.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -44,17 +45,23 @@ var statusCmd = &cobra.Command{
 		// Active Workspace Section
 		PrintSection("Active Workspace")
 		PrintLabelValue("Repo Fingerprint", result.RepoFingerprint)
-		PrintLabelValue("Workspace Path", result.WorkspacePath)
-
-		modeDisplay := result.Mode
-		if modeDisplay == "" {
-			modeDisplay = "Not Applied"
+		PrintLabelValue("Absolute Path", result.AbsolutePath)
+		if result.GitURL != "" {
+			PrintLabelValue("Git URL", result.GitURL)
 		}
-		PrintLabelValue("Mode", modeDisplay)
+		PrintLabelValue("Workspace Path", result.WorkspacePath)
+		// Stack Display
+		if len(result.Stack) > 0 {
+			stackDisplay := fmt.Sprintf("[\"%s\"]", strings.Join(result.Stack, "\", \""))
+			PrintLabelValue("Stack", stackDisplay)
+		} else {
+			PrintLabelValue("Stack", "[]")
+		}
 
 		fmt.Println()
 		// existing paths in the workspace
 		PrintSubsection("Applied Stores:")
+
 		headers := []string{"storeId", "path", "mode"}
 		rows := [][]string{}
 		for key, store := range result.Paths {
@@ -64,22 +71,14 @@ var statusCmd = &cobra.Command{
 				store.Type,
 			})
 		}
+		// Sort rows alphabetically by storeId (first column)
+		sort.Slice(rows, func(i, j int) bool {
+			return rows[i][0] < rows[j][0]
+		})
 		PrintTable(headers, rows)
 
-		// Stack Display
-		if len(result.Stack) > 0 {
-			fmt.Println()
-			stackDisplay := fmt.Sprintf("[\"%s\"]", strings.Join(result.Stack, "\", \""))
-			PrintLabelValue("Stack", stackDisplay)
-		} else {
-			fmt.Println()
-			PrintLabelValue("Stack", "[]")
-		}
-
-		// Separator
 		PrintSeparator()
 
-		// Active Store Section
 		PrintSection("Active Store")
 
 		activeStoreDisplay := result.ActiveStore
@@ -105,7 +104,7 @@ var statusCmd = &cobra.Command{
 			fmt.Println()
 			PrintSubsection("Tracked Paths:")
 
-			headers := []string{"path", "applied?", "commited?"}
+			headers := []string{"path", "applied?", "commited?", "modified?"}
 			rows := [][]string{}
 
 			for _, tp := range result.TrackedPathDetails {
@@ -119,7 +118,12 @@ var statusCmd = &cobra.Command{
 					savedMark = "✓"
 				}
 
-				rows = append(rows, []string{tp.Path, appliedMark, savedMark})
+				modifiedMark := " "
+				if tp.IsModified {
+					modifiedMark = "✓"
+				}
+
+				rows = append(rows, []string{tp.Path, appliedMark, savedMark, modifiedMark})
 			}
 
 			PrintTable(headers, rows)
