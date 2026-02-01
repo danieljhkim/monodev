@@ -43,6 +43,9 @@ type FS interface {
 
 	// ValidateRelPath validates a relative path for safety.
 	ValidateRelPath(relPath string) error
+
+	// ValidateIdentifier validates an identifier for safety.
+	ValidateIdentifier(id string) error
 }
 
 // RealFS implements FS using actual OS operations.
@@ -279,6 +282,27 @@ func (fs *RealFS) ValidateRelPath(relPath string) error {
 	// Reject path traversal attempts
 	if strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, string(filepath.Separator)+"..") {
 		return fmt.Errorf("invalid path: path traversal not allowed in %q", cleaned)
+	}
+
+	return nil
+}
+
+// ValidateIdentifier validates an identifier (e.g., store ID, workspace ID) for safety.
+// Returns an error if the identifier contains invalid characters or path traversal attempts.
+func (fs *RealFS) ValidateIdentifier(id string) error {
+	// Reject empty identifiers
+	if id == "" {
+		return fmt.Errorf("invalid identifier: empty")
+	}
+
+	// Reject identifiers that look like paths
+	if strings.Contains(id, string(filepath.Separator)) || strings.Contains(id, "/") || strings.Contains(id, "\\") {
+		return fmt.Errorf("invalid identifier: must not contain path separators")
+	}
+
+	// Reject path traversal attempts
+	if id == "." || id == ".." || strings.HasPrefix(id, ".") && len(id) > 1 && id[1] == '.' {
+		return fmt.Errorf("invalid identifier: path traversal not allowed")
 	}
 
 	return nil

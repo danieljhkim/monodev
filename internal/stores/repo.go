@@ -75,12 +75,22 @@ func (r *FileStoreRepo) List() ([]string, error) {
 
 // Exists checks if a store with the given ID exists.
 func (r *FileStoreRepo) Exists(id string) (bool, error) {
+	// Validate store ID for safety
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		return false, fmt.Errorf("invalid store ID: %w", err)
+	}
+
 	storePath := filepath.Join(r.storesDir, id)
 	return r.fs.Exists(storePath)
 }
 
 // Create creates a new store with the given ID and metadata.
 func (r *FileStoreRepo) Create(id string, meta *StoreMeta) error {
+	// Validate store ID for safety
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		return fmt.Errorf("invalid store ID: %w", err)
+	}
+
 	storePath := filepath.Join(r.storesDir, id)
 
 	// Check if store already exists
@@ -119,6 +129,11 @@ func (r *FileStoreRepo) Create(id string, meta *StoreMeta) error {
 
 // LoadMeta loads the metadata for a store.
 func (r *FileStoreRepo) LoadMeta(id string) (*StoreMeta, error) {
+	// Validate store ID for safety
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		return nil, fmt.Errorf("invalid store ID: %w", err)
+	}
+
 	metaPath := filepath.Join(r.storesDir, id, "meta.json")
 
 	data, err := r.fs.ReadFile(metaPath)
@@ -139,6 +154,11 @@ func (r *FileStoreRepo) LoadMeta(id string) (*StoreMeta, error) {
 
 // SaveMeta saves the metadata for a store.
 func (r *FileStoreRepo) SaveMeta(id string, meta *StoreMeta) error {
+	// Validate store ID for safety
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		return fmt.Errorf("invalid store ID: %w", err)
+	}
+
 	metaPath := filepath.Join(r.storesDir, id, "meta.json")
 
 	data, err := json.MarshalIndent(meta, "", "  ")
@@ -155,6 +175,11 @@ func (r *FileStoreRepo) SaveMeta(id string, meta *StoreMeta) error {
 
 // LoadTrack loads the track file for a store.
 func (r *FileStoreRepo) LoadTrack(id string) (*TrackFile, error) {
+	// Validate store ID for safety
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		return nil, fmt.Errorf("invalid store ID: %w", err)
+	}
+
 	trackPath := filepath.Join(r.storesDir, id, "track.json")
 
 	data, err := r.fs.ReadFile(trackPath)
@@ -176,6 +201,11 @@ func (r *FileStoreRepo) LoadTrack(id string) (*TrackFile, error) {
 
 // SaveTrack saves the track file for a store.
 func (r *FileStoreRepo) SaveTrack(id string, track *TrackFile) error {
+	// Validate store ID for safety
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		return fmt.Errorf("invalid store ID: %w", err)
+	}
+
 	trackPath := filepath.Join(r.storesDir, id, "track.json")
 
 	data, err := json.MarshalIndent(track, "", "  ")
@@ -192,11 +222,18 @@ func (r *FileStoreRepo) SaveTrack(id string, track *TrackFile) error {
 
 // OverlayRoot returns the path to the overlay directory for a store.
 func (r *FileStoreRepo) OverlayRoot(id string) string {
+	// Note: We don't validate here as this is a read-only operation
+	// and validation should happen at the call site
 	return filepath.Join(r.storesDir, id, "overlay")
 }
 
 // Delete deletes a store and all its contents.
 func (r *FileStoreRepo) Delete(id string) error {
+	// Validate store ID for safety
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		return fmt.Errorf("invalid store ID: %w", err)
+	}
+
 	storePath := filepath.Join(r.storesDir, id)
 
 	if err := r.fs.RemoveAll(storePath); err != nil {

@@ -83,6 +83,11 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	for _, relPath := range activeStorePaths {
 		ownership := workspaceState.Paths[relPath]
 
+		// Validate relative path for safety
+		if err := e.fs.ValidateRelPath(relPath); err != nil {
+			return nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
+		}
+
 		// Convert relative path to absolute for filesystem operations
 		absPath := filepath.Join(req.CWD, relPath)
 
