@@ -144,9 +144,9 @@ func TestFakeHasher(t *testing.T) {
 	t.Run("returns configured hash for known path", func(t *testing.T) {
 		testPath := "/test/file.txt"
 		expectedHash := "custom-hash-123"
-		
+
 		hasher.SetHash(testPath, expectedHash)
-		
+
 		hash, err := hasher.HashFile(testPath)
 		if err != nil {
 			t.Errorf("FakeHasher should not return error, got: %v", err)

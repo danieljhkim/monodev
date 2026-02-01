@@ -41,10 +41,10 @@ func TestDefaultPaths(t *testing.T) {
 
 	t.Run("respects MONODEV_ROOT environment variable", func(t *testing.T) {
 		customRoot := "/custom/monodev/path"
-		
+
 		oldRoot := os.Getenv("MONODEV_ROOT")
 		defer os.Setenv("MONODEV_ROOT", oldRoot)
-		
+
 		os.Setenv("MONODEV_ROOT", customRoot)
 
 		paths, err := DefaultPaths()

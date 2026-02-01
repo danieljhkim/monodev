@@ -206,7 +206,7 @@ func TestRealFS_MkdirAll(t *testing.T) {
 
 	t.Run("idempotent operation", func(t *testing.T) {
 		dirPath := filepath.Join(tmpDir, "existing")
-		
+
 		// Create once
 		if err := fs.MkdirAll(dirPath, 0755); err != nil {
 			t.Fatalf("First MkdirAll failed: %v", err)
@@ -249,7 +249,7 @@ func TestRealFS_AtomicWrite(t *testing.T) {
 
 	t.Run("overwrite existing file", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "atomic-overwrite.txt")
-		
+
 		// Write initial content
 		initialContent := []byte("initial")
 		if err := os.WriteFile(testFile, initialContent, 0644); err != nil {
