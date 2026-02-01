@@ -42,6 +42,11 @@ func BuildApplyPlan(
 			// trackedPath.Path is already relative to workspace root
 			relPath := trackedPath.Path
 
+			// Validate relative path for safety to prevent path traversal
+			if err := fs.ValidateRelPath(relPath); err != nil {
+				return nil, fmt.Errorf("invalid tracked path %q in store %s: %w", relPath, storeID, err)
+			}
+
 			// Compute absolute source and destination paths for FS operations
 			sourcePath := filepath.Join(overlayRoot, relPath)
 			destPath := filepath.Join(workspaceRoot, relPath)

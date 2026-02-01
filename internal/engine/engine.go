@@ -1,3 +1,14 @@
+// Package engine provides the core business logic for monodev operations.
+//
+// The engine package acts as the orchestration layer between CLI commands and
+// lower-level operations. It coordinates workspace discovery, state management,
+// store operations, and overlay application/removal.
+//
+// Key components:
+//   - Engine: Main orchestrator that coordinates all operations
+//   - Apply/Unapply: Manages overlay application and removal
+//   - Track/Commit: Handles tracking and persisting changes
+//   - State management: Workspace and store state operations
 package engine
 
 import (

@@ -95,6 +95,7 @@ func (m *mockFS) Readlink(name string) (string, error)                         {
 func (m *mockFS) Lstat(name string) (os.FileInfo, error)                       { return nil, nil }
 func (m *mockFS) Copy(src, dst string) error                                   { return nil }
 func (m *mockFS) ValidateRelPath(relPath string) error                         { return nil }
+func (m *mockFS) ValidateIdentifier(id string) error                           { return nil }
 
 type mockGitRepo struct{}
 

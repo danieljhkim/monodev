@@ -89,7 +89,10 @@ func (e *Engine) compareDirPath(workspaceRoot, overlayRoot, workspaceDir, storeD
 	fileMap := make(map[string]bool)
 
 	// Walk workspace directory
-	workspaceExists, _ := e.fs.Exists(workspaceDir)
+	workspaceExists, err := e.fs.Exists(workspaceDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check workspace directory existence: %w", err)
+	}
 	if workspaceExists {
 		err := filepath.Walk(workspaceDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -110,7 +113,10 @@ func (e *Engine) compareDirPath(workspaceRoot, overlayRoot, workspaceDir, storeD
 	}
 
 	// Walk store directory
-	storeExists, _ := e.fs.Exists(storeDir)
+	storeExists, err := e.fs.Exists(storeDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check store directory existence: %w", err)
+	}
 	if storeExists {
 		err := filepath.Walk(storeDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -151,8 +157,16 @@ func (e *Engine) comparePath(workspacePath, storePath, relPath, kind string, sho
 	}
 
 	// Check existence
-	workspaceExists, _ := e.fs.Exists(workspacePath)
-	storeExists, _ := e.fs.Exists(storePath)
+	workspaceExists, err := e.fs.Exists(workspacePath)
+	if err != nil {
+		// Log error but continue with comparison
+		workspaceExists = false
+	}
+	storeExists, err := e.fs.Exists(storePath)
+	if err != nil {
+		// Log error but continue with comparison
+		storeExists = false
+	}
 
 	// Determine status based on existence
 	if !workspaceExists && !storeExists {

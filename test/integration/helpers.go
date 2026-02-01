@@ -162,6 +162,25 @@ func (fs *testFS) ValidateRelPath(relPath string) error {
 	return nil
 }
 
+func (fs *testFS) ValidateIdentifier(id string) error {
+	// Reject empty identifiers
+	if id == "" {
+		return fmt.Errorf("invalid identifier: empty")
+	}
+
+	// Reject identifiers that look like paths
+	if strings.Contains(id, string(filepath.Separator)) || strings.Contains(id, "/") || strings.Contains(id, "\\") {
+		return fmt.Errorf("invalid identifier: must not contain path separators")
+	}
+
+	// Reject path traversal attempts
+	if id == "." || id == ".." {
+		return fmt.Errorf("invalid identifier: path traversal not allowed")
+	}
+
+	return nil
+}
+
 // mockFileInfo implements os.FileInfo
 type mockFileInfo struct {
 	name  string

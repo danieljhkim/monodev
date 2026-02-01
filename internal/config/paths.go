@@ -1,3 +1,8 @@
+// Package config manages monodev configuration and filesystem paths.
+//
+// Configuration includes the locations of monodev data directories, which can
+// be customized via environment variables. The default root is ~/.monodev/
+// containing stores/, workspaces/, and config files.
 package config
 
 import (

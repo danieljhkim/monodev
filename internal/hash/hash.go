@@ -1,3 +1,8 @@
+// Package hash provides file hashing functionality for content comparison.
+//
+// Monodev uses SHA-256 hashes to detect changes in tracked files and determine
+// when files have been modified (drift detection). The package provides both
+// a real implementation using crypto/sha256 and a fake implementation for testing.
 package hash
 
 import (
