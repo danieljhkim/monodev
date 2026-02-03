@@ -20,7 +20,7 @@ import (
 // 1. Discover repo and load workspace state (must exist)
 // 2. Collect paths owned by the active store
 // 3. Remove paths in deepest-first order
-// 4. Update or delete workspace state
+// 4. Update workspace state
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
 	// Step 1: Discover repository
 	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
@@ -108,20 +108,14 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		removed = append(removed, relPath)
 	}
 
-	// Step 6: Update or delete workspace state
-	// If all paths are removed, delete the state file entirely
-	if len(workspaceState.Paths) == 0 {
-		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
-			return nil, fmt.Errorf("failed to delete workspace state: %w", err)
-		}
-	} else {
-		// Some paths remain (e.g., from stack stores), update the state
+	// Step 6: Updateorkspace state
+	if len(workspaceState.Paths) > 0 {
 		workspaceState.Applied = false
 		workspaceState.PruneAppliedStores()
+	}
 
-		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
-			return nil, fmt.Errorf("failed to save workspace state: %w", err)
-		}
+	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
+		return nil, fmt.Errorf("failed to save workspace state: %w", err)
 	}
 
 	return &UnapplyResult{
