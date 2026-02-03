@@ -69,7 +69,7 @@ This command applies only a single store - use 'stack apply' to apply the stack.
 				for _, op := range result.Plan.Operations {
 					var opType string
 					switch op.Type {
-					case "create_symlink":
+					case "create_symlink": // Deprecated, kept for backward compatibility
 						opType = "symlink"
 					case "copy":
 						opType = "copy"

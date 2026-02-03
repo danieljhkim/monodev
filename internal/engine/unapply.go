@@ -108,8 +108,10 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		removed = append(removed, relPath)
 	}
 
-	// Step 6: Updateorkspace state
+	// Step 6: Update workspace state
+	// do not delete workspace state if no paths remain
 	if len(workspaceState.Paths) > 0 {
+		// Still have paths from other stores - update state
 		workspaceState.Applied = false
 		workspaceState.PruneAppliedStores()
 	}
@@ -117,7 +119,6 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return nil, fmt.Errorf("failed to save workspace state: %w", err)
 	}
-
 	return &UnapplyResult{
 		Removed:     removed,
 		WorkspaceID: workspaceID,

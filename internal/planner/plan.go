@@ -14,7 +14,8 @@ type ApplyPlan struct {
 
 // Operation represents a single filesystem operation to execute.
 type Operation struct {
-	// Type is the operation type: "create_symlink", "copy", "remove"
+	// Type is the operation type: "copy", "remove"
+	// Note: "create_symlink" is deprecated but kept for backward compatibility
 	Type string
 
 	// SourcePath is the source path in the store overlay (absolute)
@@ -47,6 +48,7 @@ type Conflict struct {
 
 // Operation type constants
 const (
+	// OpCreateSymlink is deprecated (as of v0.2.1) but kept for backward compatibility
 	OpCreateSymlink = "create_symlink"
 	OpCopy          = "copy"
 	OpRemove        = "remove"
