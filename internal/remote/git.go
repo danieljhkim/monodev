@@ -6,8 +6,30 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// validGitRefPattern matches safe git ref names (branch names, remote names).
+// Allows alphanumeric characters, dots, underscores, hyphens, and forward slashes.
+// This prevents command injection via malicious branch/remote names.
+var validGitRefPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
+
+// validateGitRef validates a git ref name (branch or remote) for safety.
+// Returns an error if the ref contains potentially dangerous characters.
+func validateGitRef(ref, refType string) error {
+	if ref == "" {
+		return fmt.Errorf("invalid %s: empty", refType)
+	}
+	if !validGitRefPattern.MatchString(ref) {
+		return fmt.Errorf("invalid %s %q: contains invalid characters", refType, ref)
+	}
+	// Reject refs that could be interpreted as command-line options
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid %s %q: cannot start with hyphen", refType, ref)
+	}
+	return nil
+}
 
 // GitPersistence provides operations for the separate Git persistence repository.
 // This repository lives at .monodev/.git with work tree at .monodev.
@@ -77,6 +99,10 @@ func (g *RealGitPersistence) runGit(repoRoot string, args ...string) (string, er
 
 // EnsureRepo initializes the persistence repository.
 func (g *RealGitPersistence) EnsureRepo(repoRoot, branch string) error {
+	if err := validateGitRef(branch, "branch"); err != nil {
+		return err
+	}
+
 	gitDirPath := g.gitDir(repoRoot)
 	workTreePath := g.workTree(repoRoot)
 
@@ -156,6 +182,13 @@ func (g *RealGitPersistence) Commit(repoRoot, message string, paths []string) er
 
 // Push pushes the branch to the remote.
 func (g *RealGitPersistence) Push(repoRoot, remote, branch string, force bool) error {
+	if err := validateGitRef(remote, "remote"); err != nil {
+		return err
+	}
+	if err := validateGitRef(branch, "branch"); err != nil {
+		return err
+	}
+
 	args := []string{"push", remote, branch}
 	if force {
 		args = append(args, "--force")
@@ -170,6 +203,13 @@ func (g *RealGitPersistence) Push(repoRoot, remote, branch string, force bool) e
 
 // Fetch fetches the branch from the remote.
 func (g *RealGitPersistence) Fetch(repoRoot, remote, branch string) error {
+	if err := validateGitRef(remote, "remote"); err != nil {
+		return err
+	}
+	if err := validateGitRef(branch, "branch"); err != nil {
+		return err
+	}
+
 	if _, err := g.runGit(repoRoot, "fetch", remote, branch); err != nil {
 		return fmt.Errorf("failed to fetch: %w", err)
 	}
@@ -179,6 +219,10 @@ func (g *RealGitPersistence) Fetch(repoRoot, remote, branch string) error {
 
 // Checkout checks out the specified branch.
 func (g *RealGitPersistence) Checkout(repoRoot, branch string) error {
+	if err := validateGitRef(branch, "branch"); err != nil {
+		return err
+	}
+
 	if _, err := g.runGit(repoRoot, "checkout", branch); err != nil {
 		return fmt.Errorf("failed to checkout: %w", err)
 	}
@@ -188,6 +232,10 @@ func (g *RealGitPersistence) Checkout(repoRoot, branch string) error {
 
 // GetRemoteURL retrieves the URL of a remote from the main repository.
 func (g *RealGitPersistence) GetRemoteURL(repoRoot, remoteName string) (string, error) {
+	if err := validateGitRef(remoteName, "remote"); err != nil {
+		return "", err
+	}
+
 	// Run git command in the main repository (not the persistence repo)
 	cmd := exec.Command("git", "remote", "get-url", remoteName)
 	cmd.Dir = repoRoot
@@ -211,6 +259,10 @@ func (g *RealGitPersistence) GetRemoteURL(repoRoot, remoteName string) (string, 
 
 // SetRemote configures a remote in the persistence repository.
 func (g *RealGitPersistence) SetRemote(repoRoot, remoteName, url string) error {
+	if err := validateGitRef(remoteName, "remote"); err != nil {
+		return err
+	}
+
 	// Check if remote exists
 	_, err := g.runGit(repoRoot, "remote", "get-url", remoteName)
 	if err == nil {

@@ -312,7 +312,8 @@ func (fs *RealFS) ValidateIdentifier(id string) error {
 	}
 
 	// Reject path traversal attempts
-	if id == "." || id == ".." || strings.HasPrefix(id, ".") && len(id) > 1 && id[1] == '.' {
+	// Note: explicit parentheses for clarity, even though && has higher precedence than ||
+	if id == "." || id == ".." || (strings.HasPrefix(id, ".") && len(id) > 1 && id[1] == '.') {
 		return fmt.Errorf("invalid identifier: path traversal not allowed")
 	}
 

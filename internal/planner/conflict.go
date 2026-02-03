@@ -2,6 +2,8 @@ package planner
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/state"
@@ -124,9 +126,19 @@ func (c *ConflictChecker) CheckPath(relPath, destPath, incomingType, incomingMod
 			return nil
 		}
 
-		// Symlink target validation is done during plan execution
-		// Here we just verify it's a symlink
-		_ = target
+		// Validate symlink target for security
+		if err := c.validateSymlinkTarget(destPath, target); err != nil {
+			if !c.force {
+				return &Conflict{
+					Path:     relPath,
+					Reason:   err.Error(),
+					Existing: "suspicious-symlink",
+					Incoming: incomingType,
+				}
+			}
+			// Force allows overwriting suspicious symlinks
+			return nil
+		}
 	}
 
 	// All compatibility checks passed (same mode, same type, valid state)
@@ -147,5 +159,56 @@ func (c *ConflictChecker) GetOwnership(relPath string) *state.PathOwnership {
 	if ownership, ok := c.workspace.Paths[relPath]; ok {
 		return &ownership
 	}
+	return nil
+}
+
+// validateSymlinkTarget validates that a symlink target is safe.
+// Returns an error if the target appears suspicious or could be a path traversal attack.
+func (c *ConflictChecker) validateSymlinkTarget(symlinkPath, target string) error {
+	// Resolve the target to an absolute path
+	var resolvedTarget string
+	if filepath.IsAbs(target) {
+		resolvedTarget = filepath.Clean(target)
+	} else {
+		// Relative target - resolve relative to symlink's directory
+		symlinkDir := filepath.Dir(symlinkPath)
+		resolvedTarget = filepath.Clean(filepath.Join(symlinkDir, target))
+	}
+
+	// Check for path traversal attempts in the raw target
+	// This catches cases like "../../../etc/passwd"
+	if strings.Contains(target, "..") {
+		// Count how many levels up the target goes
+		parts := strings.Split(target, string(filepath.Separator))
+		upCount := 0
+		for _, part := range parts {
+			if part == ".." {
+				upCount++
+			}
+		}
+		// If target traverses more than 10 levels up, it's suspicious
+		// (legitimate monodev symlinks shouldn't need deep traversal)
+		if upCount > 10 {
+			return fmt.Errorf("symlink target contains excessive path traversal (%d levels): %s", upCount, target)
+		}
+	}
+
+	// Check that the resolved target doesn't point to sensitive system paths
+	sensitivePatterns := []string{
+		"/etc/passwd",
+		"/etc/shadow",
+		"/etc/sudoers",
+		"/.ssh/",
+		"/id_rsa",
+		"/id_ed25519",
+		"/.aws/credentials",
+		"/.gnupg/",
+	}
+	for _, pattern := range sensitivePatterns {
+		if strings.Contains(resolvedTarget, pattern) {
+			return fmt.Errorf("symlink target points to sensitive path: %s", target)
+		}
+	}
+
 	return nil
 }

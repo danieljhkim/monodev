@@ -488,3 +488,113 @@ func TestConflictChecker_CheckPath_RelativePathHandling(t *testing.T) {
 		t.Errorf("expected Path='Makefile', got %q", conflict.Path)
 	}
 }
+
+func TestValidateSymlinkTarget(t *testing.T) {
+	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	fs := newMockFS()
+	checker := NewConflictChecker(fs, workspace, false)
+
+	tests := []struct {
+		name        string
+		symlinkPath string
+		target      string
+		wantErr     bool
+	}{
+		// Valid targets
+		{
+			name:        "absolute path to store",
+			symlinkPath: "/workspace/Makefile",
+			target:      "/home/user/.monodev/stores/store1/overlay/Makefile",
+			wantErr:     false,
+		},
+		{
+			name:        "relative path to parent",
+			symlinkPath: "/workspace/subdir/Makefile",
+			target:      "../Makefile",
+			wantErr:     false,
+		},
+		{
+			name:        "relative path few levels up",
+			symlinkPath: "/workspace/a/b/c/Makefile",
+			target:      "../../../Makefile",
+			wantErr:     false,
+		},
+
+		// Invalid targets - sensitive paths
+		{
+			name:        "points to etc passwd",
+			symlinkPath: "/workspace/passwd",
+			target:      "/etc/passwd",
+			wantErr:     true,
+		},
+		{
+			name:        "points to etc shadow",
+			symlinkPath: "/workspace/shadow",
+			target:      "/etc/shadow",
+			wantErr:     true,
+		},
+		{
+			name:        "points to ssh directory",
+			symlinkPath: "/workspace/keys",
+			target:      "/home/user/.ssh/id_rsa",
+			wantErr:     true,
+		},
+		{
+			name:        "points to aws credentials",
+			symlinkPath: "/workspace/creds",
+			target:      "/home/user/.aws/credentials",
+			wantErr:     true,
+		},
+
+		// Invalid targets - excessive traversal
+		{
+			name:        "excessive path traversal",
+			symlinkPath: "/workspace/Makefile",
+			target:      "../../../../../../../../../../../../etc/passwd",
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checker.validateSymlinkTarget(tt.symlinkPath, tt.target)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateSymlinkTarget(%q, %q) error = %v, wantErr %v",
+					tt.symlinkPath, tt.target, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConflictChecker_CheckPath_SuspiciousSymlink(t *testing.T) {
+	// Test that suspicious symlinks are detected
+	fs := newMockFS()
+	fs.setExists("/workspace/passwd", true)
+	fs.setLstat("/workspace/passwd", &mockFileInfo{name: "passwd", isDir: false})
+	fs.setReadlink("/workspace/passwd", "/etc/passwd", nil)
+
+	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace.Paths["passwd"] = state.PathOwnership{
+		Store: "store1",
+		Type:  "symlink",
+	}
+
+	// Without force - should detect conflict
+	checker := NewConflictChecker(fs, workspace, false)
+	conflict := checker.CheckPath("passwd", "/workspace/passwd", "file", "symlink", "store2")
+
+	if conflict == nil {
+		t.Fatal("expected conflict for suspicious symlink")
+	}
+	if conflict.Existing != "suspicious-symlink" {
+		t.Errorf("expected Existing='suspicious-symlink', got %q", conflict.Existing)
+	}
+
+	// With force - should allow overwrite
+	checkerForce := NewConflictChecker(fs, workspace, true)
+	conflictForce := checkerForce.CheckPath("passwd", "/workspace/passwd", "file", "symlink", "store2")
+
+	if conflictForce != nil {
+		t.Errorf("expected no conflict with force, got: %v", conflictForce)
+	}
+}
