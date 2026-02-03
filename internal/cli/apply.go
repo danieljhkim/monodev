@@ -92,7 +92,6 @@ This command applies only a single store - use 'stack apply' to apply the stack.
 }
 
 func init() {
-	// applyCmd.Flags().StringVarP(&applyMode, "mode", "m", "copy", "Overlay mode (symlink or copy)")
 	applyCmd.Flags().BoolVarP(&applyForce, "force", "f", false, "Force apply, overriding conflicts")
 	applyCmd.Flags().BoolVar(&applyDryRun, "dry-run", false, "Show what would be applied without applying")
 }
