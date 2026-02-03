@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
@@ -89,56 +90,18 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	if req.All {
 		// Commit all tracked paths, respecting the 'required' field
 		for _, trackedPath := range track.Tracked {
-			// Validate path before any file IO
-			if err := e.fs.ValidateRelPath(trackedPath.Path); err != nil {
-				return nil, fmt.Errorf("invalid tracked path %q: %w", trackedPath.Path, err)
+			if err := e.commitFilePath(
+				trackedPath.Path,
+				req.CWD,
+				overlayRoot,
+				workspaceState.ActiveStore,
+				workspaceState,
+				result,
+				now,
+				req.DryRun,
+			); err != nil {
+				return nil, err
 			}
-
-			// Use cleaned relative path
-			relPath := filepath.Clean(trackedPath.Path)
-			workspaceFilePath := filepath.Join(req.CWD, relPath)
-			storeFilePath := filepath.Join(overlayRoot, relPath)
-
-			// Check if path exists in workspace
-			exists, err := e.fs.Exists(workspaceFilePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check if path exists: %w", err)
-			}
-
-			if !exists {
-				// Path doesn't exist in workspace - add to missing list and continue
-				result.Missing = append(result.Missing, relPath)
-				continue
-			}
-
-			if req.DryRun {
-				result.Committed = append(result.Committed, relPath)
-				continue
-			}
-
-			// Copy the file/directory to the store
-			if err := e.fs.Copy(workspaceFilePath, storeFilePath); err != nil {
-				return nil, fmt.Errorf("failed to copy %s to store: %w", relPath, err)
-			}
-
-			// Record this path as managed in workspace state (but don't set applied=true)
-			// This marks the file as "tracked" by monodev even before overlays are created
-			checksum := ""
-			if trackedPath.Kind == "file" {
-				hash, err := e.hasher.HashFile(workspaceFilePath)
-				if err == nil {
-					checksum = hash
-				}
-			}
-
-			workspaceState.Paths[relPath] = state.PathOwnership{
-				Store:     workspaceState.ActiveStore,
-				Type:      "copy", // Record as copy since it's the original file
-				Timestamp: now,
-				Checksum:  checksum,
-			}
-
-			result.Committed = append(result.Committed, relPath)
 		}
 
 		// Clean up orphaned files from overlay that are no longer tracked
@@ -150,69 +113,25 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	} else {
 		// Commit specific paths (all treated as required)
 		for _, rawPath := range req.Paths {
-			// Validate path before any file IO
-			if err := e.fs.ValidateRelPath(rawPath); err != nil {
-				return nil, fmt.Errorf("invalid path %q: %w", rawPath, err)
+			if err := e.commitFilePath(
+				rawPath,
+				req.CWD,
+				overlayRoot,
+				workspaceState.ActiveStore,
+				workspaceState,
+				result,
+				now,
+				req.DryRun,
+			); err != nil {
+				return nil, err
 			}
-
-			// Use cleaned relative path
-			relPath := filepath.Clean(rawPath)
-			workspaceFilePath := filepath.Join(req.CWD, relPath)
-			storeFilePath := filepath.Join(overlayRoot, relPath)
-
-			// Check if path exists in workspace
-			exists, err := e.fs.Exists(workspaceFilePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check if path exists: %w", err)
-			}
-
-			if !exists {
-				// Path doesn't exist in workspace - add to missing list and continue
-				result.Missing = append(result.Missing, relPath)
-				continue
-			}
-
-			if req.DryRun {
-				result.Committed = append(result.Committed, relPath)
-				continue
-			}
-
-			// Copy the file/directory to the store
-			if err := e.fs.Copy(workspaceFilePath, storeFilePath); err != nil {
-				return nil, fmt.Errorf("failed to copy %s to store: %w", relPath, err)
-			}
-
-			// Record this path as managed in workspace state (but don't set applied=true)
-			checksum := ""
-			info, err := e.fs.Lstat(workspaceFilePath)
-			if err == nil && !info.IsDir() {
-				hash, err := e.hasher.HashFile(workspaceFilePath)
-				if err == nil {
-					checksum = hash
-				}
-			}
-
-			workspaceState.Paths[relPath] = state.PathOwnership{
-				Store:     workspaceState.ActiveStore,
-				Type:      "copy", // Record as copy since it's the original file
-				Timestamp: now,
-				Checksum:  checksum,
-			}
-
-			result.Committed = append(result.Committed, relPath)
 		}
 	}
 
 	if !req.DryRun {
 		// Update store metadata (UpdatedAt timestamp)
-		meta, err := e.storeRepo.LoadMeta(workspaceState.ActiveStore)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load store metadata: %w", err)
-		}
-
-		meta.UpdatedAt = e.clock.Now()
-		if err := e.storeRepo.SaveMeta(workspaceState.ActiveStore, meta); err != nil {
-			return nil, fmt.Errorf("failed to save store metadata: %w", err)
+		if err := e.touchStoreMeta(workspaceState.ActiveStore); err != nil {
+			return nil, err
 		}
 
 		// Commit workspace state to record managed paths
@@ -224,6 +143,74 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	}
 
 	return result, nil
+}
+
+// commitFilePath processes a single file path for commit.
+// It validates, copies, and updates workspace state for the given path.
+// Returns nil on success, or an error if the operation failed.
+// Updates result with committed/missing paths accordingly.
+func (e *Engine) commitFilePath(
+	relPath string,
+	cwd string,
+	overlayRoot string,
+	activeStore string,
+	workspaceState *state.WorkspaceState,
+	result *CommitResult,
+	now time.Time,
+	dryRun bool,
+) error {
+	// Validate path before any file IO
+	if err := e.fs.ValidateRelPath(relPath); err != nil {
+		return fmt.Errorf("invalid path %q: %w", relPath, err)
+	}
+
+	// Use cleaned relative path
+	cleanRelPath := filepath.Clean(relPath)
+	workspaceFilePath := filepath.Join(cwd, cleanRelPath)
+	storeFilePath := filepath.Join(overlayRoot, cleanRelPath)
+
+	// Check if path exists in workspace
+	exists, err := e.fs.Exists(workspaceFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to check if path exists: %w", err)
+	}
+
+	if !exists {
+		// Path doesn't exist in workspace - add to missing list
+		result.Missing = append(result.Missing, cleanRelPath)
+		return nil
+	}
+
+	if dryRun {
+		result.Committed = append(result.Committed, cleanRelPath)
+		return nil
+	}
+
+	// Copy the file/directory to the store
+	if err := e.fs.Copy(workspaceFilePath, storeFilePath); err != nil {
+		return fmt.Errorf("failed to copy %s to store: %w", cleanRelPath, err)
+	}
+
+	// Compute checksum for files (not directories)
+	checksum := ""
+	info, err := e.fs.Lstat(workspaceFilePath)
+	if err == nil && !info.IsDir() {
+		hash, err := e.hasher.HashFile(workspaceFilePath)
+		if err == nil {
+			checksum = hash
+		}
+	}
+
+	// Record this path as managed in workspace state
+	workspaceState.Paths[cleanRelPath] = state.PathOwnership{
+		Store:     activeStore,
+		Type:      "copy",
+		Timestamp: now,
+		Checksum:  checksum,
+	}
+
+	result.Committed = append(result.Committed, cleanRelPath)
+	return nil
 }
 
 // cleanupOrphanedFiles removes files from the overlay directory that are no longer tracked.

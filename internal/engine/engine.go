@@ -145,3 +145,19 @@ func (e *Engine) LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, mode
 	}
 	return workspaceState, workspaceID, nil
 }
+
+// touchStoreMeta updates the UpdatedAt timestamp of a store's metadata.
+// This is used to track when a store was last modified.
+func (e *Engine) touchStoreMeta(storeID string) error {
+	meta, err := e.storeRepo.LoadMeta(storeID)
+	if err != nil {
+		return fmt.Errorf("failed to load store metadata: %w", err)
+	}
+
+	meta.UpdatedAt = e.clock.Now()
+	if err := e.storeRepo.SaveMeta(storeID, meta); err != nil {
+		return fmt.Errorf("failed to save store metadata: %w", err)
+	}
+
+	return nil
+}

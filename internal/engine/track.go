@@ -93,14 +93,8 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) error {
 	}
 
 	// Update store metadata (UpdatedAt timestamp)
-	meta, err := e.storeRepo.LoadMeta(activeStore)
-	if err != nil {
-		return fmt.Errorf("failed to load store metadata: %w", err)
-	}
-
-	meta.UpdatedAt = e.clock.Now()
-	if err := e.storeRepo.SaveMeta(activeStore, meta); err != nil {
-		return fmt.Errorf("failed to save store metadata: %w", err)
+	if err := e.touchStoreMeta(activeStore); err != nil {
+		return err
 	}
 
 	return nil
@@ -156,14 +150,8 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) error {
 	}
 
 	// Update store metadata (UpdatedAt timestamp)
-	meta, err := e.storeRepo.LoadMeta(activeStore)
-	if err != nil {
-		return fmt.Errorf("failed to load store metadata: %w", err)
-	}
-
-	meta.UpdatedAt = e.clock.Now()
-	if err := e.storeRepo.SaveMeta(activeStore, meta); err != nil {
-		return fmt.Errorf("failed to save store metadata: %w", err)
+	if err := e.touchStoreMeta(activeStore); err != nil {
+		return err
 	}
 
 	return nil
