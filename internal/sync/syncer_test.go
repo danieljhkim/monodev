@@ -146,12 +146,12 @@ func setupSyncerTest(t *testing.T) (
 	storesDir = filepath.Join(tmpDir, "stores")
 
 	if err := os.MkdirAll(repoRoot, 0755); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create repo root: %v", err)
 	}
 
 	if err := os.MkdirAll(storesDir, 0755); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create stores dir: %v", err)
 	}
 
@@ -170,7 +170,7 @@ func setupSyncerTest(t *testing.T) (
 	syncer = New(git, storeRepo, stateStore, snapshotMgr, configStore, fs, hasher, clk)
 
 	cleanup = func() {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 	}
 
 	return repoRoot, storesDir, syncer, git, storeRepo, configStore, cleanup

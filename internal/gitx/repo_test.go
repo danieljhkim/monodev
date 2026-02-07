@@ -21,7 +21,7 @@ func setupGitRepo(t *testing.T) string {
 	cmd := exec.Command("git", "init")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to init git repo: %v", err)
 	}
 
@@ -29,14 +29,14 @@ func setupGitRepo(t *testing.T) string {
 	cmd = exec.Command("git", "config", "user.email", "test@example.com")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to configure git email: %v", err)
 	}
 
 	cmd = exec.Command("git", "config", "user.name", "Test User")
 	cmd.Dir = tmpDir
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to configure git name: %v", err)
 	}
 
@@ -53,7 +53,7 @@ func setupGitRepoWithRemote(t *testing.T, remoteURL string) string {
 	cmd := exec.Command("git", "remote", "add", "origin", remoteURL)
 	cmd.Dir = repoDir
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(repoDir)
+		_ = os.RemoveAll(repoDir)
 		t.Fatalf("failed to add remote: %v", err)
 	}
 
@@ -65,7 +65,7 @@ func TestRealGitRepo_Discover(t *testing.T) {
 
 	t.Run("finds git repo from root", func(t *testing.T) {
 		gitDir := setupGitRepo(t)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		root, err := repo.Discover(gitDir)
 		if err != nil {
@@ -79,7 +79,7 @@ func TestRealGitRepo_Discover(t *testing.T) {
 
 	t.Run("finds git repo from subdirectory", func(t *testing.T) {
 		gitDir := setupGitRepo(t)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		// Create nested subdirectories
 		subDir := filepath.Join(gitDir, "a", "b", "c")
@@ -102,7 +102,7 @@ func TestRealGitRepo_Discover(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		_, err = repo.Discover(tmpDir)
 		if err == nil {
@@ -127,7 +127,7 @@ func TestRealGitRepo_Fingerprint(t *testing.T) {
 	t.Run("generates fingerprint for repo with remote", func(t *testing.T) {
 		remoteURL := "git@github.com:test/repo.git"
 		gitDir := setupGitRepoWithRemote(t, remoteURL)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		fingerprint, err := repo.Fingerprint(gitDir)
 		if err != nil {
@@ -151,7 +151,7 @@ func TestRealGitRepo_Fingerprint(t *testing.T) {
 
 	t.Run("generates fingerprint for repo without remote", func(t *testing.T) {
 		gitDir := setupGitRepo(t)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		fingerprint, err := repo.Fingerprint(gitDir)
 		if err != nil {
@@ -165,10 +165,10 @@ func TestRealGitRepo_Fingerprint(t *testing.T) {
 
 	t.Run("different repos have different fingerprints", func(t *testing.T) {
 		repo1 := setupGitRepoWithRemote(t, "git@github.com:test/repo1.git")
-		defer os.RemoveAll(repo1)
+		defer func() { _ = os.RemoveAll(repo1) }()
 
 		repo2 := setupGitRepoWithRemote(t, "git@github.com:test/repo2.git")
-		defer os.RemoveAll(repo2)
+		defer func() { _ = os.RemoveAll(repo2) }()
 
 		fp1, err := repo.Fingerprint(repo1)
 		if err != nil {
@@ -191,7 +191,7 @@ func TestRealGitRepo_RelPath(t *testing.T) {
 
 	t.Run("computes relative path for file in repo", func(t *testing.T) {
 		gitDir := setupGitRepo(t)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		filePath := filepath.Join(gitDir, "src", "main.go")
 		relPath, err := repo.RelPath(gitDir, filePath)
@@ -207,7 +207,7 @@ func TestRealGitRepo_RelPath(t *testing.T) {
 
 	t.Run("computes relative path for root file", func(t *testing.T) {
 		gitDir := setupGitRepo(t)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		filePath := filepath.Join(gitDir, "README.md")
 		relPath, err := repo.RelPath(gitDir, filePath)
@@ -222,7 +222,7 @@ func TestRealGitRepo_RelPath(t *testing.T) {
 
 	t.Run("returns error for path outside repo", func(t *testing.T) {
 		gitDir := setupGitRepo(t)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		outsidePath := filepath.Join(filepath.Dir(gitDir), "outside.txt")
 		_, err := repo.RelPath(gitDir, outsidePath)
@@ -236,7 +236,7 @@ func TestRealGitRepo_RelPath(t *testing.T) {
 
 	t.Run("returns error for path with parent traversal", func(t *testing.T) {
 		gitDir := setupGitRepo(t)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		// Path that would escape the repo through ..
 		escapePath := filepath.Join(gitDir, "subdir", "..", "..", "escape.txt")
@@ -248,7 +248,7 @@ func TestRealGitRepo_RelPath(t *testing.T) {
 
 	t.Run("handles nested directories correctly", func(t *testing.T) {
 		gitDir := setupGitRepo(t)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		nestedPath := filepath.Join(gitDir, "a", "b", "c", "file.txt")
 		relPath, err := repo.RelPath(gitDir, nestedPath)
@@ -269,7 +269,7 @@ func TestRealGitRepo_GetFingerprintComponents(t *testing.T) {
 	t.Run("returns components for repo with remote", func(t *testing.T) {
 		remoteURL := "git@github.com:test/repo.git"
 		gitDir := setupGitRepoWithRemote(t, remoteURL)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		absPath, gitURL, err := repo.GetFingerprintComponents(gitDir)
 		if err != nil {
@@ -292,7 +292,7 @@ func TestRealGitRepo_GetFingerprintComponents(t *testing.T) {
 
 	t.Run("returns components for repo without remote", func(t *testing.T) {
 		gitDir := setupGitRepo(t)
-		defer os.RemoveAll(gitDir)
+		defer func() { _ = os.RemoveAll(gitDir) }()
 
 		absPath, gitURL, err := repo.GetFingerprintComponents(gitDir)
 		if err != nil {

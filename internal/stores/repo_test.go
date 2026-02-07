@@ -30,7 +30,7 @@ func TestFileStoreRepo_List(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		// Use a non-existent subdirectory
 		nonExistentDir := filepath.Join(tmpDir, "nonexistent")
@@ -49,7 +49,7 @@ func TestFileStoreRepo_List(t *testing.T) {
 
 	t.Run("returns empty list when directory is empty", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		stores, err := repo.List()
 		if err != nil {
@@ -63,7 +63,7 @@ func TestFileStoreRepo_List(t *testing.T) {
 
 	t.Run("returns list of store directories", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		// Create some store directories
 		storeIDs := []string{"store1", "store2", "store3"}
@@ -104,7 +104,7 @@ func TestFileStoreRepo_List(t *testing.T) {
 func TestFileStoreRepo_Exists(t *testing.T) {
 	t.Run("returns false for non-existent store", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		exists, err := repo.Exists("nonexistent")
 		if err != nil {
@@ -118,7 +118,7 @@ func TestFileStoreRepo_Exists(t *testing.T) {
 
 	t.Run("returns true for existing store", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
 		if err := os.MkdirAll(filepath.Join(tmpDir, storeID), 0755); err != nil {
@@ -137,7 +137,7 @@ func TestFileStoreRepo_Exists(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		_, err := repo.Exists("../invalid")
 		if err == nil {
@@ -149,7 +149,7 @@ func TestFileStoreRepo_Exists(t *testing.T) {
 func TestFileStoreRepo_Create(t *testing.T) {
 	t.Run("creates new store with metadata", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "new-store"
 		now := time.Now()
@@ -204,7 +204,7 @@ func TestFileStoreRepo_Create(t *testing.T) {
 
 	t.Run("returns error for existing store", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "existing-store"
 		meta := NewStoreMeta("Test", "global", time.Now())
@@ -223,7 +223,7 @@ func TestFileStoreRepo_Create(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		meta := NewStoreMeta("Test", "global", time.Now())
 		err := repo.Create("../invalid", meta)
@@ -236,7 +236,7 @@ func TestFileStoreRepo_Create(t *testing.T) {
 func TestFileStoreRepo_LoadMeta(t *testing.T) {
 	t.Run("loads metadata correctly", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
 		now := time.Now()
@@ -269,7 +269,7 @@ func TestFileStoreRepo_LoadMeta(t *testing.T) {
 
 	t.Run("returns error for non-existent store", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		_, err := repo.LoadMeta("nonexistent")
 		if err == nil {
@@ -279,7 +279,7 @@ func TestFileStoreRepo_LoadMeta(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		_, err := repo.LoadMeta("../invalid")
 		if err == nil {
@@ -291,7 +291,7 @@ func TestFileStoreRepo_LoadMeta(t *testing.T) {
 func TestFileStoreRepo_SaveMeta(t *testing.T) {
 	t.Run("saves metadata correctly", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
 		originalMeta := NewStoreMeta("Original", "global", time.Now())
@@ -330,7 +330,7 @@ func TestFileStoreRepo_SaveMeta(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		meta := NewStoreMeta("Test", "global", time.Now())
 		err := repo.SaveMeta("../invalid", meta)
@@ -343,7 +343,7 @@ func TestFileStoreRepo_SaveMeta(t *testing.T) {
 func TestFileStoreRepo_LoadTrack(t *testing.T) {
 	t.Run("loads track file correctly", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
 		meta := NewStoreMeta("Test", "global", time.Now())
@@ -387,7 +387,7 @@ func TestFileStoreRepo_LoadTrack(t *testing.T) {
 
 	t.Run("returns empty track file if not exists", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
 		meta := NewStoreMeta("Test", "global", time.Now())
@@ -416,7 +416,7 @@ func TestFileStoreRepo_LoadTrack(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		_, err := repo.LoadTrack("../invalid")
 		if err == nil {
@@ -428,7 +428,7 @@ func TestFileStoreRepo_LoadTrack(t *testing.T) {
 func TestFileStoreRepo_SaveTrack(t *testing.T) {
 	t.Run("saves track file correctly", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
 		meta := NewStoreMeta("Test", "global", time.Now())
@@ -467,7 +467,7 @@ func TestFileStoreRepo_SaveTrack(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		track := NewTrackFile()
 		err := repo.SaveTrack("../invalid", track)
@@ -480,7 +480,7 @@ func TestFileStoreRepo_SaveTrack(t *testing.T) {
 func TestFileStoreRepo_OverlayRoot(t *testing.T) {
 	t.Run("returns correct overlay path", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
 		overlayPath := repo.OverlayRoot(storeID)
@@ -493,7 +493,7 @@ func TestFileStoreRepo_OverlayRoot(t *testing.T) {
 
 	t.Run("returns empty string for invalid store ID", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		overlayPath := repo.OverlayRoot("../invalid")
 		if overlayPath != "" {
@@ -505,7 +505,7 @@ func TestFileStoreRepo_OverlayRoot(t *testing.T) {
 func TestFileStoreRepo_Delete(t *testing.T) {
 	t.Run("deletes store successfully", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
 		meta := NewStoreMeta("Test", "global", time.Now())
@@ -541,7 +541,7 @@ func TestFileStoreRepo_Delete(t *testing.T) {
 
 	t.Run("handles deletion of non-existent store", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		// Deleting non-existent store should not error (idempotent)
 		err := repo.Delete("nonexistent")
@@ -552,7 +552,7 @@ func TestFileStoreRepo_Delete(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		err := repo.Delete("../invalid")
 		if err == nil {

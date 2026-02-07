@@ -25,12 +25,12 @@ func setupTestEnv(t *testing.T) (storesDir string, persistRoot string, fs fsops.
 	persistRoot = filepath.Join(tmpDir, "repo")
 
 	if err := os.MkdirAll(storesDir, 0755); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create stores dir: %v", err)
 	}
 
 	if err := os.MkdirAll(persistRoot, 0755); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create persist root: %v", err)
 	}
 
@@ -73,7 +73,7 @@ func createTestStore(t *testing.T, repo stores.StoreRepo, storeID string) {
 func TestSnapshotManager_Materialize(t *testing.T) {
 	t.Run("materializes store successfully", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		storeID := "test-store"
 		createTestStore(t, repo, storeID)
@@ -123,7 +123,7 @@ func TestSnapshotManager_Materialize(t *testing.T) {
 
 	t.Run("overwrites existing materialized store", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		storeID := "test-store"
 		createTestStore(t, repo, storeID)
@@ -155,7 +155,7 @@ func TestSnapshotManager_Materialize(t *testing.T) {
 
 	t.Run("returns error for non-existent store", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		err := mgr.Materialize("nonexistent", repo, persistRoot)
 		if err == nil {
@@ -165,7 +165,7 @@ func TestSnapshotManager_Materialize(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		err := mgr.Materialize("../invalid", repo, persistRoot)
 		if err == nil {
@@ -177,7 +177,7 @@ func TestSnapshotManager_Materialize(t *testing.T) {
 func TestSnapshotManager_Dematerialize(t *testing.T) {
 	t.Run("dematerializes store successfully", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		storeID := "test-store"
 		createTestStore(t, repo, storeID)
@@ -227,7 +227,7 @@ func TestSnapshotManager_Dematerialize(t *testing.T) {
 
 	t.Run("overwrites existing store in stores directory", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		storeID := "test-store"
 		createTestStore(t, repo, storeID)
@@ -261,7 +261,7 @@ func TestSnapshotManager_Dematerialize(t *testing.T) {
 
 	t.Run("returns error for non-existent persisted store", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		err := mgr.Dematerialize("nonexistent", persistRoot, repo)
 		if err == nil {
@@ -271,7 +271,7 @@ func TestSnapshotManager_Dematerialize(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		err := mgr.Dematerialize("../invalid", persistRoot, repo)
 		if err == nil {
@@ -283,7 +283,7 @@ func TestSnapshotManager_Dematerialize(t *testing.T) {
 func TestSnapshotManager_Verify(t *testing.T) {
 	t.Run("verifies existing store", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		storeID := "test-store"
 		createTestStore(t, repo, storeID)
@@ -303,7 +303,7 @@ func TestSnapshotManager_Verify(t *testing.T) {
 
 	t.Run("returns error for non-existent store", func(t *testing.T) {
 		storesDir, persistRoot, _, _, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		hasher := hash.NewSHA256Hasher()
 		err := mgr.Verify("nonexistent", persistRoot, hasher)
@@ -314,7 +314,7 @@ func TestSnapshotManager_Verify(t *testing.T) {
 
 	t.Run("returns error for invalid store ID", func(t *testing.T) {
 		storesDir, persistRoot, _, _, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		hasher := hash.NewSHA256Hasher()
 		err := mgr.Verify("../invalid", persistRoot, hasher)
@@ -327,7 +327,7 @@ func TestSnapshotManager_Verify(t *testing.T) {
 func TestSnapshotManager_ListPersistedStores(t *testing.T) {
 	t.Run("returns empty list when persist directory does not exist", func(t *testing.T) {
 		storesDir, persistRoot, _, _, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		stores, err := mgr.ListPersistedStores(persistRoot)
 		if err != nil {
@@ -341,7 +341,7 @@ func TestSnapshotManager_ListPersistedStores(t *testing.T) {
 
 	t.Run("returns empty list when persist stores directory is empty", func(t *testing.T) {
 		storesDir, persistRoot, _, _, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		// Create persist directory structure but no stores
 		persistStoresDir := filepath.Join(persistRoot, ".monodev", "persist", "stores")
@@ -361,7 +361,7 @@ func TestSnapshotManager_ListPersistedStores(t *testing.T) {
 
 	t.Run("returns list of persisted stores", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		// Create and materialize multiple stores
 		storeIDs := []string{"store1", "store2", "store3"}
@@ -397,7 +397,7 @@ func TestSnapshotManager_ListPersistedStores(t *testing.T) {
 
 	t.Run("ignores files in persist stores directory", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		storeID := "test-store"
 		createTestStore(t, repo, storeID)
@@ -433,7 +433,7 @@ func TestSnapshotManager_ListPersistedStores(t *testing.T) {
 func TestSnapshotManager_Roundtrip(t *testing.T) {
 	t.Run("materialize and dematerialize preserves store content", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
-		defer os.RemoveAll(filepath.Dir(storesDir))
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
 		storeID := "test-store"
 		createTestStore(t, repo, storeID)

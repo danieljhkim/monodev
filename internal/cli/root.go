@@ -100,7 +100,7 @@ func customHelpFunc(cmd *cobra.Command, args []string) {
 	// Add usage footer
 	fmt.Fprintf(&help, "Use \"%s [command] --help\" for more information about a command.\n", cmd.CommandPath())
 
-	fmt.Fprint(cmd.OutOrStdout(), help.String())
+	_, _ = fmt.Fprint(cmd.OutOrStdout(), help.String())
 }
 
 func init() {
@@ -150,7 +150,7 @@ func init() {
 		Short:   "Help about any command",
 		GroupID: "cli-tooling",
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Root().Help()
+			_ = cmd.Root().Help()
 		},
 	}
 	rootCmd.SetHelpCommand(helpCmd)
