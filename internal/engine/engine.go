@@ -116,7 +116,8 @@ func (e *Engine) executeCopy(op planner.Operation) error {
 func (e *Engine) DiscoverWorkspace(cwd string) (root, fingerprint, workspacePath string, err error) {
 	root, err = e.gitRepo.Discover(cwd)
 	if err != nil {
-		fmt.Printf("failed to discover git repo. Using absolute path for workspace fingerprint: %v\n", err)
+		// Fallback to using absolute path for non-git repositories
+		// This is a valid fallback behavior, not an error condition
 		root = cwd
 	}
 

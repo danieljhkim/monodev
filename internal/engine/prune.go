@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -127,24 +126,10 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 		return result, nil
 	}
 
-	// If not force mode, ask for confirmation
+	// If not force mode, return early with the list of paths to delete
+	// The CLI layer should handle user confirmation and call again with Force=true
 	if !req.Force {
-		fmt.Printf("The following %d path(s) will be deleted from store '%s':\n", len(untrackedPaths), workspaceState.ActiveStore)
-		for _, p := range untrackedPaths {
-			fmt.Printf("  - %s\n", p)
-		}
-		fmt.Print("\nProceed? (y/N): ")
-
-		reader := bufio.NewReader(os.Stdin)
-		response, err := reader.ReadString('\n')
-		if err != nil {
-			return nil, fmt.Errorf("failed to read confirmation: %w", err)
-		}
-
-		response = strings.TrimSpace(strings.ToLower(response))
-		if response != "y" && response != "yes" {
-			return nil, fmt.Errorf("prune cancelled by user")
-		}
+		return result, nil
 	}
 
 	// Reload workspace state to get latest version
@@ -170,10 +155,8 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 				if pathInfo.Store == workspaceState.ActiveStore {
 					// Remove the overlay from workspace (symlink or copied file)
 					workspacePath := filepath.Join(req.CWD, path)
-					if err := e.fs.RemoveAll(workspacePath); err != nil && !os.IsNotExist(err) {
-						// Log but don't fail - workspace file might already be gone
-						fmt.Fprintf(os.Stderr, "Warning: failed to remove %s from workspace: %v\n", path, err)
-					}
+					_ = e.fs.RemoveAll(workspacePath)
+					// Ignore errors - workspace file might already be gone
 
 					// Remove from workspace state
 					delete(workspaceState.Paths, path)
