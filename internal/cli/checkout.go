@@ -48,6 +48,22 @@ Use -n to create a new store if it doesn't exist.`,
 			if err := eng.CreateStore(ctx, createReq); err != nil {
 				return fmt.Errorf("failed to create store: %w", err)
 			}
+
+			if jsonOutput {
+				result := struct {
+					StoreID     string `json:"storeId"`
+					Created     bool   `json:"created"`
+					Scope       string `json:"scope,omitempty"`
+					Description string `json:"description,omitempty"`
+				}{
+					StoreID:     storeID,
+					Created:     true,
+					Scope:       storeScope,
+					Description: storeDesc,
+				}
+				return outputJSON(result)
+			}
+
 			PrintSuccess(fmt.Sprintf("Created and activated store: %s", storeID))
 			if storeScope != "" {
 				PrintLabelValue("Scope", storeScope)
@@ -62,6 +78,17 @@ Use -n to create a new store if it doesn't exist.`,
 		}
 		if err := eng.UseStore(ctx, useReq); err != nil {
 			return err
+		}
+
+		if jsonOutput {
+			result := struct {
+				StoreID string `json:"storeId"`
+				Created bool   `json:"created"`
+			}{
+				StoreID: storeID,
+				Created: false,
+			}
+			return outputJSON(result)
 		}
 
 		PrintSuccess(fmt.Sprintf("Active store set to: %s", storeID))

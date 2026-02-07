@@ -50,6 +50,9 @@ This command applies only a single store - use 'stack apply' to apply the stack.
 		result, err := eng.Apply(ctx, req)
 		if err != nil {
 			if result != nil && result.Plan != nil && result.Plan.HasConflicts() {
+				if jsonOutput {
+					return outputJSON(result)
+				}
 				PrintSection("Conflicts Detected")
 				for _, conflict := range result.Plan.Conflicts {
 					PrintError(fmt.Sprintf("%s: %s", conflict.Path, conflict.Reason))
@@ -58,6 +61,10 @@ This command applies only a single store - use 'stack apply' to apply the stack.
 				PrintWarning("Use --force to override conflicts.")
 			}
 			return err
+		}
+
+		if jsonOutput {
+			return outputJSON(result)
 		}
 
 		if applyDryRun {

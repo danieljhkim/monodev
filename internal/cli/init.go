@@ -74,6 +74,19 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// 5. Display success message
+	if jsonOutput {
+		result := struct {
+			Initialized bool   `json:"initialized"`
+			Path        string `json:"path"`
+			Message     string `json:"message"`
+		}{
+			Initialized: true,
+			Path:        monodevPath,
+			Message:     "All monodev commands in this repo will now use the repo-local .monodev directory",
+		}
+		return outputJSON(result)
+	}
+
 	PrintSuccess(fmt.Sprintf("Initialized .monodev at %s", monodevPath))
 	fmt.Println()
 	PrintInfo("Next steps:")

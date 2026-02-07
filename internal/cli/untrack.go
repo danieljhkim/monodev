@@ -42,6 +42,17 @@ It only removes the paths from track.json metadata.`,
 			return err
 		}
 
+		if jsonOutput {
+			result := struct {
+				UntrackedPaths []string `json:"untrackedPaths"`
+				Count          int      `json:"count"`
+			}{
+				UntrackedPaths: args,
+				Count:          len(args),
+			}
+			return outputJSON(result)
+		}
+
 		PrintSuccess(fmt.Sprintf("Untracked %s", PrintCount(len(args), "path", "paths")))
 		PrintWarning("Note: Store overlay content not deleted.")
 		return nil

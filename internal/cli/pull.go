@@ -81,6 +81,10 @@ func runPull(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if jsonOutput {
+		return outputJSON(result)
+	}
+
 	// Display result
 	if len(result.PulledStores) > 0 {
 		if len(args) == 0 {

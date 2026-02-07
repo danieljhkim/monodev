@@ -45,6 +45,10 @@ Paths applied by the stack are not affected - use 'stack unapply' for that.`,
 			return err
 		}
 
+		if jsonOutput {
+			return outputJSON(result)
+		}
+
 		if unapplyDryRun {
 			PrintSection("Dry Run")
 			PrintInfo(fmt.Sprintf("Would remove %s", PrintCount(len(result.Removed), "path", "paths")))

@@ -36,6 +36,17 @@ var trackCmd = &cobra.Command{
 			return err
 		}
 
+		if jsonOutput {
+			result := struct {
+				TrackedPaths []string `json:"trackedPaths"`
+				Count        int      `json:"count"`
+			}{
+				TrackedPaths: args,
+				Count:        len(args),
+			}
+			return outputJSON(result)
+		}
+
 		PrintSuccess(fmt.Sprintf("Tracked %s", PrintCount(len(args), "path", "paths")))
 		return nil
 	},

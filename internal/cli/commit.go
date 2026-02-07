@@ -49,6 +49,10 @@ var commitCmd = &cobra.Command{
 			return err
 		}
 
+		if jsonOutput {
+			return outputJSON(result)
+		}
+
 		if commitDryRun {
 			PrintSection("Dry Run")
 			PrintInfo(fmt.Sprintf("Would commit %s", PrintCount(len(result.Committed), "path", "paths")))

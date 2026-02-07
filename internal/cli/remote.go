@@ -109,6 +109,19 @@ func runRemoteUse(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
+	if jsonOutput {
+		result := struct {
+			Remote string `json:"remote"`
+			URL    string `json:"url"`
+			Branch string `json:"branch"`
+		}{
+			Remote: remoteName,
+			URL:    remoteURL,
+			Branch: config.Branch,
+		}
+		return outputJSON(result)
+	}
+
 	PrintSuccess(fmt.Sprintf("Remote set to %q", remoteName))
 	PrintInfo(fmt.Sprintf("URL: %s", remoteURL))
 	PrintInfo(fmt.Sprintf("Branch: %s", config.Branch))
@@ -148,6 +161,17 @@ func runRemoteSetBranch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
+	if jsonOutput {
+		result := struct {
+			Branch string `json:"branch"`
+			Remote string `json:"remote"`
+		}{
+			Branch: branchName,
+			Remote: config.Remote,
+		}
+		return outputJSON(result)
+	}
+
 	PrintSuccess(fmt.Sprintf("Branch set to %q", branchName))
 	PrintInfo(fmt.Sprintf("Remote: %s", config.Remote))
 
@@ -169,6 +193,16 @@ func runRemoteShow(cmd *cobra.Command, args []string) error {
 	config, err := configStore.Load(repoRoot)
 	if err != nil {
 		if err == remote.ErrRemoteNotConfigured {
+			if jsonOutput {
+				result := struct {
+					Configured bool   `json:"configured"`
+					Message    string `json:"message"`
+				}{
+					Configured: false,
+					Message:    "Remote not configured. Run 'monodev remote use <name>' to configure a remote",
+				}
+				return outputJSON(result)
+			}
 			PrintWarning("Remote not configured")
 			PrintInfo("Run 'monodev remote use <name>' to configure a remote")
 			return nil
@@ -182,6 +216,23 @@ func runRemoteShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		PrintWarning(fmt.Sprintf("Remote %q not found in repository", config.Remote))
 		remoteURL = "(not found)"
+	}
+
+	if jsonOutput {
+		result := struct {
+			Configured bool   `json:"configured"`
+			Remote     string `json:"remote"`
+			URL        string `json:"url"`
+			Branch     string `json:"branch"`
+			UpdatedAt  string `json:"updatedAt"`
+		}{
+			Configured: true,
+			Remote:     config.Remote,
+			URL:        remoteURL,
+			Branch:     config.Branch,
+			UpdatedAt:  config.UpdatedAt.Format("2006-01-02 15:04:05"),
+		}
+		return outputJSON(result)
 	}
 
 	// Display config

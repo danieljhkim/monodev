@@ -87,6 +87,10 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if jsonOutput {
+		return outputJSON(result)
+	}
+
 	// Display result
 	if result.DryRun {
 		PrintInfo("Dry run - no changes made")
