@@ -3,13 +3,19 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
 var (
 	// Global flags
 	jsonOutput bool
+
+	// Colors for help output sections
+	groupTitleColor   = color.New(color.FgCyan, color.Bold)
+	sectionTitleColor = color.New(color.FgBlue, color.Bold)
 )
 
 // rootCmd is the root command for monodev.
@@ -36,7 +42,71 @@ func SetVersion(v string) {
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 }
 
+// customHelpFunc returns a custom help function that colors group titles
+func customHelpFunc(cmd *cobra.Command, args []string) {
+	// Build complete help output
+	var help strings.Builder
+
+	// Add long description if present
+	if cmd.Long != "" {
+		help.WriteString(cmd.Long)
+		help.WriteString("\n\n")
+	}
+
+	// Add usage
+	help.WriteString(sectionTitleColor.Sprint("Usage:"))
+	help.WriteString("\n")
+	fmt.Fprintf(&help, "  %s\n\n", cmd.UseLine())
+
+	// Add grouped commands
+	for _, group := range cmd.Groups() {
+		// Color the group title
+		help.WriteString(groupTitleColor.Sprint(group.Title))
+		help.WriteString("\n")
+
+		for _, c := range cmd.Commands() {
+			if c.GroupID == group.ID && !c.Hidden {
+				fmt.Fprintf(&help, "  %-11s %s\n", c.Name(), c.Short)
+			}
+		}
+		help.WriteString("\n")
+	}
+
+	// Add ungrouped commands (Additional Commands section)
+	hasUngrouped := false
+	for _, c := range cmd.Commands() {
+		if c.GroupID == "" && !c.Hidden {
+			if !hasUngrouped {
+				help.WriteString(sectionTitleColor.Sprint("Additional Commands:"))
+				help.WriteString("\n")
+				hasUngrouped = true
+			}
+			fmt.Fprintf(&help, "  %-11s %s\n", c.Name(), c.Short)
+		}
+	}
+	if hasUngrouped {
+		help.WriteString("\n")
+	}
+
+	// Add flags
+	if cmd.HasAvailableLocalFlags() || cmd.HasAvailablePersistentFlags() {
+		help.WriteString(sectionTitleColor.Sprint("Flags:"))
+		help.WriteString("\n")
+		help.WriteString(cmd.LocalFlags().FlagUsages())
+		help.WriteString(cmd.InheritedFlags().FlagUsages())
+		help.WriteString("\n")
+	}
+
+	// Add usage footer
+	fmt.Fprintf(&help, "Use \"%s [command] --help\" for more information about a command.\n", cmd.CommandPath())
+
+	fmt.Fprint(cmd.OutOrStdout(), help.String())
+}
+
 func init() {
+	// Set custom help function to color group titles
+	rootCmd.SetHelpFunc(customHelpFunc)
+
 	// Global flags
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 
