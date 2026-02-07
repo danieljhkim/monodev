@@ -124,10 +124,6 @@ func init() {
 		Title: "Stack Management:",
 	})
 	rootCmd.AddGroup(&cobra.Group{
-		ID:    "workspace-management",
-		Title: "Workspace Management:",
-	})
-	rootCmd.AddGroup(&cobra.Group{
 		ID:    "remote-persistence",
 		Title: "Remote Persistence:",
 	})
@@ -204,12 +200,16 @@ See each sub-command's help for details on how to use the generated script.`,
 	// Workspace Lifecycle commands
 	applyCmd.GroupID = "workspace-lifecycle"
 	unapplyCmd.GroupID = "workspace-lifecycle"
-	diffCmd.GroupID = "workspace-lifecycle"
+	clearCmd.GroupID = "workspace-lifecycle"
 	statusCmd.GroupID = "workspace-lifecycle"
+	workspaceCmd.GroupID = "workspace-lifecycle"
+	diffCmd.GroupID = "workspace-lifecycle"
 	rootCmd.AddCommand(applyCmd)
 	rootCmd.AddCommand(unapplyCmd)
-	rootCmd.AddCommand(diffCmd)
+	rootCmd.AddCommand(clearCmd)
 	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(workspaceCmd)
+	rootCmd.AddCommand(diffCmd)
 
 	// Store Operations commands
 	storeCmd.GroupID = "store-operations"
@@ -227,16 +227,12 @@ See each sub-command's help for details on how to use the generated script.`,
 	stackCmd.GroupID = "stack-management"
 	rootCmd.AddCommand(stackCmd)
 
-	// Workspace Management commands
-	workspaceCmd.GroupID = "workspace-management"
-	initCmd.GroupID = "workspace-management"
-	rootCmd.AddCommand(workspaceCmd)
-	rootCmd.AddCommand(initCmd)
-
 	// Remote Persistence commands
+	initCmd.GroupID = "remote-persistence"
 	remoteCmd.GroupID = "remote-persistence"
 	pushCmd.GroupID = "remote-persistence"
 	pullCmd.GroupID = "remote-persistence"
+	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(remoteCmd)
 	rootCmd.AddCommand(pushCmd)
 	rootCmd.AddCommand(pullCmd)
