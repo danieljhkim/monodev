@@ -9,6 +9,17 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ---
 
+## [0.2.4] — 2026-02-06
+
+### Added
+- New `monodev clear` command for deleting workspace state files with `--force` and `--dry-run` flags.
+- Custom help function with colored output for improved CLI readability, including grouped command listings and flags usage.
+- Command groups for better organization: workspace lifecycle, store operations, stack management, workspace management, remote persistence, and CLI tooling.
+
+### Changed
+- Enhanced CLI help output with colored group titles and section headers for better readability.
+- Improved command organization with grouped and ungrouped sections in help output.
+
 ## [0.2.2] — 2026-01-31
 
 ### Added
