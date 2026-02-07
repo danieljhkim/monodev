@@ -46,6 +46,9 @@ type TrackedPath struct {
 
 	// Required indicates if this path must exist when applying (default: true)
 	Required *bool `json:"required,omitempty"`
+
+	// Location is the absolute path where tracking occurred (optional)
+	Location string `json:"location,omitempty"`
 }
 
 // IsRequired returns whether this path is required.

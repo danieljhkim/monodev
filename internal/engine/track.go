@@ -80,8 +80,9 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) error {
 			}
 
 			track.Tracked = append(track.Tracked, stores.TrackedPath{
-				Path: relPath,
-				Kind: kind,
+				Path:     relPath,
+				Kind:     kind,
+				Location: req.CWD,
 			})
 			pathSet[relPath] = true
 		}

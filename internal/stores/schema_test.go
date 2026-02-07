@@ -1,6 +1,7 @@
 package stores
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -248,4 +249,144 @@ func TestTrackFile_Fields(t *testing.T) {
 			t.Errorf("Notes = %s, want 'Test notes'", tf.Notes)
 		}
 	})
+}
+
+func TestTrackedPath_Location(t *testing.T) {
+	t.Run("location field can be set and retrieved", func(t *testing.T) {
+		tp := TrackedPath{
+			Path:     "test.txt",
+			Kind:     "file",
+			Location: "/home/user/workspace",
+		}
+
+		if tp.Location != "/home/user/workspace" {
+			t.Errorf("Location = %s, want '/home/user/workspace'", tp.Location)
+		}
+	})
+
+	t.Run("location field defaults to empty string", func(t *testing.T) {
+		tp := TrackedPath{
+			Path: "test.txt",
+			Kind: "file",
+		}
+
+		if tp.Location != "" {
+			t.Errorf("Location = %s, want empty string", tp.Location)
+		}
+	})
+}
+
+func TestTrackedPath_JSONSerialization(t *testing.T) {
+	t.Run("marshals location field when set", func(t *testing.T) {
+		tp := TrackedPath{
+			Path:     "test.txt",
+			Kind:     "file",
+			Location: "/home/user/workspace",
+		}
+
+		data, err := json.Marshal(tp)
+		if err != nil {
+			t.Fatalf("Failed to marshal: %v", err)
+		}
+
+		var result TrackedPath
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Failed to unmarshal: %v", err)
+		}
+
+		if result.Location != "/home/user/workspace" {
+			t.Errorf("Location = %s, want '/home/user/workspace'", result.Location)
+		}
+	})
+
+	t.Run("omits location field when empty (omitempty)", func(t *testing.T) {
+		tp := TrackedPath{
+			Path:     "test.txt",
+			Kind:     "file",
+			Location: "",
+		}
+
+		data, err := json.Marshal(tp)
+		if err != nil {
+			t.Fatalf("Failed to marshal: %v", err)
+		}
+
+		// Should not contain "location" key
+		jsonStr := string(data)
+		if contains(jsonStr, "location") {
+			t.Errorf("JSON should not contain 'location' key when empty: %s", jsonStr)
+		}
+	})
+
+	t.Run("unmarshals old JSON without location field (backward compatibility)", func(t *testing.T) {
+		// Simulate old track.json format without location field
+		oldJSON := `{"path":"test.txt","kind":"file"}`
+
+		var tp TrackedPath
+		if err := json.Unmarshal([]byte(oldJSON), &tp); err != nil {
+			t.Fatalf("Failed to unmarshal old JSON: %v", err)
+		}
+
+		if tp.Path != "test.txt" {
+			t.Errorf("Path = %s, want 'test.txt'", tp.Path)
+		}
+
+		if tp.Kind != "file" {
+			t.Errorf("Kind = %s, want 'file'", tp.Kind)
+		}
+
+		if tp.Location != "" {
+			t.Errorf("Location should be empty string, got %s", tp.Location)
+		}
+	})
+
+	t.Run("round-trip marshaling preserves all fields", func(t *testing.T) {
+		required := true
+		original := TrackedPath{
+			Path:     "config.yaml",
+			Kind:     "file",
+			Required: &required,
+			Location: "/Users/test/myproject",
+		}
+
+		data, err := json.Marshal(original)
+		if err != nil {
+			t.Fatalf("Failed to marshal: %v", err)
+		}
+
+		var result TrackedPath
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Failed to unmarshal: %v", err)
+		}
+
+		if result.Path != original.Path {
+			t.Errorf("Path = %s, want %s", result.Path, original.Path)
+		}
+
+		if result.Kind != original.Kind {
+			t.Errorf("Kind = %s, want %s", result.Kind, original.Kind)
+		}
+
+		if result.Location != original.Location {
+			t.Errorf("Location = %s, want %s", result.Location, original.Location)
+		}
+
+		if result.Required == nil || *result.Required != *original.Required {
+			t.Errorf("Required mismatch")
+		}
+	})
+}
+
+// Helper function to check if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
