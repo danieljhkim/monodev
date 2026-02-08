@@ -12,7 +12,7 @@ import (
 
 // DeleteStore deletes a store after checking for usage by workspaces.
 // Algorithm steps:
-// 1. Validate store exists
+// 1. Validate store exists (resolve scope)
 // 2. Find all workspaces using the store
 // 3. Return early if dry-run
 // 4. If store is in use and not forced, return error with affected workspaces
@@ -20,13 +20,10 @@ import (
 // 6. Delete store
 // 7. Return result
 func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*DeleteStoreResult, error) {
-	// Step 1: Validate store exists
-	exists, err := e.storeRepo.Exists(req.StoreID)
+	// Step 1: Resolve store scope
+	repo, _, err := e.resolveStoreRepo(req.StoreID, req.Scope)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check if store exists: %w", err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("%w: store '%s' not found", ErrNotFound, req.StoreID)
+		return nil, err
 	}
 
 	// Step 2: Find affected workspaces
@@ -63,7 +60,7 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 	}
 
 	// Step 6: Delete store
-	if err := e.storeRepo.Delete(req.StoreID); err != nil {
+	if err := repo.Delete(req.StoreID); err != nil {
 		return nil, fmt.Errorf("failed to delete store: %w", err)
 	}
 
@@ -75,37 +72,40 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 	}, nil
 }
 
-// findWorkspacesUsingStore enumerates all workspaces and finds which ones use the given store.
+// findWorkspacesUsingStore enumerates all workspaces (both scopes) and finds which ones use the given store.
 func (e *Engine) findWorkspacesUsingStore(storeID string) ([]WorkspaceUsage, error) {
-	// Read all workspace files
-	entries, err := os.ReadDir(e.configPaths.Workspaces)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []WorkspaceUsage{}, nil
-		}
-		return nil, fmt.Errorf("failed to read workspaces directory: %w", err)
-	}
-
+	seen := make(map[string]bool)
 	var usages []WorkspaceUsage
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
 
-		// Extract workspace ID (strip .json extension)
-		workspaceID := strings.TrimSuffix(entry.Name(), ".json")
-
-		// Load workspace state
-		ws, err := e.stateStore.LoadWorkspace(workspaceID)
+	for _, dir := range e.workspacesDirs() {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			// Skip corrupted or unreadable workspace files
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to read workspaces directory: %w", err)
 		}
 
-		// Check usage
-		usage := e.checkWorkspaceUsage(ws, storeID, workspaceID)
-		if usage != nil {
-			usages = append(usages, *usage)
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+
+			workspaceID := strings.TrimSuffix(entry.Name(), ".json")
+			if seen[workspaceID] {
+				continue
+			}
+			seen[workspaceID] = true
+
+			ws, err := e.stateStore.LoadWorkspace(workspaceID)
+			if err != nil {
+				continue
+			}
+
+			usage := e.checkWorkspaceUsage(ws, storeID, workspaceID)
+			if usage != nil {
+				usages = append(usages, *usage)
+			}
 		}
 	}
 

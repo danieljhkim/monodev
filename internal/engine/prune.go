@@ -49,8 +49,14 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 		return nil, ErrNoActiveStore
 	}
 
+	// Resolve the store repo for the active store
+	repo, err := e.activeStoreRepo(workspaceState)
+	if err != nil {
+		return nil, err
+	}
+
 	// Load track file to get tracked paths
-	track, err := e.storeRepo.LoadTrack(workspaceState.ActiveStore)
+	track, err := repo.LoadTrack(workspaceState.ActiveStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load track file: %w", err)
 	}
@@ -62,7 +68,7 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 	}
 
 	// Get overlay root
-	overlayRoot := e.storeRepo.OverlayRoot(workspaceState.ActiveStore)
+	overlayRoot := repo.OverlayRoot(workspaceState.ActiveStore)
 
 	// Find all files in overlay directory
 	var untrackedPaths []string
@@ -175,14 +181,8 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 	}
 
 	// Update store metadata (UpdatedAt timestamp)
-	meta, err := e.storeRepo.LoadMeta(workspaceState.ActiveStore)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load store metadata: %w", err)
-	}
-
-	meta.UpdatedAt = e.clock.Now()
-	if err := e.storeRepo.SaveMeta(workspaceState.ActiveStore, meta); err != nil {
-		return nil, fmt.Errorf("failed to save store metadata: %w", err)
+	if err := e.touchStoreMetaIn(repo, workspaceState.ActiveStore); err != nil {
+		return nil, err
 	}
 
 	return result, nil

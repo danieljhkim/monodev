@@ -46,12 +46,12 @@ func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
 		return fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
 
-	// Verify store exists
-	exists, err := e.storeRepo.Exists(req.StoreID)
+	// Verify store exists in either scope
+	locations, err := e.findStore(req.StoreID)
 	if err != nil {
 		return fmt.Errorf("failed to check if store exists: %w", err)
 	}
-	if !exists {
+	if len(locations) == 0 {
 		return fmt.Errorf("%w: store %s does not exist", ErrNotFound, req.StoreID)
 	}
 

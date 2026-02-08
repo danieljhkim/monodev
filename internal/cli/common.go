@@ -20,14 +20,14 @@ import (
 
 // newEngine creates a new engine with real implementations of all dependencies.
 func newEngine() (*engine.Engine, error) {
-	// Get default paths
-	paths, err := config.DefaultPaths()
+	// Get scoped paths (global + component)
+	scopedPaths, err := config.NewScopedPaths()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get config paths: %w", err)
 	}
 
 	// Ensure directories exist
-	if err := paths.EnsureDirectories(); err != nil {
+	if err := scopedPaths.EnsureDirectories(); err != nil {
 		return nil, fmt.Errorf("failed to ensure directories: %w", err)
 	}
 
@@ -36,11 +36,9 @@ func newEngine() (*engine.Engine, error) {
 	gitRepo := gitx.NewRealGitRepo()
 	hasher := hash.NewSHA256Hasher()
 	clk := &clock.RealClock{}
-	stateStore := state.NewFileStateStore(fs, paths.Workspaces)
-	storeRepo := stores.NewFileStoreRepo(fs, paths.Stores)
 
-	// Create engine
-	return engine.New(gitRepo, storeRepo, stateStore, fs, hasher, clk, *paths), nil
+	// Create engine with dual-scope support
+	return engine.NewScoped(gitRepo, scopedPaths, fs, hasher, clk), nil
 }
 
 // newSyncer creates a new syncer with real implementations of all dependencies.

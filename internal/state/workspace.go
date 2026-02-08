@@ -26,6 +26,9 @@ type WorkspaceState struct {
 	// ActiveStore is the store that was active when overlays were applied
 	ActiveStore string `json:"activeStore"`
 
+	// ActiveStoreScope records which scope the active store belongs to
+	ActiveStoreScope string `json:"activeStoreScope,omitempty"`
+
 	// Paths maps destination paths to their ownership information
 	Paths map[string]PathOwnership `json:"paths"`
 }

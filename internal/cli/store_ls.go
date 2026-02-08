@@ -19,25 +19,25 @@ var storeLsCmd = &cobra.Command{
 
 		ctx := context.Background()
 
-		stores, err := eng.ListStores(ctx)
+		storeList, err := eng.ListStores(ctx)
 		if err != nil {
 			return err
 		}
 
 		if jsonOutput {
-			return outputJSON(stores)
+			return outputJSON(storeList)
 		}
 
-		if len(stores) == 0 {
+		if len(storeList) == 0 {
 			PrintSection("Stores")
 			PrintEmptyState("No stores found")
 			return nil
 		}
 
 		PrintSection("Available Stores")
-		rows := make([][]string, 0, len(stores))
-		for _, store := range stores {
-			rows = append(rows, []string{store.Name, store.Scope})
+		rows := make([][]string, 0, len(storeList))
+		for _, store := range storeList {
+			rows = append(rows, []string{store.Meta.Name, store.Scope})
 		}
 		PrintTable([]string{"Name", "Scope"}, rows)
 		return nil

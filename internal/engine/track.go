@@ -53,8 +53,14 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) error {
 
 	activeStore := workspaceState.ActiveStore
 
+	// Resolve the store repo for the active store
+	repo, err := e.activeStoreRepo(workspaceState)
+	if err != nil {
+		return err
+	}
+
 	// Load current track file
-	track, err := e.storeRepo.LoadTrack(activeStore)
+	track, err := repo.LoadTrack(activeStore)
 	if err != nil {
 		return fmt.Errorf("failed to load track file: %w", err)
 	}
@@ -89,12 +95,12 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) error {
 	}
 
 	// Save updated track file
-	if err := e.storeRepo.SaveTrack(activeStore, track); err != nil {
+	if err := repo.SaveTrack(activeStore, track); err != nil {
 		return fmt.Errorf("failed to save track file: %w", err)
 	}
 
 	// Update store metadata (UpdatedAt timestamp)
-	if err := e.touchStoreMeta(activeStore); err != nil {
+	if err := e.touchStoreMetaIn(repo, activeStore); err != nil {
 		return err
 	}
 
@@ -124,8 +130,14 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) error {
 
 	activeStore := workspaceState.ActiveStore
 
+	// Resolve the store repo for the active store
+	repo, err := e.activeStoreRepo(workspaceState)
+	if err != nil {
+		return err
+	}
+
 	// Load current track file
-	track, err := e.storeRepo.LoadTrack(activeStore)
+	track, err := repo.LoadTrack(activeStore)
 	if err != nil {
 		return fmt.Errorf("failed to load track file: %w", err)
 	}
@@ -146,12 +158,12 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) error {
 	track.Tracked = newTracked
 
 	// Save updated track file
-	if err := e.storeRepo.SaveTrack(activeStore, track); err != nil {
+	if err := repo.SaveTrack(activeStore, track); err != nil {
 		return fmt.Errorf("failed to save track file: %w", err)
 	}
 
 	// Update store metadata (UpdatedAt timestamp)
-	if err := e.touchStoreMeta(activeStore); err != nil {
+	if err := e.touchStoreMetaIn(repo, activeStore); err != nil {
 		return err
 	}
 

@@ -2,6 +2,35 @@ package stores
 
 import "time"
 
+const (
+	// ScopeGlobal indicates a store stored at ~/.monodev/stores/
+	ScopeGlobal = "global"
+
+	// ScopeComponent indicates a store stored at repo_root/.monodev/stores/
+	ScopeComponent = "component"
+)
+
+// ScopedStore wraps a store with its scope location.
+type ScopedStore struct {
+	// ID is the store identifier
+	ID string
+
+	// Meta is the store metadata
+	Meta *StoreMeta
+
+	// Scope indicates where the store is located (ScopeGlobal or ScopeComponent)
+	Scope string
+}
+
+// StoreLocation records where a store was found during scope search.
+type StoreLocation struct {
+	// Scope is the scope where the store was found
+	Scope string
+
+	// Repo is the StoreRepo instance for this scope
+	Repo StoreRepo
+}
+
 // StoreMeta contains metadata about a store.
 type StoreMeta struct {
 	// Name is the human-readable name of the store

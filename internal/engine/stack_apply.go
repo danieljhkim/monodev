@@ -9,6 +9,7 @@ import (
 
 	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
+	"github.com/danieljhkim/monodev/internal/stores"
 )
 
 // StackApply applies all stores in the configured stack to the workspace.
@@ -35,13 +36,35 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 	// Build apply plan using only stack stores (no active store)
 	orderedStores := append([]string{}, workspaceState.Stack...)
 
+	// Resolve each stack store's scope and build a MultiStoreRepo
+	storeMapping := make(map[string]stores.StoreRepo)
+	for _, sid := range orderedStores {
+		locations, findErr := e.findStore(sid)
+		if findErr != nil {
+			return nil, fmt.Errorf("failed to find store %s: %w", sid, findErr)
+		}
+		if len(locations) > 0 {
+			// Prefer component scope if available
+			for _, loc := range locations {
+				if loc.Scope == stores.ScopeComponent {
+					storeMapping[sid] = loc.Repo
+					break
+				}
+			}
+			if _, ok := storeMapping[sid]; !ok {
+				storeMapping[sid] = locations[0].Repo
+			}
+		}
+	}
+	multiRepo := stores.NewMultiStoreRepo(storeMapping, e.storeRepo)
+
 	// Always detect conflicts (force=false for detection)
 	plan, err := planner.BuildApplyPlan(
 		workspaceState,
 		orderedStores,
 		req.Mode,
 		req.CWD,
-		e.storeRepo,
+		multiRepo,
 		e.fs,
 		false, // Always detect conflicts in planning phase
 	)

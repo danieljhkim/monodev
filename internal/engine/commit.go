@@ -69,14 +69,20 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 		return nil, ErrNoActiveStore
 	}
 
+	// Resolve the store repo for the active store
+	repo, err := e.activeStoreRepo(workspaceState)
+	if err != nil {
+		return nil, err
+	}
+
 	// Load track file to see what paths are tracked
-	track, err := e.storeRepo.LoadTrack(workspaceState.ActiveStore)
+	track, err := repo.LoadTrack(workspaceState.ActiveStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load track file: %w", err)
 	}
 
 	// Get the overlay root for the active store
-	overlayRoot := e.storeRepo.OverlayRoot(workspaceState.ActiveStore)
+	overlayRoot := repo.OverlayRoot(workspaceState.ActiveStore)
 
 	result := &CommitResult{
 		Committed: []string{},
@@ -130,7 +136,7 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 
 	if !req.DryRun {
 		// Update store metadata (UpdatedAt timestamp)
-		if err := e.touchStoreMeta(workspaceState.ActiveStore); err != nil {
+		if err := e.touchStoreMetaIn(repo, workspaceState.ActiveStore); err != nil {
 			return nil, err
 		}
 

@@ -32,17 +32,22 @@ func (e *Engine) Diff(ctx context.Context, req *DiffRequest) (*DiffResult, error
 		}
 	}
 
-	// Verify store exists
-	exists, err := e.storeRepo.Exists(storeID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check if store exists: %w", err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("store %q does not exist", storeID)
+	// Resolve store repo (use active store scope or search both)
+	var repo stores.StoreRepo
+	if storeID == workspaceState.ActiveStore && workspaceState.ActiveStoreScope != "" {
+		repo, err = e.storeRepoForScope(workspaceState.ActiveStoreScope)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		repo, _, err = e.resolveStoreRepo(storeID, "")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Load tracked paths from store
-	trackFile, err := e.storeRepo.LoadTrack(storeID)
+	trackFile, err := repo.LoadTrack(storeID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No track.json means no tracked paths
@@ -55,7 +60,7 @@ func (e *Engine) Diff(ctx context.Context, req *DiffRequest) (*DiffResult, error
 	}
 
 	// Get overlay root path
-	overlayRoot := e.storeRepo.OverlayRoot(storeID)
+	overlayRoot := repo.OverlayRoot(storeID)
 
 	// Compare each tracked path
 	files := make([]DiffFileInfo, 0, len(trackFile.Tracked))

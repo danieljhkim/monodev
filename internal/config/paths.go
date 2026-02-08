@@ -95,6 +95,66 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
+// ScopedPaths provides dual-scope path resolution for global and component stores.
+type ScopedPaths struct {
+	// Global points to ~/.monodev (or MONODEV_ROOT)
+	Global *Paths
+
+	// Component points to repo_root/.monodev (nil if no repo context)
+	Component *Paths
+
+	// HasRepoContext is true when a git repo with .monodev was found
+	HasRepoContext bool
+
+	// RepoRoot is the git repository root (empty if no repo context)
+	RepoRoot string
+}
+
+// NewScopedPaths resolves both global and component paths.
+// Global always resolves to ~/.monodev (or MONODEV_ROOT).
+// Component resolves to repo_root/.monodev if we're in a git repo that has it.
+func NewScopedPaths() (*ScopedPaths, error) {
+	sp := &ScopedPaths{}
+
+	// Global: MONODEV_ROOT or ~/.monodev
+	if root := os.Getenv("MONODEV_ROOT"); root != "" {
+		sp.Global = buildPaths(root)
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user home directory: %w", err)
+		}
+		sp.Global = buildPaths(filepath.Join(home, ".monodev"))
+	}
+
+	// Component: repo_root/.monodev (if in a git repo)
+	if cwd, err := os.Getwd(); err == nil {
+		if repoRoot, err := discoverGitRoot(cwd); err == nil {
+			sp.RepoRoot = repoRoot
+			repoLocalPath := filepath.Join(repoRoot, ".monodev")
+			if pathExists(repoLocalPath) {
+				sp.Component = buildPaths(repoLocalPath)
+				sp.HasRepoContext = true
+			}
+		}
+	}
+
+	return sp, nil
+}
+
+// EnsureDirectories creates all necessary directories for both scopes.
+func (sp *ScopedPaths) EnsureDirectories() error {
+	if err := sp.Global.EnsureDirectories(); err != nil {
+		return err
+	}
+	if sp.Component != nil {
+		if err := sp.Component.EnsureDirectories(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // EnsureDirectories creates all necessary directories if they don't exist.
 func (p *Paths) EnsureDirectories() error {
 	dirs := []string{

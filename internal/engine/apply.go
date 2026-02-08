@@ -44,12 +44,18 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		return nil, fmt.Errorf("%w: existing mode is %s, requested mode is %s", ErrValidation, workspaceState.Mode, req.Mode)
 	}
 
+	// Resolve the store repo for the active store
+	applyRepo, err := e.activeStoreRepo(workspaceState)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve store repo: %w", err)
+	}
+
 	plan, err := planner.BuildApplyPlan(
 		workspaceState,
 		orderedStores,
 		req.Mode,
 		req.CWD,
-		e.storeRepo,
+		applyRepo,
 		e.fs,
 		req.Force,
 	)

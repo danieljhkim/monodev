@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/state"
+	"github.com/danieljhkim/monodev/internal/stores"
 )
 
 // Status returns the current status of the workspace.
@@ -66,17 +67,21 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 
 	// Load tracked paths from active store
 	if result.ActiveStore != "" {
-		track, err := e.storeRepo.LoadTrack(result.ActiveStore)
-		if err == nil {
-			result.TrackedPaths = track.Paths()
+		repo, repoErr := e.activeStoreRepo(workspaceState)
+		if repoErr == nil {
+			track, err := repo.LoadTrack(result.ActiveStore)
+			if err == nil {
+				result.TrackedPaths = track.Paths()
 
-			// Compute TrackedPathDetails
-			result.TrackedPathDetails = e.computeTrackedPathDetails(result.ActiveStore, track.Paths(), workspaceState)
+				// Compute TrackedPathDetails
+				result.TrackedPathDetails = e.computeTrackedPathDetails(repo, result.ActiveStore, track.Paths(), workspaceState)
 
-			// Compute ActiveStoreStatus
-			result.ActiveStoreStatus = e.computeActiveStoreStatus(track.Paths(), result.TrackedPathDetails)
+				// Compute ActiveStoreStatus
+				result.ActiveStoreStatus = e.computeActiveStoreStatus(track.Paths(), result.TrackedPathDetails)
+			} else {
+				result.ActiveStoreStatus = "Not Applied"
+			}
 		} else {
-			// Store might not exist or have no track file
 			result.ActiveStoreStatus = "Not Applied"
 		}
 	} else {
@@ -147,13 +152,13 @@ func (e *Engine) computeAppliedStoreDetails(workspaceState *state.WorkspaceState
 }
 
 // computeTrackedPathDetails computes detailed info for tracked paths.
-func (e *Engine) computeTrackedPathDetails(activeStoreID string, trackedPaths []string, workspaceState *state.WorkspaceState) []TrackedPathInfo {
+func (e *Engine) computeTrackedPathDetails(repo stores.StoreRepo, activeStoreID string, trackedPaths []string, workspaceState *state.WorkspaceState) []TrackedPathInfo {
 	var details []TrackedPathInfo
 
-	overlayRoot := e.storeRepo.OverlayRoot(activeStoreID)
+	overlayRoot := repo.OverlayRoot(activeStoreID)
 
 	// Load track file to get path kinds (file vs dir)
-	track, _ := e.storeRepo.LoadTrack(activeStoreID)
+	track, _ := repo.LoadTrack(activeStoreID)
 	pathKindMap := make(map[string]string)
 	if track != nil {
 		for _, tp := range track.Tracked {

@@ -9,52 +9,49 @@ import (
 )
 
 // ListWorkspaces enumerates all workspace state files and returns summary information.
-// Algorithm steps:
-// 1. Read all workspace files from ~/.monodev/workspaces
-// 2. Load each workspace state file
-// 3. Build WorkspaceInfo summary for each
-// 4. Skip corrupted files gracefully
-// 5. Return sorted list by WorkspacePath
+// Scans both global and component workspace directories, deduplicating by workspace ID.
 func (e *Engine) ListWorkspaces(ctx context.Context) (*ListWorkspacesResult, error) {
-	// Step 1: Read all workspace files
-	entries, err := os.ReadDir(e.configPaths.Workspaces)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &ListWorkspacesResult{Workspaces: []WorkspaceInfo{}}, nil
-		}
-		return nil, fmt.Errorf("failed to read workspaces directory: %w", err)
-	}
-
+	seen := make(map[string]bool)
 	var workspaces []WorkspaceInfo
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
 
-		// Extract workspace ID (strip .json extension)
-		workspaceID := strings.TrimSuffix(entry.Name(), ".json")
-
-		// Step 2: Load workspace state
-		ws, err := e.stateStore.LoadWorkspace(workspaceID)
+	for _, dir := range e.workspacesDirs() {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			// Step 4: Skip corrupted or unreadable workspace files
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to read workspaces directory: %w", err)
 		}
 
-		// Step 3: Build WorkspaceInfo summary
-		workspaces = append(workspaces, WorkspaceInfo{
-			WorkspaceID:      workspaceID,
-			WorkspacePath:    ws.WorkspacePath,
-			Repo:             ws.Repo,
-			Applied:          ws.Applied,
-			Mode:             ws.Mode,
-			ActiveStore:      ws.ActiveStore,
-			StackCount:       len(ws.Stack),
-			AppliedPathCount: len(ws.Paths),
-		})
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+
+			workspaceID := strings.TrimSuffix(entry.Name(), ".json")
+			if seen[workspaceID] {
+				continue
+			}
+			seen[workspaceID] = true
+
+			ws, err := e.stateStore.LoadWorkspace(workspaceID)
+			if err != nil {
+				continue
+			}
+
+			workspaces = append(workspaces, WorkspaceInfo{
+				WorkspaceID:      workspaceID,
+				WorkspacePath:    ws.WorkspacePath,
+				Repo:             ws.Repo,
+				Applied:          ws.Applied,
+				Mode:             ws.Mode,
+				ActiveStore:      ws.ActiveStore,
+				StackCount:       len(ws.Stack),
+				AppliedPathCount: len(ws.Paths),
+			})
+		}
 	}
 
-	// Step 5: Sort by WorkspacePath for consistency
 	slices.SortFunc(workspaces, func(a, b WorkspaceInfo) int {
 		return strings.Compare(a.WorkspacePath, b.WorkspacePath)
 	})

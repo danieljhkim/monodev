@@ -66,8 +66,9 @@ type StackUnapplyRequest struct {
 // DeleteStoreRequest represents a request to delete a store.
 type DeleteStoreRequest struct {
 	StoreID string
-	Force   bool // Skip safety checks
-	DryRun  bool // Preview only
+	Force   bool   // Skip safety checks
+	DryRun  bool   // Preview only
+	Scope   string // Optional scope to disambiguate (empty = auto-resolve)
 }
 
 // DeleteWorkspaceRequest represents a request to delete a workspace.
