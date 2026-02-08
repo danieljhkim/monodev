@@ -115,38 +115,39 @@ func formatDefaultDiff(result *engine.DiffResult) error {
 		return nil
 	}
 
-	PrintSection("Diff")
-	PrintLabelValue("Store", result.StoreID)
-	PrintLabelValue("Workspace", result.WorkspaceID)
+	// Compact header: store and workspace on one line
+	fmt.Println()
+	_, _ = dimColor.Printf("  store: ")
+	_, _ = infoColor.Printf("%s", result.StoreID)
+	_, _ = dimColor.Printf("  workspace: ")
+	_, _ = infoColor.Printf("%s\n", result.WorkspaceID)
 
 	insertions := 0
 	deletions := 0
 
-	for i, file := range files {
-		if i > 0 {
-			fmt.Println()
-			PrintSeparator()
-		}
-
+	for _, file := range files {
+		fmt.Println()
 		printDiffFileHeader(file)
 
 		if file.UnifiedDiff != "" {
 			printUnifiedDiff(file.UnifiedDiff)
-		} else {
-			statusChar := getStatusChar(file.Status)
-			fmt.Printf("%s\t%s\n", statusChar, file.Path)
 		}
 
 		insertions += file.Additions
 		deletions += file.Deletions
 	}
 
+	// Color-coded summary line
 	fmt.Println()
-	fmt.Printf("%d file%s changed, %d insertion%s(+), %d deletion%s(-)\n",
-		len(files), plural(len(files)),
-		insertions, plural(insertions),
-		deletions, plural(deletions),
-	)
+	_, _ = dimColor.Print("  ")
+	fmt.Printf("%d file%s changed", len(files), plural(len(files)))
+	if insertions > 0 {
+		_, _ = successColor.Printf(", %d insertion%s(+)", insertions, plural(insertions))
+	}
+	if deletions > 0 {
+		_, _ = errorColor.Printf(", %d deletion%s(-)", deletions, plural(deletions))
+	}
+	fmt.Println()
 
 	return nil
 }
@@ -189,22 +190,32 @@ func plural(count int) string {
 }
 
 func printDiffFileHeader(file engine.DiffFileInfo) {
-	summary := fmt.Sprintf("%s (%s%d, %s%d)",
-		file.Path,
-		addPrefix(file.Additions), file.Additions,
-		delPrefix(file.Deletions), file.Deletions,
-	)
-
+	statusChar := getStatusChar(file.Status)
+	statusClr := dimColor
 	switch file.Status {
 	case "added":
-		_, _ = successColor.Printf("A %s\n", summary)
+		statusClr = successColor
 	case "removed":
-		_, _ = errorColor.Printf("D %s\n", summary)
+		statusClr = errorColor
 	case "modified":
-		_, _ = warningColor.Printf("M %s\n", summary)
-	default:
-		fmt.Printf("%s %s\n", getStatusChar(file.Status), summary)
+		statusClr = warningColor
 	}
+
+	// Status badge + file path + stats
+	_, _ = statusClr.Printf("  %s ", statusChar)
+	_, _ = headerColor.Printf("%s", file.Path)
+
+	// Insertion/deletion counts, colored individually
+	if file.Additions > 0 {
+		_, _ = successColor.Printf("  +%d", file.Additions)
+	}
+	if file.Deletions > 0 {
+		_, _ = errorColor.Printf("  -%d", file.Deletions)
+	}
+	fmt.Println()
+
+	// Thin separator under the file header
+	_, _ = dimColor.Println("  " + strings.Repeat("─", 50))
 }
 
 func printUnifiedDiff(diffText string) {
@@ -216,32 +227,19 @@ func printUnifiedDiff(diffText string) {
 		}
 
 		switch {
-		case strings.HasPrefix(line, "diff --git "):
-			_, _ = headerColor.Println(line)
+		// Skip redundant diff header lines — already shown in file header
+		case strings.HasPrefix(line, "diff --git "),
+			strings.HasPrefix(line, "+++ "),
+			strings.HasPrefix(line, "--- "):
+			continue
 		case strings.HasPrefix(line, "@@"):
-			_, _ = infoColor.Println(line)
-		case strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "--- "):
-			_, _ = subHeaderColor.Println(line)
+			_, _ = infoColor.Printf("  %s\n", line)
 		case strings.HasPrefix(line, "+"):
-			_, _ = successColor.Println(line)
+			_, _ = successColor.Printf("  %s\n", line)
 		case strings.HasPrefix(line, "-"):
-			_, _ = errorColor.Println(line)
+			_, _ = errorColor.Printf("  %s\n", line)
 		default:
-			fmt.Println(line)
+			fmt.Printf("  %s\n", line)
 		}
 	}
-}
-
-func addPrefix(count int) string {
-	if count > 0 {
-		return "+"
-	}
-	return ""
-}
-
-func delPrefix(count int) string {
-	if count > 0 {
-		return "-"
-	}
-	return ""
 }

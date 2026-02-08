@@ -44,8 +44,14 @@ func TestFormatDefaultDiff_PrintsPatchAndSummary(t *testing.T) {
 	if strings.Index(output, "a.txt") > strings.Index(output, "b.txt") {
 		t.Fatalf("expected sorted output by path, got:\n%s", output)
 	}
-	if !strings.Contains(output, "2 files changed, 2 insertions(+), 1 deletion(-)") {
-		t.Fatalf("expected git-like summary line, got:\n%s", output)
+	if !strings.Contains(output, "2 files changed") {
+		t.Fatalf("expected file count in summary line, got:\n%s", output)
+	}
+	if !strings.Contains(output, "2 insertions(+)") {
+		t.Fatalf("expected insertion count in summary, got:\n%s", output)
+	}
+	if !strings.Contains(output, "1 deletion(-)") {
+		t.Fatalf("expected deletion count in summary, got:\n%s", output)
 	}
 }
 
