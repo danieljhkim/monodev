@@ -57,11 +57,8 @@ func BuildApplyPlan(
 				return nil, fmt.Errorf("failed to check source path %s: %w", sourcePath, err)
 			}
 			if !sourceExists {
-				// Skip paths that don't exist in the store (unless required)
-				// This can happen if a path is tracked but not yet saved
-				if trackedPath.IsRequired() {
-					return nil, fmt.Errorf("required path %s not found in store %s", trackedPath.Path, storeID)
-				}
+				// Warn and skip paths that don't exist in the store overlay
+				plan.AddWarning(fmt.Sprintf("tracked path %s not found in store %s (skipping)", trackedPath.Path, storeID))
 				continue
 			}
 

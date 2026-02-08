@@ -42,6 +42,50 @@ type CreateStoreRequest struct {
 
 	// Description is an optional description
 	Description string
+
+	// Source indicates how the store was created (human, agent, other)
+	Source string
+
+	// Type categorizes the store (issue, plan, feature, task, other)
+	Type string
+
+	// Owner identifies who owns the store
+	Owner string
+
+	// TaskID links the store to an external task
+	TaskID string
+
+	// ParentTaskID links the store to a parent task
+	ParentTaskID string
+
+	// Priority indicates the store's priority (low, medium, high, none)
+	Priority string
+
+	// Status indicates the store's workflow status
+	Status string
+}
+
+// UpdateStoreRequest represents a request to update store metadata.
+// Nil pointer fields mean "do not change".
+type UpdateStoreRequest struct {
+	// CWD is the current working directory
+	CWD string
+
+	// StoreID is the store to update
+	StoreID string
+
+	// Scope optionally specifies which scope to use (empty = auto-resolve)
+	Scope string
+
+	// Optional fields — nil means "do not change"
+	Description  *string
+	Source       *string
+	Type         *string
+	Owner        *string
+	TaskID       *string
+	ParentTaskID *string
+	Priority     *string
+	Status       *string
 }
 
 // StoreDetails contains detailed information about a store.
@@ -50,7 +94,7 @@ type StoreDetails struct {
 	Meta *stores.StoreMeta
 
 	// TrackedPaths is the list of tracked paths
-	TrackedPaths []string
+	TrackedPaths []stores.TrackedPath
 }
 
 // ScopedStoreDetails contains detailed information about a store in a specific scope.
@@ -62,7 +106,7 @@ type ScopedStoreDetails struct {
 	Meta *stores.StoreMeta
 
 	// TrackedPaths is the list of tracked paths
-	TrackedPaths []string
+	TrackedPaths []stores.TrackedPath
 }
 
 // UseStore selects a store as the active store for the current repository.
@@ -136,6 +180,21 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	// Create store metadata
 	meta := stores.NewStoreMeta(req.Name, scope, e.clock.Now())
 	meta.Description = req.Description
+	meta.Source = req.Source
+	meta.Type = req.Type
+	meta.Owner = req.Owner
+	if meta.Owner == "" {
+		meta.Owner = e.gitRepo.Username(req.CWD)
+	}
+	meta.TaskID = req.TaskID
+	meta.ParentTaskID = req.ParentTaskID
+	meta.Priority = req.Priority
+	meta.Status = req.Status
+
+	// Validate metadata
+	if err := meta.Validate(); err != nil {
+		return fmt.Errorf("invalid store metadata: %w", err)
+	}
 
 	// Create the store
 	if err := repo.Create(req.StoreID, meta); err != nil {
@@ -235,9 +294,89 @@ func (e *Engine) DescribeStore(ctx context.Context, storeID string) ([]ScopedSto
 		results = append(results, ScopedStoreDetails{
 			Scope:        loc.Scope,
 			Meta:         meta,
-			TrackedPaths: track.Paths(),
+			TrackedPaths: track.Tracked,
 		})
 	}
 
 	return results, nil
+}
+
+// GetActiveStoreID returns the active store ID and scope for the given working directory.
+// Returns ErrNoActiveStore if no store is currently active.
+func (e *Engine) GetActiveStoreID(ctx context.Context, cwd string) (storeID, scope string, err error) {
+	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(cwd)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to discover workspace: %w", err)
+	}
+
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", ErrNoActiveStore
+		}
+		return "", "", fmt.Errorf("failed to load workspace state: %w", err)
+	}
+
+	if workspaceState.ActiveStore == "" {
+		return "", "", ErrNoActiveStore
+	}
+
+	return workspaceState.ActiveStore, workspaceState.ActiveStoreScope, nil
+}
+
+// UpdateStore updates metadata fields on an existing store.
+func (e *Engine) UpdateStore(ctx context.Context, req *UpdateStoreRequest) error {
+	// Resolve the store repo
+	repo, _, err := e.resolveStoreRepo(req.StoreID, req.Scope)
+	if err != nil {
+		return err
+	}
+
+	// Load current metadata
+	meta, err := repo.LoadMeta(req.StoreID)
+	if err != nil {
+		return fmt.Errorf("failed to load store metadata: %w", err)
+	}
+
+	// Apply non-nil fields
+	if req.Description != nil {
+		meta.Description = *req.Description
+	}
+	if req.Source != nil {
+		meta.Source = *req.Source
+	}
+	if req.Type != nil {
+		meta.Type = *req.Type
+	}
+	if req.Owner != nil {
+		meta.Owner = *req.Owner
+	}
+	if req.TaskID != nil {
+		meta.TaskID = *req.TaskID
+	}
+	if req.ParentTaskID != nil {
+		meta.ParentTaskID = *req.ParentTaskID
+	}
+	if req.Priority != nil {
+		meta.Priority = *req.Priority
+	}
+	if req.Status != nil {
+		meta.Status = *req.Status
+	}
+
+	// Validate
+	if err := meta.Validate(); err != nil {
+		return fmt.Errorf("invalid store metadata: %w", err)
+	}
+
+	// Update timestamp
+	meta.UpdatedAt = e.clock.Now()
+
+	// Save
+	if err := repo.SaveMeta(req.StoreID, meta); err != nil {
+		return fmt.Errorf("failed to save store metadata: %w", err)
+	}
+
+	return nil
 }

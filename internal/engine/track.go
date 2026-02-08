@@ -17,6 +17,15 @@ type TrackRequest struct {
 
 	// Paths is the list of paths to track (relative to CWD, absolute, or containing "..")
 	Paths []string
+
+	// Role categorizes the tracked paths (script, docs, style, config, other)
+	Role string
+
+	// Description provides additional context about the tracked paths
+	Description string
+
+	// Origin indicates how the paths were tracked (user, agent, other)
+	Origin string
 }
 
 // TrackResult represents the result of a track operation.
@@ -100,10 +109,21 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 				kind = "dir"
 			}
 
-			track.Tracked = append(track.Tracked, stores.TrackedPath{
-				Path: repoRelPath,
-				Kind: kind,
-			})
+			now := e.clock.Now()
+			origin := req.Origin
+			if origin == "" {
+				origin = "user"
+			}
+			tp := stores.TrackedPath{
+				Path:        repoRelPath,
+				Kind:        kind,
+				Role:        req.Role,
+				Description: req.Description,
+				CreatedAt:   &now,
+				UpdatedAt:   &now,
+				Origin:      origin,
+			}
+			track.Tracked = append(track.Tracked, tp)
 			pathSet[repoRelPath] = true
 		}
 	}

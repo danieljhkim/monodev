@@ -23,6 +23,10 @@ type GitRepo interface {
 
 	// GetFingerprintComponents returns the absolute path and git URL used to compute the fingerprint.
 	GetFingerprintComponents(root string) (absPath string, gitURL string, err error)
+
+	// Username returns the GitHub username derived from the remote origin URL,
+	// or falls back to git config user.name. Returns "user" if neither is available.
+	Username(root string) string
 }
 
 // RealGitRepo implements GitRepo using actual git commands.
@@ -131,12 +135,65 @@ func (g *RealGitRepo) GetFingerprintComponents(root string) (string, string, err
 	return absRoot, gitURL, nil
 }
 
+// Username returns the GitHub username from the remote origin URL,
+// falling back to git config user.name, then "user".
+func (g *RealGitRepo) Username(root string) string {
+	// Try to extract username from remote origin URL
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	cmd.Dir = root
+	output, err := cmd.Output()
+	if err == nil {
+		url := strings.TrimSpace(string(output))
+		if username := extractGitHubUsername(url); username != "" {
+			return username
+		}
+	}
+
+	// Fall back to git config user.name
+	cmd = exec.Command("git", "config", "--get", "user.name")
+	cmd.Dir = root
+	output, err = cmd.Output()
+	if err == nil {
+		name := strings.TrimSpace(string(output))
+		if name != "" {
+			return name
+		}
+	}
+
+	return "user"
+}
+
+// extractGitHubUsername extracts the username from a GitHub remote URL.
+// Supports SSH (git@github.com:user/repo.git) and HTTPS (https://github.com/user/repo.git).
+func extractGitHubUsername(url string) string {
+	// SSH format: git@github.com:user/repo.git
+	if strings.HasPrefix(url, "git@github.com:") {
+		parts := strings.SplitN(strings.TrimPrefix(url, "git@github.com:"), "/", 2)
+		if len(parts) >= 1 && parts[0] != "" {
+			return parts[0]
+		}
+	}
+
+	// HTTPS format: https://github.com/user/repo.git
+	if strings.Contains(url, "github.com/") {
+		idx := strings.Index(url, "github.com/")
+		rest := url[idx+len("github.com/"):]
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) >= 1 && parts[0] != "" {
+			return parts[0]
+		}
+	}
+
+	return ""
+}
+
 // FakeGitRepo implements GitRepo with predetermined values for testing.
 type FakeGitRepo struct {
 	root        string
 	fingerprint string
 	absPath     string
 	gitURL      string
+	username    string
 	err         error
 }
 
@@ -205,4 +262,17 @@ func (g *FakeGitRepo) GetFingerprintComponents(root string) (string, string, err
 		return "", "", g.err
 	}
 	return g.absPath, g.gitURL, nil
+}
+
+// SetUsername sets the username to return from Username().
+func (g *FakeGitRepo) SetUsername(username string) {
+	g.username = username
+}
+
+// Username returns the predetermined username or "user".
+func (g *FakeGitRepo) Username(root string) string {
+	if g.username != "" {
+		return g.username
+	}
+	return "user"
 }

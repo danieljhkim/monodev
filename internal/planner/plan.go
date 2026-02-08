@@ -10,6 +10,9 @@ type ApplyPlan struct {
 
 	// Conflicts is a list of detected conflicts (empty if no conflicts)
 	Conflicts []Conflict
+
+	// Warnings is a list of non-fatal issues encountered during planning
+	Warnings []string
 }
 
 // Operation represents a single filesystem operation to execute.
@@ -60,6 +63,7 @@ func NewApplyPlan(stores []string) *ApplyPlan {
 		Stores:     stores,
 		Operations: []Operation{},
 		Conflicts:  []Conflict{},
+		Warnings:   []string{},
 	}
 }
 
@@ -76,4 +80,9 @@ func (p *ApplyPlan) AddOperation(op Operation) {
 // AddConflict adds a conflict to the plan.
 func (p *ApplyPlan) AddConflict(conflict Conflict) {
 	p.Conflicts = append(p.Conflicts, conflict)
+}
+
+// AddWarning adds a warning message to the plan.
+func (p *ApplyPlan) AddWarning(msg string) {
+	p.Warnings = append(p.Warnings, msg)
 }

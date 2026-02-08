@@ -15,4 +15,5 @@ func init() {
 	storeCmd.AddCommand(storeLsCmd)
 	storeCmd.AddCommand(storeRmCmd)
 	storeCmd.AddCommand(storeDescribeCmd)
+	storeCmd.AddCommand(storeUpdateCmd)
 }

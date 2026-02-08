@@ -72,6 +72,13 @@ The active store is not affected - use 'monodev apply' separately for that.`,
 			return nil
 		}
 
+		// Show warnings for missing tracked paths
+		if result.Plan != nil && len(result.Plan.Warnings) > 0 {
+			for _, w := range result.Plan.Warnings {
+				PrintWarning(w)
+			}
+		}
+
 		PrintSuccess(fmt.Sprintf("Applied %s from stack successfully", PrintCount(len(result.Applied), "operation", "operations")))
 		PrintLabelValue("Workspace ID", result.WorkspaceID)
 		return nil

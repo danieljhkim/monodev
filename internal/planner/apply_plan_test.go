@@ -250,9 +250,20 @@ func TestBuildApplyPlan_RequiredPathMissing(t *testing.T) {
 	fs.setExists("/stores/store1/overlay/Makefile", false)
 	fs.setExists("/workspace/Makefile", false)
 
-	_, err := BuildApplyPlan(workspace, []string{"store1"}, "symlink", "/workspace", storeRepo, fs, false)
-	if err == nil {
-		t.Fatal("expected error for required path not found")
+	plan, err := BuildApplyPlan(workspace, []string{"store1"}, "symlink", "/workspace", storeRepo, fs, false)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	// Should skip missing path with a warning, no operations
+	if len(plan.Operations) != 0 {
+		t.Errorf("expected 0 operations for missing path, got %d", len(plan.Operations))
+	}
+	if len(plan.Warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(plan.Warnings))
+	}
+	if plan.Warnings[0] != "tracked path Makefile not found in store store1 (skipping)" {
+		t.Errorf("unexpected warning: %s", plan.Warnings[0])
 	}
 }
 

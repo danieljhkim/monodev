@@ -92,6 +92,13 @@ This command applies only a single store - use 'stack apply' to apply the stack.
 			return nil
 		}
 
+		// Show warnings for missing tracked paths
+		if result.Plan != nil && len(result.Plan.Warnings) > 0 {
+			for _, w := range result.Plan.Warnings {
+				PrintWarning(w)
+			}
+		}
+
 		PrintSuccess(fmt.Sprintf("Applied %s successfully", PrintCount(len(result.Applied), "operation", "operations")))
 		PrintLabelValue("Workspace ID", result.WorkspaceID)
 		return nil

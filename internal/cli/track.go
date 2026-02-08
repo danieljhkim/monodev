@@ -27,9 +27,16 @@ var trackCmd = &cobra.Command{
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
 
+		role, _ := cmd.Flags().GetString("role")
+		description, _ := cmd.Flags().GetString("description")
+		origin, _ := cmd.Flags().GetString("origin")
+
 		req := &engine.TrackRequest{
-			CWD:   cwd,
-			Paths: args,
+			CWD:         cwd,
+			Paths:       args,
+			Role:        role,
+			Description: description,
+			Origin:      origin,
 		}
 
 		result, err := eng.Track(ctx, req)
@@ -62,4 +69,10 @@ var trackCmd = &cobra.Command{
 		PrintSuccess(fmt.Sprintf("Tracked %s", PrintCount(len(args), "path", "paths")))
 		return nil
 	},
+}
+
+func init() {
+	trackCmd.Flags().String("role", "", "Path role (script, docs, style, config, other)")
+	trackCmd.Flags().String("description", "", "Description of the tracked path")
+	trackCmd.Flags().String("origin", "", "Origin of the tracked path (user, agent, other)")
 }

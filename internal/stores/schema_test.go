@@ -377,6 +377,277 @@ func TestTrackedPath_JSONSerialization(t *testing.T) {
 	})
 }
 
+func TestNewStoreMeta_SchemaVersion(t *testing.T) {
+	meta := NewStoreMeta("test", "global", time.Now())
+	if meta.SchemaVersion != 2 {
+		t.Errorf("SchemaVersion = %d, want 2", meta.SchemaVersion)
+	}
+}
+
+func TestStoreMeta_Validate(t *testing.T) {
+	t.Run("valid values pass", func(t *testing.T) {
+		meta := NewStoreMeta("test", "global", time.Now())
+		meta.Source = SourceHuman
+		meta.Type = TypeTask
+		meta.Priority = PriorityMedium
+		meta.Status = StatusTodo
+
+		if err := meta.Validate(); err != nil {
+			t.Errorf("unexpected validation error: %v", err)
+		}
+	})
+
+	t.Run("empty values pass", func(t *testing.T) {
+		meta := NewStoreMeta("test", "global", time.Now())
+		if err := meta.Validate(); err != nil {
+			t.Errorf("unexpected validation error for empty fields: %v", err)
+		}
+	})
+
+	t.Run("invalid source rejected", func(t *testing.T) {
+		meta := NewStoreMeta("test", "global", time.Now())
+		meta.Source = "invalid"
+		if err := meta.Validate(); err == nil {
+			t.Error("expected validation error for invalid source")
+		}
+	})
+
+	t.Run("invalid type rejected", func(t *testing.T) {
+		meta := NewStoreMeta("test", "global", time.Now())
+		meta.Type = "invalid"
+		if err := meta.Validate(); err == nil {
+			t.Error("expected validation error for invalid type")
+		}
+	})
+
+	t.Run("invalid priority rejected", func(t *testing.T) {
+		meta := NewStoreMeta("test", "global", time.Now())
+		meta.Priority = "critical"
+		if err := meta.Validate(); err == nil {
+			t.Error("expected validation error for invalid priority")
+		}
+	})
+
+	t.Run("invalid status rejected", func(t *testing.T) {
+		meta := NewStoreMeta("test", "global", time.Now())
+		meta.Status = "archived"
+		if err := meta.Validate(); err == nil {
+			t.Error("expected validation error for invalid status")
+		}
+	})
+}
+
+func TestStoreMeta_BackwardCompat(t *testing.T) {
+	t.Run("unmarshal old JSON without new fields", func(t *testing.T) {
+		oldJSON := `{"name":"my-store","scope":"global","createdAt":"2024-01-15T10:30:00Z","updatedAt":"2024-01-15T10:30:00Z"}`
+
+		var meta StoreMeta
+		if err := json.Unmarshal([]byte(oldJSON), &meta); err != nil {
+			t.Fatalf("Failed to unmarshal old JSON: %v", err)
+		}
+
+		if meta.Name != "my-store" {
+			t.Errorf("Name = %s, want 'my-store'", meta.Name)
+		}
+		if meta.SchemaVersion != 0 {
+			t.Errorf("SchemaVersion = %d, want 0 (zero value)", meta.SchemaVersion)
+		}
+		if meta.Source != "" {
+			t.Errorf("Source = %s, want empty", meta.Source)
+		}
+		if meta.Type != "" {
+			t.Errorf("Type = %s, want empty", meta.Type)
+		}
+		if meta.Owner != "" {
+			t.Errorf("Owner = %s, want empty", meta.Owner)
+		}
+		if meta.TaskID != "" {
+			t.Errorf("TaskID = %s, want empty", meta.TaskID)
+		}
+		if meta.ParentTaskID != "" {
+			t.Errorf("ParentTaskID = %s, want empty", meta.ParentTaskID)
+		}
+		if meta.Priority != "" {
+			t.Errorf("Priority = %s, want empty", meta.Priority)
+		}
+		if meta.Status != "" {
+			t.Errorf("Status = %s, want empty", meta.Status)
+		}
+	})
+
+	t.Run("round-trip with all new fields", func(t *testing.T) {
+		meta := NewStoreMeta("test", "global", time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
+		meta.Description = "a test store"
+		meta.Source = SourceAgent
+		meta.Type = TypeIssue
+		meta.Owner = "alice"
+		meta.TaskID = "TASK-123"
+		meta.ParentTaskID = "TASK-100"
+		meta.Priority = PriorityHigh
+		meta.Status = StatusInProgress
+
+		data, err := json.Marshal(meta)
+		if err != nil {
+			t.Fatalf("Failed to marshal: %v", err)
+		}
+
+		var result StoreMeta
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Failed to unmarshal: %v", err)
+		}
+
+		if result.SchemaVersion != 2 {
+			t.Errorf("SchemaVersion = %d, want 2", result.SchemaVersion)
+		}
+		if result.Source != SourceAgent {
+			t.Errorf("Source = %s, want %s", result.Source, SourceAgent)
+		}
+		if result.Type != TypeIssue {
+			t.Errorf("Type = %s, want %s", result.Type, TypeIssue)
+		}
+		if result.Owner != "alice" {
+			t.Errorf("Owner = %s, want 'alice'", result.Owner)
+		}
+		if result.TaskID != "TASK-123" {
+			t.Errorf("TaskID = %s, want 'TASK-123'", result.TaskID)
+		}
+		if result.ParentTaskID != "TASK-100" {
+			t.Errorf("ParentTaskID = %s, want 'TASK-100'", result.ParentTaskID)
+		}
+		if result.Priority != PriorityHigh {
+			t.Errorf("Priority = %s, want %s", result.Priority, PriorityHigh)
+		}
+		if result.Status != StatusInProgress {
+			t.Errorf("Status = %s, want %s", result.Status, StatusInProgress)
+		}
+	})
+}
+
+func TestTrackedPath_NewFields(t *testing.T) {
+	t.Run("backward compat: old JSON without new fields", func(t *testing.T) {
+		oldJSON := `{"path":"test.txt","kind":"file"}`
+
+		var tp TrackedPath
+		if err := json.Unmarshal([]byte(oldJSON), &tp); err != nil {
+			t.Fatalf("Failed to unmarshal: %v", err)
+		}
+
+		if tp.Role != "" {
+			t.Errorf("Role = %s, want empty", tp.Role)
+		}
+		if tp.Description != "" {
+			t.Errorf("Description = %s, want empty", tp.Description)
+		}
+		if tp.CreatedAt != nil {
+			t.Errorf("CreatedAt = %v, want nil", tp.CreatedAt)
+		}
+		if tp.UpdatedAt != nil {
+			t.Errorf("UpdatedAt = %v, want nil", tp.UpdatedAt)
+		}
+		if tp.Origin != "" {
+			t.Errorf("Origin = %s, want empty", tp.Origin)
+		}
+	})
+
+	t.Run("nil time pointer omitted from JSON", func(t *testing.T) {
+		tp := TrackedPath{Path: "test.txt", Kind: "file"}
+		data, err := json.Marshal(tp)
+		if err != nil {
+			t.Fatalf("Failed to marshal: %v", err)
+		}
+		jsonStr := string(data)
+		if contains(jsonStr, "createdAt") {
+			t.Errorf("JSON should not contain 'createdAt' when nil: %s", jsonStr)
+		}
+		if contains(jsonStr, "updatedAt") {
+			t.Errorf("JSON should not contain 'updatedAt' when nil: %s", jsonStr)
+		}
+	})
+
+	t.Run("non-nil time pointer round-trips", func(t *testing.T) {
+		now := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
+		tp := TrackedPath{
+			Path:        "config.yaml",
+			Kind:        "file",
+			Role:        RoleConfig,
+			Description: "app config",
+			CreatedAt:   &now,
+			UpdatedAt:   &now,
+			Origin:      OriginUser,
+		}
+
+		data, err := json.Marshal(tp)
+		if err != nil {
+			t.Fatalf("Failed to marshal: %v", err)
+		}
+
+		var result TrackedPath
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatalf("Failed to unmarshal: %v", err)
+		}
+
+		if result.Role != RoleConfig {
+			t.Errorf("Role = %s, want %s", result.Role, RoleConfig)
+		}
+		if result.Description != "app config" {
+			t.Errorf("Description = %s, want 'app config'", result.Description)
+		}
+		if result.CreatedAt == nil || !result.CreatedAt.Equal(now) {
+			t.Errorf("CreatedAt = %v, want %v", result.CreatedAt, now)
+		}
+		if result.UpdatedAt == nil || !result.UpdatedAt.Equal(now) {
+			t.Errorf("UpdatedAt = %v, want %v", result.UpdatedAt, now)
+		}
+		if result.Origin != OriginUser {
+			t.Errorf("Origin = %s, want %s", result.Origin, OriginUser)
+		}
+	})
+}
+
+func TestValidateRole(t *testing.T) {
+	t.Run("valid roles pass", func(t *testing.T) {
+		for _, role := range []string{RoleScript, RoleDocs, RoleStyle, RoleConfig, RoleOther} {
+			if err := ValidateRole(role); err != nil {
+				t.Errorf("unexpected error for role %q: %v", role, err)
+			}
+		}
+	})
+
+	t.Run("empty role passes", func(t *testing.T) {
+		if err := ValidateRole(""); err != nil {
+			t.Errorf("unexpected error for empty role: %v", err)
+		}
+	})
+
+	t.Run("invalid role rejected", func(t *testing.T) {
+		if err := ValidateRole("invalid"); err == nil {
+			t.Error("expected error for invalid role")
+		}
+	})
+}
+
+func TestValidateOrigin(t *testing.T) {
+	t.Run("valid origins pass", func(t *testing.T) {
+		for _, origin := range []string{OriginUser, OriginAgent, OriginOther} {
+			if err := ValidateOrigin(origin); err != nil {
+				t.Errorf("unexpected error for origin %q: %v", origin, err)
+			}
+		}
+	})
+
+	t.Run("empty origin passes", func(t *testing.T) {
+		if err := ValidateOrigin(""); err != nil {
+			t.Errorf("unexpected error for empty origin: %v", err)
+		}
+	})
+
+	t.Run("invalid origin rejected", func(t *testing.T) {
+		if err := ValidateOrigin("invalid"); err == nil {
+			t.Error("expected error for invalid origin")
+		}
+	})
+}
+
 // Helper function to check if a string contains a substring
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsHelper(s, substr))

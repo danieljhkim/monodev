@@ -105,6 +105,7 @@ func (m *mockGitRepo) RelPath(repoRoot, path string) (string, error) { return ""
 func (m *mockGitRepo) GetFingerprintComponents(root string) (string, string, error) {
 	return "", "", nil
 }
+func (m *mockGitRepo) Username(root string) string { return "user" }
 
 type mockHasher struct{}
 
