@@ -322,7 +322,7 @@ func (e *Engine) DiscoverWorkspace(cwd string) (root, fingerprint, workspacePath
 	return root, fingerprint, workspacePath, nil
 }
 
-func (e *Engine) LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, mode string) (*state.WorkspaceState, string, error) {
+func (e *Engine) LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, mode string) (*state.WorkspaceState, string, error) {
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
@@ -332,5 +332,6 @@ func (e *Engine) LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, mode
 			return nil, workspaceID, fmt.Errorf("failed to load workspace state: %w", err)
 		}
 	}
+	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
 	return workspaceState, workspaceID, nil
 }

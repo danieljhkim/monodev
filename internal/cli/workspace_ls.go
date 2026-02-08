@@ -45,13 +45,13 @@ var workspaceLsCmd = &cobra.Command{
 			}
 			rows = append(rows, []string{
 				ws.WorkspaceID,
-				ws.WorkspacePath,
+				ws.AbsolutePath,
 				ws.ActiveStore,
 				appliedMark,
 				fmt.Sprintf("%d", ws.AppliedPathCount),
 			})
 		}
-		PrintTable([]string{"Workspace ID", "Workspace Path", "Active Store", "Applied", "Paths"}, rows)
+		PrintTable([]string{"Workspace ID", "Absolute Path", "Active Store", "Applied", "Paths"}, rows)
 		return nil
 	},
 }

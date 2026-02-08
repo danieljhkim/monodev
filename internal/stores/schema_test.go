@@ -136,6 +136,20 @@ func TestNewStoreMeta(t *testing.T) {
 			t.Errorf("Expected empty Description, got %q", meta.Description)
 		}
 	})
+
+	t.Run("creates meta with default status, priority, and type", func(t *testing.T) {
+		meta := NewStoreMeta("Test", "global", time.Now())
+
+		if meta.Status != StatusTodo {
+			t.Errorf("Status = %s, want %s", meta.Status, StatusTodo)
+		}
+		if meta.Priority != PriorityNone {
+			t.Errorf("Priority = %s, want %s", meta.Priority, PriorityNone)
+		}
+		if meta.Type != TypeOther {
+			t.Errorf("Type = %s, want %s", meta.Type, TypeOther)
+		}
+	})
 }
 
 func TestNewTrackFile(t *testing.T) {

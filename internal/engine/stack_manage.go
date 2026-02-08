@@ -37,11 +37,11 @@ func (e *Engine) StackList(ctx context.Context, req *StackListRequest) (*StackLi
 
 // StackAdd adds a store to the stack.
 func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -75,12 +75,12 @@ func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
 // If StoreID is empty, removes the last store (LIFO).
 // If StoreID is specified, removes that specific store.
 func (e *Engine) StackPop(ctx context.Context, req *StackPopRequest) (*StackPopResult, error) {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -124,12 +124,12 @@ func (e *Engine) StackPop(ctx context.Context, req *StackPopRequest) (*StackPopR
 
 // StackClear removes all stores from the stack.
 func (e *Engine) StackClear(ctx context.Context, req *StackClearRequest) error {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return fmt.Errorf("failed to load or create workspace state: %w", err)
 	}

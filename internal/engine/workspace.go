@@ -42,6 +42,7 @@ func (e *Engine) ListWorkspaces(ctx context.Context) (*ListWorkspacesResult, err
 			workspaces = append(workspaces, WorkspaceInfo{
 				WorkspaceID:      workspaceID,
 				WorkspacePath:    ws.WorkspacePath,
+				AbsolutePath:     ws.AbsolutePath,
 				Repo:             ws.Repo,
 				Applied:          ws.Applied,
 				Mode:             ws.Mode,

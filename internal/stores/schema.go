@@ -186,6 +186,9 @@ func NewStoreMeta(name, scope string, createdAt time.Time) *StoreMeta {
 		CreatedAt:     createdAt,
 		UpdatedAt:     createdAt,
 		SchemaVersion: 2,
+		Status:        StatusTodo,
+		Priority:      PriorityNone,
+		Type:          TypeOther,
 	}
 }
 

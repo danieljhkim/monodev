@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
@@ -113,7 +114,7 @@ type ScopedStoreDetails struct {
 // If there's existing workspace state for a different store, it will be cleared
 // to avoid inconsistent state where applied=true but for the wrong store.
 func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
@@ -135,6 +136,7 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 			return fmt.Errorf("failed to load workspace state: %w", err)
 		}
 	}
+	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
 	if workspaceState.ActiveStore == req.StoreID && workspaceState.ActiveStoreScope == resolvedScope {
 		return nil // already active store
 	}
@@ -158,7 +160,7 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 // CreateStore creates a new store and sets it as the active store for the current repository.
 // If there's existing workspace state for a different store, it will be cleared.
 func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
@@ -181,15 +183,21 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	meta := stores.NewStoreMeta(req.Name, scope, e.clock.Now())
 	meta.Description = req.Description
 	meta.Source = req.Source
-	meta.Type = req.Type
+	if req.Type != "" {
+		meta.Type = req.Type
+	}
 	meta.Owner = req.Owner
 	if meta.Owner == "" {
 		meta.Owner = e.gitRepo.Username(req.CWD)
 	}
 	meta.TaskID = req.TaskID
 	meta.ParentTaskID = req.ParentTaskID
-	meta.Priority = req.Priority
-	meta.Status = req.Status
+	if req.Priority != "" {
+		meta.Priority = req.Priority
+	}
+	if req.Status != "" {
+		meta.Status = req.Status
+	}
 
 	// Validate metadata
 	if err := meta.Validate(); err != nil {
@@ -211,6 +219,7 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 			return fmt.Errorf("failed to load workspace state: %w", err)
 		}
 	}
+	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
 
 	workspaceState.Applied = false
 	workspaceState.ActiveStore = req.StoreID

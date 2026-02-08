@@ -35,12 +35,12 @@ type PruneResult struct {
 // Prune deletes overlay store content for paths that are no longer tracked.
 func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, error) {
 	// Discover repository
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(repoFingerprint, workspacePath, "copy")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}

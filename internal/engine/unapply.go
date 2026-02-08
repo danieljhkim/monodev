@@ -39,6 +39,7 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		}
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
+	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
 
 	// Step 4: Collect only paths owned by the active store (not stack stores)
 	activeStore := workspaceState.ActiveStore

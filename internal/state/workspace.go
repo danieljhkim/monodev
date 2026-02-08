@@ -11,6 +11,9 @@ type WorkspaceState struct {
 	// WorkspacePath is the relative path from repo root to the workspace
 	WorkspacePath string `json:"workspacePath"`
 
+	// AbsolutePath is the absolute filesystem path to the workspace
+	AbsolutePath string `json:"absolutePath,omitempty"`
+
 	// Applied indicates whether overlays are currently applied
 	Applied bool `json:"applied"`
 

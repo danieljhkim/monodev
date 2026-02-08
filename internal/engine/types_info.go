@@ -49,6 +49,7 @@ type WorkspaceUsage struct {
 type WorkspaceInfo struct {
 	WorkspaceID      string
 	WorkspacePath    string
+	AbsolutePath     string
 	Repo             string
 	Applied          bool
 	Mode             string

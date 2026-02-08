@@ -133,13 +133,16 @@ monodev store rm <store-id>
 monodev checkout <store-id>
 
 # this creates a new store and sets it as the active store
-monodev checkout -n <store-id> [--scope global|component] [--description "some details"]
+monodev checkout -n <store-id> [--description "some details"] [--type "issue | plan | feature | task | other"] [--priority "low | medium | high | none"]
 
 # this tracks a path in the active store (.monodev/<store-id>/track.json is updated)
 monodev track <path>
 
 # this untracks a path in the active store (.monodev/<store-id>/track.json is updated)
 monodev untrack <path>
+
+# update the active store metadata
+monodev store update <store-id> [--status "todo | in_progress | done | blocked | cancelled | other"]
 
 # persist the tracked paths in the active store (.monodev/<store-id>/overlay is updated)
 monodev commit <path>

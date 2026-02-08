@@ -22,7 +22,7 @@ func (e *Engine) Diff(ctx context.Context, req *DiffRequest) (*DiffResult, error
 	}
 
 	// Load or create workspace state
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(fingerprint, workspacePath, "copy")
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, fingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, err
 	}
