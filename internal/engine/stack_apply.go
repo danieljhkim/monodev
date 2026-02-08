@@ -15,7 +15,7 @@ import (
 // StackApply applies all stores in the configured stack to the workspace.
 // This does not include the active store - only stores added via 'stack add'.
 func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*StackApplyResult, error) {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
@@ -63,7 +63,7 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 		workspaceState,
 		orderedStores,
 		req.Mode,
-		req.CWD,
+		root,
 		multiRepo,
 		e.fs,
 		false, // Always detect conflicts in planning phase
@@ -147,7 +147,7 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 // StackUnapply removes only paths applied by the stack stores.
 // Paths applied by the active store are not affected, unless they overlap
 func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*StackUnapplyResult, error) {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
@@ -199,8 +199,8 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 	for _, relPath := range stackPaths {
 		ownership := workspaceState.Paths[relPath]
 
-		// Convert relative path to absolute for filesystem operations
-		absPath := filepath.Join(req.CWD, relPath)
+		// Convert repo-relative path to absolute for filesystem operations
+		absPath := filepath.Join(root, relPath)
 
 		// Validate the path before removing (unless force)
 		if !req.Force {

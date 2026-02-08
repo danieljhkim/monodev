@@ -55,7 +55,7 @@ type CommitResult struct {
 // The workspace state is the "intent" layer, while Apply creates the actual overlays.
 func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult, error) {
 	// Discover repository
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
@@ -94,11 +94,11 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	now := e.clock.Now()
 
 	if req.All {
-		// Commit all tracked paths, respecting the 'required' field
+		// Commit all tracked paths (already repo-root-relative)
 		for _, trackedPath := range track.Tracked {
 			if err := e.commitFilePath(
 				trackedPath.Path,
-				req.CWD,
+				root,
 				overlayRoot,
 				workspaceState.ActiveStore,
 				workspaceState,
@@ -117,11 +117,15 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 		}
 		result.Removed = removed
 	} else {
-		// Commit specific paths (all treated as required)
+		// Commit specific paths — resolve to repo-root-relative first
 		for _, rawPath := range req.Paths {
+			repoRelPath, err := resolveToRepoRelative(rawPath, req.CWD, root)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve path %q: %w", rawPath, err)
+			}
 			if err := e.commitFilePath(
-				rawPath,
-				req.CWD,
+				repoRelPath,
+				root,
 				overlayRoot,
 				workspaceState.ActiveStore,
 				workspaceState,
@@ -157,7 +161,7 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 // Updates result with committed/missing paths accordingly.
 func (e *Engine) commitFilePath(
 	relPath string,
-	cwd string,
+	repoRoot string,
 	overlayRoot string,
 	activeStore string,
 	workspaceState *state.WorkspaceState,
@@ -172,7 +176,7 @@ func (e *Engine) commitFilePath(
 
 	// Use cleaned relative path
 	cleanRelPath := filepath.Clean(relPath)
-	workspaceFilePath := filepath.Join(cwd, cleanRelPath)
+	workspaceFilePath := filepath.Join(repoRoot, cleanRelPath)
 	storeFilePath := filepath.Join(overlayRoot, cleanRelPath)
 
 	// Check if path exists in workspace
@@ -224,11 +228,17 @@ func (e *Engine) commitFilePath(
 // Returns the list of removed paths (relative to overlay root).
 // If dryRun is true, it only identifies orphaned files without removing them.
 func (e *Engine) cleanupOrphanedFiles(overlayRoot string, trackedPaths []stores.TrackedPath, dryRun bool) ([]string, error) {
-	// Build set of tracked paths for quick lookup
+	// Build set of tracked paths and all their ancestor directories for quick lookup.
+	// This ensures that parent directories of tracked files (e.g. "test2/" for
+	// tracked path "test2/test1.txt") are not treated as orphans during the walk.
 	trackedSet := make(map[string]bool)
 	for _, tp := range trackedPaths {
 		cleanPath := filepath.Clean(tp.Path)
 		trackedSet[cleanPath] = true
+		// Add all parent directories
+		for dir := filepath.Dir(cleanPath); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
+			trackedSet[dir] = true
+		}
 	}
 
 	var removed []string

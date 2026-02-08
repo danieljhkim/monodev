@@ -23,7 +23,7 @@ import (
 // 4. Update workspace state
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
 	// Step 1: Discover repository
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
@@ -88,8 +88,8 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 			return nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
 		}
 
-		// Convert relative path to absolute for filesystem operations
-		absPath := filepath.Join(req.CWD, relPath)
+		// Convert repo-relative path to absolute for filesystem operations
+		absPath := filepath.Join(root, relPath)
 
 		// Validate the path before removing (unless force)
 		if !req.Force {

@@ -17,7 +17,7 @@ import (
 // 6. Persist workspace state
 // 7. Return result
 func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, error) {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
@@ -54,7 +54,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		workspaceState,
 		orderedStores,
 		req.Mode,
-		req.CWD,
+		root,
 		applyRepo,
 		e.fs,
 		req.Force,

@@ -19,17 +19,35 @@ func TestTrackRequest_HasCWDField(t *testing.T) {
 	}
 }
 
-// TestTrackedPath_LocationFieldExists verifies Location field exists and can be set.
-// The actual population of Location is tested in integration tests.
+// TestTrackedPath_LocationFieldExists verifies the deprecated Location field still exists.
+// As of schema v2, Location is unused; paths are repo-root-relative.
 func TestTrackedPath_LocationFieldExists(t *testing.T) {
 	tp := stores.TrackedPath{
 		Path:     "test.txt",
 		Kind:     "file",
-		Location: "/workspace/path",
+		Location: "/workspace/path", //nolint:staticcheck // Testing deprecated field for backward compatibility
 	}
 
+	//nolint:staticcheck // Testing deprecated field for backward compatibility
 	if tp.Location != "/workspace/path" {
-		t.Errorf("TrackedPath.Location = %s, want '/workspace/path'", tp.Location)
+		t.Errorf("TrackedPath.Location = %s, want '/workspace/path'", tp.Location) //nolint:staticcheck
+	}
+}
+
+// TestTrackResult_ResolvedPaths verifies TrackResult structure.
+func TestTrackResult_ResolvedPaths(t *testing.T) {
+	result := &TrackResult{
+		ResolvedPaths: map[string]string{
+			"../../Makefile": "Makefile",
+			"config.yaml":    "packages/web/config.yaml",
+		},
+	}
+
+	if result.ResolvedPaths["../../Makefile"] != "Makefile" {
+		t.Errorf("expected resolved path 'Makefile', got %q", result.ResolvedPaths["../../Makefile"])
+	}
+	if result.ResolvedPaths["config.yaml"] != "packages/web/config.yaml" {
+		t.Errorf("expected resolved path 'packages/web/config.yaml', got %q", result.ResolvedPaths["config.yaml"])
 	}
 }
 

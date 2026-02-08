@@ -67,7 +67,7 @@ type TrackFile struct {
 
 // TrackedPath represents a tracked file or directory.
 type TrackedPath struct {
-	// Path is the relative path from workspace root
+	// Path is the relative path from the git repository root.
 	Path string `json:"path"`
 
 	// Kind is the type of path ("file" or "dir")
@@ -76,7 +76,8 @@ type TrackedPath struct {
 	// Required indicates if this path must exist when applying (default: true)
 	Required *bool `json:"required,omitempty"`
 
-	// Location is the absolute path where tracking occurred (optional)
+	// Deprecated: Location was the absolute path where tracking occurred.
+	// As of schema version 2, paths are repo-root-relative and Location is unused.
 	Location string `json:"location,omitempty"`
 }
 
@@ -110,7 +111,7 @@ func NewStoreMeta(name, scope string, createdAt time.Time) *StoreMeta {
 // NewTrackFile creates a new empty TrackFile.
 func NewTrackFile() *TrackFile {
 	return &TrackFile{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Tracked:       []TrackedPath{},
 		Ignore:        []string{},
 	}

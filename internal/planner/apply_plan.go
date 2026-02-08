@@ -14,7 +14,7 @@ func BuildApplyPlan(
 	workspace *state.WorkspaceState,
 	orderedStores []string,
 	mode string,
-	workspaceRoot string,
+	repoRoot string,
 	storeRepo stores.StoreRepo,
 	fs fsops.FS,
 	force bool,
@@ -39,7 +39,7 @@ func BuildApplyPlan(
 
 		// For each tracked path in this store
 		for _, trackedPath := range track.Tracked {
-			// trackedPath.Path is already relative to workspace root
+			// trackedPath.Path is already relative to repo root
 			relPath := trackedPath.Path
 
 			// Validate relative path for safety to prevent path traversal
@@ -49,7 +49,7 @@ func BuildApplyPlan(
 
 			// Compute absolute source and destination paths for FS operations
 			sourcePath := filepath.Join(overlayRoot, relPath)
-			destPath := filepath.Join(workspaceRoot, relPath)
+			destPath := filepath.Join(repoRoot, relPath)
 
 			// Check if source path exists in store
 			sourceExists, err := fs.Exists(sourcePath)

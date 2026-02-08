@@ -142,8 +142,8 @@ func TestNewTrackFile(t *testing.T) {
 	t.Run("creates track file with correct defaults", func(t *testing.T) {
 		tf := NewTrackFile()
 
-		if tf.SchemaVersion != 1 {
-			t.Errorf("SchemaVersion = %d, want 1", tf.SchemaVersion)
+		if tf.SchemaVersion != 2 {
+			t.Errorf("SchemaVersion = %d, want 2", tf.SchemaVersion)
 		}
 
 		if tf.Tracked == nil {

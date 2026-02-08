@@ -13,7 +13,7 @@ import (
 var trackCmd = &cobra.Command{
 	Use:   "track <path>...",
 	Short: "Track paths in the active store",
-	Long:  `Add paths to the active store's track file.`,
+	Long:  `Add paths to the active store's track file. Paths are resolved relative to the repository root.`,
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		eng, err := newEngine()
@@ -32,21 +32,33 @@ var trackCmd = &cobra.Command{
 			Paths: args,
 		}
 
-		if err := eng.Track(ctx, req); err != nil {
+		result, err := eng.Track(ctx, req)
+		if err != nil {
 			return err
 		}
 
 		if jsonOutput {
-			result := struct {
+			resolvedPaths := make([]string, 0, len(result.ResolvedPaths))
+			for _, resolved := range result.ResolvedPaths {
+				resolvedPaths = append(resolvedPaths, resolved)
+			}
+			jsonResult := struct {
 				TrackedPaths []string `json:"trackedPaths"`
 				Count        int      `json:"count"`
 			}{
-				TrackedPaths: args,
-				Count:        len(args),
+				TrackedPaths: resolvedPaths,
+				Count:        len(resolvedPaths),
 			}
-			return outputJSON(result)
+			return outputJSON(jsonResult)
 		}
 
+		// Show resolved paths when they differ from input
+		for _, arg := range args {
+			resolved := result.ResolvedPaths[arg]
+			if resolved != arg {
+				PrintInfo(fmt.Sprintf("  %s → %s", arg, resolved))
+			}
+		}
 		PrintSuccess(fmt.Sprintf("Tracked %s", PrintCount(len(args), "path", "paths")))
 		return nil
 	},
