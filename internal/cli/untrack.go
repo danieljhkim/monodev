@@ -38,23 +38,35 @@ It only removes the paths from track.json metadata.`,
 			Paths: args,
 		}
 
-		if err := eng.Untrack(ctx, req); err != nil {
+		result, err := eng.Untrack(ctx, req)
+		if err != nil {
 			return err
 		}
 
 		if jsonOutput {
-			result := struct {
+			jsonResult := struct {
 				UntrackedPaths []string `json:"untrackedPaths"`
+				NotFoundPaths  []string `json:"notFoundPaths,omitempty"`
 				Count          int      `json:"count"`
 			}{
-				UntrackedPaths: args,
-				Count:          len(args),
+				UntrackedPaths: result.RemovedPaths,
+				NotFoundPaths:  result.NotFoundPaths,
+				Count:          len(result.RemovedPaths),
 			}
-			return outputJSON(result)
+			return outputJSON(jsonResult)
 		}
 
-		PrintSuccess(fmt.Sprintf("Untracked %s", PrintCount(len(args), "path", "paths")))
-		PrintWarning("Note: Store overlay content not deleted.")
+		// Warn about paths not found in track file
+		for _, p := range result.NotFoundPaths {
+			PrintWarning(fmt.Sprintf("Path not found in workspace: %s", p))
+		}
+
+		if len(result.RemovedPaths) > 0 {
+			PrintSuccess(fmt.Sprintf("Untracked %s", PrintCount(len(result.RemovedPaths), "path", "paths")))
+			PrintWarning("Note: Store overlay content not deleted.")
+		} else {
+			PrintWarning("No paths untracked")
+		}
 		return nil
 	},
 }

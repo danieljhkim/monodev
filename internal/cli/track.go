@@ -51,22 +51,34 @@ var trackCmd = &cobra.Command{
 			}
 			jsonResult := struct {
 				TrackedPaths []string `json:"trackedPaths"`
+				MissingPaths []string `json:"missingPaths,omitempty"`
 				Count        int      `json:"count"`
 			}{
 				TrackedPaths: resolvedPaths,
+				MissingPaths: result.MissingPaths,
 				Count:        len(resolvedPaths),
 			}
 			return outputJSON(jsonResult)
 		}
 
-		// Show resolved paths when they differ from input
-		for _, arg := range args {
-			resolved := result.ResolvedPaths[arg]
-			if resolved != arg {
-				PrintInfo(fmt.Sprintf("  %s → %s", arg, resolved))
-			}
+		// Warn about missing paths
+		for _, missing := range result.MissingPaths {
+			PrintWarning(fmt.Sprintf("Path not found in workspace: %s", missing))
 		}
-		PrintSuccess(fmt.Sprintf("Tracked %s", PrintCount(len(args), "path", "paths")))
+
+		trackedCount := len(result.ResolvedPaths)
+		if trackedCount > 0 {
+			// Show resolved paths when they differ from input
+			for _, arg := range args {
+				resolved := result.ResolvedPaths[arg]
+				if resolved != "" && resolved != arg {
+					PrintInfo(fmt.Sprintf("  %s → %s", arg, resolved))
+				}
+			}
+			PrintSuccess(fmt.Sprintf("Tracked %s", PrintCount(trackedCount, "path", "paths")))
+		} else {
+			PrintWarning("No paths tracked")
+		}
 		return nil
 	},
 }
