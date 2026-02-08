@@ -1,0 +1,10 @@
+{
+  "name": "test6",
+  "scope": "component",
+  "createdAt": "2026-02-08T14:03:10.998435-08:00",
+  "updatedAt": "2026-02-08T14:42:37.559818-08:00",
+  "schemaVersion": 2,
+  "type": "issue",
+  "owner": "me",
+  "status": "todo"
+}

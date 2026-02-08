@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "tracked": [
+    {
+      "path": "test2",
+      "kind": "dir"
+    },
+    {
+      "path": "test3",
+      "kind": "dir"
+    },
+    {
+      "path": "test1.txt",
+      "kind": "file"
+    }
+  ]
+}

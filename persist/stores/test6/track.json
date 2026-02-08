@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 2,
+  "tracked": [
+    {
+      "path": "test1.txt",
+      "kind": "file",
+      "createdAt": "2026-02-08T14:03:21.334746-08:00",
+      "updatedAt": "2026-02-08T14:03:21.334746-08:00"
+    },
+    {
+      "path": "test2",
+      "kind": "dir",
+      "createdAt": "2026-02-08T14:03:21.334749-08:00",
+      "updatedAt": "2026-02-08T14:03:21.334749-08:00"
+    },
+    {
+      "path": "test3/test4/hi/testy.txt",
+      "kind": "file",
+      "createdAt": "2026-02-08T14:40:43.81881-08:00",
+      "updatedAt": "2026-02-08T14:40:43.81881-08:00",
+      "origin": "user"
+    },
+    {
+      "path": "test3/test4/test/5/hi/testy.txt",
+      "kind": "file",
+      "createdAt": "2026-02-08T14:42:02.916944-08:00",
+      "updatedAt": "2026-02-08T14:42:02.916944-08:00",
+      "origin": "user"
+    },
+    {
+      "path": "test3/test4/test5/hi/testy.txt",
+      "kind": "file",
+      "createdAt": "2026-02-08T14:42:35.361667-08:00",
+      "updatedAt": "2026-02-08T14:42:35.361667-08:00",
+      "origin": "user"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "tracked": [
+    {
+      "path": "test1.txt",
+      "kind": "file",
+      "createdAt": "2026-02-08T14:36:15.750425-08:00",
+      "updatedAt": "2026-02-08T14:36:15.750425-08:00",
+      "origin": "user"
+    },
+    {
+      "path": "test2",
+      "kind": "dir",
+      "createdAt": "2026-02-08T14:36:15.750429-08:00",
+      "updatedAt": "2026-02-08T14:36:15.750429-08:00",
+      "origin": "user"
+    }
+  ]
+}
