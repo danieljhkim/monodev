@@ -9,6 +9,15 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ---
 
+## [0.2.5] — 2026-02-08
+
+### Changed
+- Added more fields to meta.json and track.json: source, type, owner, taskId, parentTaskId, priority, status, etc.
+- Updated `monodev store describe` & `monodev store ls` to show more fields.
+
+## Added
+- New `monodev store update` command for updating store metadata.
+
 ## [0.2.4] — 2026-02-06
 
 ### Added
