@@ -74,6 +74,12 @@ type DiffFileInfo struct {
 	// UnifiedDiff contains the unified diff content (if ShowContent is true)
 	UnifiedDiff string
 
+	// Additions is the number of added lines in the diff
+	Additions int
+
+	// Deletions is the number of removed lines in the diff
+	Deletions int
+
 	// IsDir indicates if the path is a directory
 	IsDir bool
 }

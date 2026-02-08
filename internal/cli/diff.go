@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -37,7 +39,7 @@ var diffCmd = &cobra.Command{
 		req := &engine.DiffRequest{
 			CWD:         cwd,
 			StoreID:     diffStoreID,
-			ShowContent: diffPatch,
+			ShowContent: diffPatch || (!diffNameOnly && !diffNameStatus),
 			NameOnly:    diffNameOnly,
 			NameStatus:  diffNameStatus,
 		}
@@ -79,92 +81,88 @@ func formatDiffOutput(result *engine.DiffResult) error {
 
 // formatNameOnly outputs only filenames (no status indicators).
 func formatNameOnly(result *engine.DiffResult) error {
-	for _, file := range result.Files {
-		if file.Status != "unchanged" {
-			fmt.Println(file.Path)
-		}
+	for _, file := range changedFiles(result) {
+		fmt.Println(file.Path)
 	}
 	return nil
 }
 
 // formatNameStatus outputs filenames with status indicators (M, A, D).
 func formatNameStatus(result *engine.DiffResult) error {
-	for _, file := range result.Files {
-		if file.Status != "unchanged" {
-			statusChar := getStatusChar(file.Status)
+	for _, file := range changedFiles(result) {
+		statusChar := getStatusChar(file.Status)
+		switch file.Status {
+		case "added":
+			_, _ = successColor.Printf("%s\t%s\n", statusChar, file.Path)
+		case "removed":
+			_, _ = errorColor.Printf("%s\t%s\n", statusChar, file.Path)
+		case "modified":
+			_, _ = warningColor.Printf("%s\t%s\n", statusChar, file.Path)
+		default:
 			fmt.Printf("%s\t%s\n", statusChar, file.Path)
 		}
 	}
 	return nil
 }
 
-// formatDefaultDiff outputs the default diff format with summary and details.
+// formatDefaultDiff outputs a git-like unified patch plus a change summary.
 func formatDefaultDiff(result *engine.DiffResult) error {
-	PrintSection("Diff Summary")
-	PrintLabelValue("Store ID", result.StoreID)
-	PrintLabelValue("Workspace ID", result.WorkspaceID)
+	initColors()
 
-	// Count files by status
-	modified := 0
-	added := 0
-	removed := 0
-	unchanged := 0
-
-	for _, file := range result.Files {
-		switch file.Status {
-		case "modified":
-			modified++
-		case "added":
-			added++
-		case "removed":
-			removed++
-		case "unchanged":
-			unchanged++
-		}
-	}
-
-	fmt.Println()
-	PrintLabelValue("Modified", fmt.Sprintf("%d", modified))
-	PrintLabelValue("Added", fmt.Sprintf("%d", added))
-	PrintLabelValue("Removed", fmt.Sprintf("%d", removed))
-	PrintLabelValue("Unchanged", fmt.Sprintf("%d", unchanged))
-
-	// Show changed files only
-	changedFiles := []engine.DiffFileInfo{}
-	for _, file := range result.Files {
-		if file.Status != "unchanged" {
-			changedFiles = append(changedFiles, file)
-		}
-	}
-
-	PrintSection("Changed Files")
-
-	if len(changedFiles) == 0 {
+	files := changedFiles(result)
+	if len(files) == 0 {
 		PrintEmptyState("No changes detected")
 		return nil
 	}
 
-	for i, file := range changedFiles {
+	PrintSection("Diff")
+	PrintLabelValue("Store", result.StoreID)
+	PrintLabelValue("Workspace", result.WorkspaceID)
+
+	insertions := 0
+	deletions := 0
+
+	for i, file := range files {
 		if i > 0 {
 			fmt.Println()
+			PrintSeparator()
 		}
 
-		PrintLabelValue("Status", file.Status)
-		PrintLabelValue("Path", file.Path)
+		printDiffFileHeader(file)
 
-		if file.IsDir {
-			PrintLabelValue("Type", "directory")
+		if file.UnifiedDiff != "" {
+			printUnifiedDiff(file.UnifiedDiff)
 		} else {
-			if file.WorkspaceHash != "" {
-				PrintLabelValue("Workspace Hash", truncateHash(file.WorkspaceHash))
-			}
-			if file.StoreHash != "" {
-				PrintLabelValue("Store Hash", truncateHash(file.StoreHash))
-			}
+			statusChar := getStatusChar(file.Status)
+			fmt.Printf("%s\t%s\n", statusChar, file.Path)
+		}
+
+		insertions += file.Additions
+		deletions += file.Deletions
+	}
+
+	fmt.Println()
+	fmt.Printf("%d file%s changed, %d insertion%s(+), %d deletion%s(-)\n",
+		len(files), plural(len(files)),
+		insertions, plural(insertions),
+		deletions, plural(deletions),
+	)
+
+	return nil
+}
+
+func changedFiles(result *engine.DiffResult) []engine.DiffFileInfo {
+	files := make([]engine.DiffFileInfo, 0, len(result.Files))
+	for _, file := range result.Files {
+		if file.Status != "unchanged" {
+			files = append(files, file)
 		}
 	}
 
-	return nil
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+	return files
 }
 
 // getStatusChar returns the single-character status indicator.
@@ -183,10 +181,67 @@ func getStatusChar(status string) string {
 	}
 }
 
-// truncateHash truncates a hash to the first 8 characters for display.
-func truncateHash(hash string) string {
-	if len(hash) <= 8 {
-		return hash
+func plural(count int) string {
+	if count == 1 {
+		return ""
 	}
-	return hash[:8]
+	return "s"
+}
+
+func printDiffFileHeader(file engine.DiffFileInfo) {
+	summary := fmt.Sprintf("%s (%s%d, %s%d)",
+		file.Path,
+		addPrefix(file.Additions), file.Additions,
+		delPrefix(file.Deletions), file.Deletions,
+	)
+
+	switch file.Status {
+	case "added":
+		_, _ = successColor.Printf("A %s\n", summary)
+	case "removed":
+		_, _ = errorColor.Printf("D %s\n", summary)
+	case "modified":
+		_, _ = warningColor.Printf("M %s\n", summary)
+	default:
+		fmt.Printf("%s %s\n", getStatusChar(file.Status), summary)
+	}
+}
+
+func printUnifiedDiff(diffText string) {
+	lines := strings.Split(diffText, "\n")
+	for i, line := range lines {
+		// Preserve trailing newline semantics from generated patches.
+		if i == len(lines)-1 && line == "" {
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			_, _ = headerColor.Println(line)
+		case strings.HasPrefix(line, "@@"):
+			_, _ = infoColor.Println(line)
+		case strings.HasPrefix(line, "+++ "), strings.HasPrefix(line, "--- "):
+			_, _ = subHeaderColor.Println(line)
+		case strings.HasPrefix(line, "+"):
+			_, _ = successColor.Println(line)
+		case strings.HasPrefix(line, "-"):
+			_, _ = errorColor.Println(line)
+		default:
+			fmt.Println(line)
+		}
+	}
+}
+
+func addPrefix(count int) string {
+	if count > 0 {
+		return "+"
+	}
+	return ""
+}
+
+func delPrefix(count int) string {
+	if count > 0 {
+		return "-"
+	}
+	return ""
 }
