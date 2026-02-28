@@ -22,6 +22,10 @@ func BuildApplyPlan(
 	plan := NewApplyPlan(orderedStores)
 	checker := NewConflictChecker(fs, workspace, force)
 
+	// applyRoot is where tracked paths will be placed.
+	// For subdirectory workspaces, paths are applied relative to the workspace dir.
+	applyRoot := filepath.Join(repoRoot, workspace.WorkspacePath)
+
 	// Track which paths have been claimed by which stores
 	// This helps with store-to-store precedence
 	pathOwners := make(map[string]string)
@@ -39,7 +43,7 @@ func BuildApplyPlan(
 
 		// For each tracked path in this store
 		for _, trackedPath := range track.Tracked {
-			// trackedPath.Path is already relative to repo root
+			// trackedPath.Path is workspace-relative (relative to the workspace root)
 			relPath := trackedPath.Path
 
 			// Validate relative path for safety to prevent path traversal
@@ -49,7 +53,7 @@ func BuildApplyPlan(
 
 			// Compute absolute source and destination paths for FS operations
 			sourcePath := filepath.Join(overlayRoot, relPath)
-			destPath := filepath.Join(repoRoot, relPath)
+			destPath := filepath.Join(applyRoot, relPath)
 
 			// Check if source path exists in store
 			sourceExists, err := fs.Exists(sourcePath)

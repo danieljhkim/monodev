@@ -30,7 +30,7 @@ type TrackRequest struct {
 
 // TrackResult represents the result of a track operation.
 type TrackResult struct {
-	// ResolvedPaths maps each user-provided path to its repo-root-relative resolved path.
+	// ResolvedPaths maps each user-provided path to its workspace-relative resolved path.
 	ResolvedPaths map[string]string
 
 	// MissingPaths contains user-provided paths that were not found in the workspace.
@@ -103,23 +103,23 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 	}
 
 	for _, userPath := range req.Paths {
-		// Resolve to repo-root-relative path
-		repoRelPath, err := resolveToRepoRelative(userPath, req.CWD, root)
+		// Resolve to workspace-relative path (relative to req.CWD, not repo root)
+		cwdRelPath, err := resolveToWorkspaceRelative(userPath, req.CWD, root)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve path %q: %w", userPath, err)
 		}
 
 		// Check if path exists in the workspace
-		absPath := filepath.Join(root, repoRelPath)
+		absPath := filepath.Join(req.CWD, cwdRelPath)
 		info, err := e.fs.Lstat(absPath)
 		if err != nil {
 			result.MissingPaths = append(result.MissingPaths, userPath)
 			continue
 		}
 
-		result.ResolvedPaths[userPath] = repoRelPath
+		result.ResolvedPaths[userPath] = cwdRelPath
 
-		if !pathSet[repoRelPath] {
+		if !pathSet[cwdRelPath] {
 			// Determine if path is file or directory
 			kind := "file"
 			if info.IsDir() {
@@ -132,7 +132,7 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 				origin = "user"
 			}
 			tp := stores.TrackedPath{
-				Path:        repoRelPath,
+				Path:        cwdRelPath,
 				Kind:        kind,
 				Role:        req.Role,
 				Description: req.Description,
@@ -141,7 +141,7 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 				Origin:      origin,
 			}
 			track.Tracked = append(track.Tracked, tp)
-			pathSet[repoRelPath] = true
+			pathSet[cwdRelPath] = true
 		}
 	}
 
@@ -198,12 +198,12 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) (*UntrackResu
 	removeSet := make(map[string]bool)
 	resolvedToUser := make(map[string]string)
 	for _, p := range req.Paths {
-		repoRelPath, err := resolveToRepoRelative(p, req.CWD, root)
+		cwdRelPath, err := resolveToWorkspaceRelative(p, req.CWD, root)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve path %q: %w", p, err)
 		}
-		removeSet[repoRelPath] = true
-		resolvedToUser[repoRelPath] = p
+		removeSet[cwdRelPath] = true
+		resolvedToUser[cwdRelPath] = p
 	}
 
 	// Build set of currently tracked paths for lookup

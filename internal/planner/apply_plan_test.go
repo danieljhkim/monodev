@@ -56,7 +56,7 @@ func (m *mockStoreRepo) Delete(id string) error                             { re
 func TestBuildApplyPlan_SingleStore(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Setup store with one tracked file
 	track := stores.NewTrackFile()
@@ -98,7 +98,7 @@ func TestBuildApplyPlan_SingleStore(t *testing.T) {
 func TestBuildApplyPlan_MultipleStores_Precedence(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Store1 has Makefile
 	track1 := stores.NewTrackFile()
@@ -160,7 +160,7 @@ func TestBuildApplyPlan_MultipleStores_Precedence(t *testing.T) {
 func TestBuildApplyPlan_ConflictDetection(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Unmanaged file exists at destination
 	workspace.Paths = make(map[string]state.PathOwnership) // Empty - path is unmanaged
@@ -198,7 +198,7 @@ func TestBuildApplyPlan_ConflictDetection(t *testing.T) {
 func TestBuildApplyPlan_ForceMode(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Unmanaged file exists
 	track := stores.NewTrackFile()
@@ -235,7 +235,7 @@ func TestBuildApplyPlan_ForceMode(t *testing.T) {
 func TestBuildApplyPlan_RequiredPathMissing(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Track a required path that doesn't exist in store
 	required := true
@@ -270,7 +270,7 @@ func TestBuildApplyPlan_RequiredPathMissing(t *testing.T) {
 func TestBuildApplyPlan_OptionalPathMissing(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Track an optional path that doesn't exist in store
 	required := false
@@ -299,7 +299,7 @@ func TestBuildApplyPlan_OptionalPathMissing(t *testing.T) {
 func TestBuildApplyPlan_CopyMode(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "copy")
+	workspace := state.NewWorkspaceState("repo1", ".", "copy")
 
 	track := stores.NewTrackFile()
 	track.Tracked = []stores.TrackedPath{
@@ -327,7 +327,7 @@ func TestBuildApplyPlan_CopyMode(t *testing.T) {
 func TestBuildApplyPlan_DirectoryHandling(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	track := stores.NewTrackFile()
 	track.Tracked = []stores.TrackedPath{
@@ -355,7 +355,7 @@ func TestBuildApplyPlan_DirectoryHandling(t *testing.T) {
 func TestBuildApplyPlan_MultiplePaths(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	track := stores.NewTrackFile()
 	track.Tracked = []stores.TrackedPath{
@@ -395,7 +395,7 @@ func TestBuildApplyPlan_MultiplePaths(t *testing.T) {
 func TestBuildApplyPlan_StoreNotFound(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Don't set track for store1, so LoadTrack will return error
 
@@ -408,7 +408,7 @@ func TestBuildApplyPlan_StoreNotFound(t *testing.T) {
 func TestBuildApplyPlan_StoreToStoreOverride(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Store1 already has Makefile applied
 	workspace.Paths["Makefile"] = state.PathOwnership{
@@ -462,7 +462,7 @@ func TestBuildApplyPlan_StoreToStoreOverride(t *testing.T) {
 func TestBuildApplyPlan_ModeMismatchConflict(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "copy")
+	workspace := state.NewWorkspaceState("repo1", ".", "copy")
 
 	// Existing path is symlink, but we're trying to apply in copy mode
 	workspace.Paths["Makefile"] = state.PathOwnership{
@@ -501,7 +501,7 @@ func TestBuildApplyPlan_ModeMismatchConflict(t *testing.T) {
 func TestBuildApplyPlan_TypeMismatchConflict(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Existing path is a directory
 	workspace.Paths["path"] = state.PathOwnership{
@@ -537,10 +537,76 @@ func TestBuildApplyPlan_TypeMismatchConflict(t *testing.T) {
 	}
 }
 
+func TestBuildApplyPlan_SubdirectoryWorkspace(t *testing.T) {
+	fs := newMockFS()
+	storeRepo := newMockStoreRepo()
+	// Workspace is rooted at packages/web within the repo
+	workspace := state.NewWorkspaceState("repo1", "packages/web", "copy")
+
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{
+		{Path: "Makefile", Kind: "file"}, // CWD-relative path
+	}
+	storeRepo.setTrack("store1", track)
+	storeRepo.setOverlayRoot("store1", "/stores/store1/overlay")
+
+	// Source file exists in store overlay
+	fs.setExists("/stores/store1/overlay/Makefile", true)
+	// Destination should NOT exist (at /repo/packages/web/Makefile, not /repo/Makefile)
+	fs.setExists("/repo/packages/web/Makefile", false)
+
+	plan, err := BuildApplyPlan(workspace, []string{"store1"}, "copy", "/repo", storeRepo, fs, false)
+	if err != nil {
+		t.Fatalf("BuildApplyPlan failed: %v", err)
+	}
+
+	if len(plan.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(plan.Operations))
+	}
+
+	op := plan.Operations[0]
+	wantDest := "/repo/packages/web/Makefile"
+	if op.DestPath != wantDest {
+		t.Errorf("DestPath = %q, want %q (should account for WorkspacePath)", op.DestPath, wantDest)
+	}
+}
+
+func TestBuildApplyPlan_SubdirectoryWorkspace_ApplyToDifferentSubdir(t *testing.T) {
+	fs := newMockFS()
+	storeRepo := newMockStoreRepo()
+	// Apply from packages/api (a different dir than where the store was tracked)
+	workspace := state.NewWorkspaceState("repo1", "packages/api", "copy")
+
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{
+		{Path: "Makefile", Kind: "file"},
+	}
+	storeRepo.setTrack("store1", track)
+	storeRepo.setOverlayRoot("store1", "/stores/store1/overlay")
+
+	fs.setExists("/stores/store1/overlay/Makefile", true)
+	fs.setExists("/repo/packages/api/Makefile", false)
+
+	plan, err := BuildApplyPlan(workspace, []string{"store1"}, "copy", "/repo", storeRepo, fs, false)
+	if err != nil {
+		t.Fatalf("BuildApplyPlan failed: %v", err)
+	}
+
+	if len(plan.Operations) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(plan.Operations))
+	}
+
+	op := plan.Operations[0]
+	wantDest := "/repo/packages/api/Makefile"
+	if op.DestPath != wantDest {
+		t.Errorf("DestPath = %q, want %q (should apply to current workspace, not original)", op.DestPath, wantDest)
+	}
+}
+
 func TestBuildApplyPlan_EmptyStore(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Store with no tracked paths
 	track := stores.NewTrackFile()
@@ -564,7 +630,7 @@ func TestBuildApplyPlan_EmptyStore(t *testing.T) {
 func TestBuildApplyPlan_PathOwnershipTracking(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()
-	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace := state.NewWorkspaceState("repo1", ".", "symlink")
 
 	// Two stores with different paths
 	track1 := stores.NewTrackFile()

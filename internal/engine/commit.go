@@ -93,12 +93,14 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 
 	now := e.clock.Now()
 
+	workspaceRoot := filepath.Join(root, workspacePath)
+
 	if req.All {
-		// Commit all tracked paths (already repo-root-relative)
+		// Commit all tracked paths (CWD-relative)
 		for _, trackedPath := range track.Tracked {
 			if err := e.commitFilePath(
 				trackedPath.Path,
-				root,
+				workspaceRoot,
 				overlayRoot,
 				workspaceState.ActiveStore,
 				workspaceState,
@@ -117,15 +119,15 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 		}
 		result.Removed = removed
 	} else {
-		// Commit specific paths — resolve to repo-root-relative first
+		// Commit specific paths — resolve to workspace-relative first
 		for _, rawPath := range req.Paths {
-			repoRelPath, err := resolveToRepoRelative(rawPath, req.CWD, root)
+			cwdRelPath, err := resolveToWorkspaceRelative(rawPath, req.CWD, root)
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve path %q: %w", rawPath, err)
 			}
 			if err := e.commitFilePath(
-				repoRelPath,
-				root,
+				cwdRelPath,
+				workspaceRoot,
 				overlayRoot,
 				workspaceState.ActiveStore,
 				workspaceState,
@@ -161,7 +163,7 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 // Updates result with committed/missing paths accordingly.
 func (e *Engine) commitFilePath(
 	relPath string,
-	repoRoot string,
+	workspaceRoot string,
 	overlayRoot string,
 	activeStore string,
 	workspaceState *state.WorkspaceState,
@@ -176,7 +178,7 @@ func (e *Engine) commitFilePath(
 
 	// Use cleaned relative path
 	cleanRelPath := filepath.Clean(relPath)
-	workspaceFilePath := filepath.Join(repoRoot, cleanRelPath)
+	workspaceFilePath := filepath.Join(workspaceRoot, cleanRelPath)
 	storeFilePath := filepath.Join(overlayRoot, cleanRelPath)
 
 	// Check if path exists in workspace

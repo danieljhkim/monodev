@@ -80,6 +80,8 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return activeStorePaths[i] > activeStorePaths[j] // Alphabetically for same depth
 	})
 
+	workspaceRoot := filepath.Join(root, workspacePath)
+
 	removed := []string{}
 	for _, relPath := range activeStorePaths {
 		ownership := workspaceState.Paths[relPath]
@@ -89,8 +91,8 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 			return nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
 		}
 
-		// Convert repo-relative path to absolute for filesystem operations
-		absPath := filepath.Join(root, relPath)
+		// Convert workspace-relative path to absolute for filesystem operations
+		absPath := filepath.Join(workspaceRoot, relPath)
 
 		// Validate the path before removing (unless force)
 		if !req.Force {

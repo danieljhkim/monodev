@@ -132,7 +132,7 @@ type TrackFile struct {
 
 // TrackedPath represents a tracked file or directory.
 type TrackedPath struct {
-	// Path is the relative path from the git repository root.
+	// Path is the relative path from the workspace root (the directory where tracking occurred).
 	Path string `json:"path"`
 
 	// Kind is the type of path ("file" or "dir")
