@@ -38,27 +38,17 @@ Use -n to create a new store if it doesn't exist.`,
 
 		// If -n flag is set, create the store (which also sets it as active)
 		if createNew {
-			source, _ := cmd.Flags().GetString("source")
-			storeType, _ := cmd.Flags().GetString("type")
 			owner, _ := cmd.Flags().GetString("owner")
 			taskID, _ := cmd.Flags().GetString("task-id")
-			parentTaskID, _ := cmd.Flags().GetString("parent-task-id")
-			priority, _ := cmd.Flags().GetString("priority")
-			status, _ := cmd.Flags().GetString("status")
 
 			createReq := &engine.CreateStoreRequest{
-				CWD:          cwd,
-				StoreID:      storeID,
-				Name:         storeID,
-				Scope:        storeScope,
-				Description:  storeDesc,
-				Source:       source,
-				Type:         storeType,
-				Owner:        owner,
-				TaskID:       taskID,
-				ParentTaskID: parentTaskID,
-				Priority:     priority,
-				Status:       status,
+				CWD:         cwd,
+				StoreID:     storeID,
+				Name:        storeID,
+				Scope:       storeScope,
+				Description: storeDesc,
+				Owner:       owner,
+				TaskID:      taskID,
 			}
 			if err := eng.CreateStore(ctx, createReq); err != nil {
 				return fmt.Errorf("failed to create store: %w", err)
@@ -115,11 +105,6 @@ func init() {
 	checkoutCmd.Flags().BoolP("new", "n", false, "Create a new store")
 	checkoutCmd.Flags().String("scope", "", "Store scope (global or component; defaults to component if in repo, otherwise global)")
 	checkoutCmd.Flags().String("description", "", "Store description")
-	checkoutCmd.Flags().String("source", "", "Store source (human, agent, other)")
-	checkoutCmd.Flags().String("type", "", "Store type (issue, plan, feature, task, other)")
 	checkoutCmd.Flags().String("owner", "", "Store owner")
 	checkoutCmd.Flags().String("task-id", "", "External task ID")
-	checkoutCmd.Flags().String("parent-task-id", "", "Parent task ID")
-	checkoutCmd.Flags().String("priority", "", "Priority (low, medium, high, none)")
-	checkoutCmd.Flags().String("status", "", "Status (todo, in_progress, done, blocked, cancelled, other)")
 }

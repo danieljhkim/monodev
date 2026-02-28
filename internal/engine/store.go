@@ -38,32 +38,17 @@ type CreateStoreRequest struct {
 	// Name is the human-readable name
 	Name string
 
-	// Scope is the store scope ("global", "profile", "component")
+	// Scope is the store scope ("global", "component")
 	Scope string
 
 	// Description is an optional description
 	Description string
-
-	// Source indicates how the store was created (human, agent, other)
-	Source string
-
-	// Type categorizes the store (issue, plan, feature, task, other)
-	Type string
 
 	// Owner identifies who owns the store
 	Owner string
 
 	// TaskID links the store to an external task
 	TaskID string
-
-	// ParentTaskID links the store to a parent task
-	ParentTaskID string
-
-	// Priority indicates the store's priority (low, medium, high, none)
-	Priority string
-
-	// Status indicates the store's workflow status
-	Status string
 }
 
 // UpdateStoreRequest represents a request to update store metadata.
@@ -79,14 +64,9 @@ type UpdateStoreRequest struct {
 	Scope string
 
 	// Optional fields — nil means "do not change"
-	Description  *string
-	Source       *string
-	Type         *string
-	Owner        *string
-	TaskID       *string
-	ParentTaskID *string
-	Priority     *string
-	Status       *string
+	Description *string
+	Owner       *string
+	TaskID      *string
 }
 
 // StoreDetails contains detailed information about a store.
@@ -182,22 +162,11 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	// Create store metadata
 	meta := stores.NewStoreMeta(req.Name, scope, e.clock.Now())
 	meta.Description = req.Description
-	meta.Source = req.Source
-	if req.Type != "" {
-		meta.Type = req.Type
-	}
 	meta.Owner = req.Owner
 	if meta.Owner == "" {
 		meta.Owner = e.gitRepo.Username(req.CWD)
 	}
 	meta.TaskID = req.TaskID
-	meta.ParentTaskID = req.ParentTaskID
-	if req.Priority != "" {
-		meta.Priority = req.Priority
-	}
-	if req.Status != "" {
-		meta.Status = req.Status
-	}
 
 	// Validate metadata
 	if err := meta.Validate(); err != nil {
@@ -352,26 +321,11 @@ func (e *Engine) UpdateStore(ctx context.Context, req *UpdateStoreRequest) error
 	if req.Description != nil {
 		meta.Description = *req.Description
 	}
-	if req.Source != nil {
-		meta.Source = *req.Source
-	}
-	if req.Type != nil {
-		meta.Type = *req.Type
-	}
 	if req.Owner != nil {
 		meta.Owner = *req.Owner
 	}
 	if req.TaskID != nil {
 		meta.TaskID = *req.TaskID
-	}
-	if req.ParentTaskID != nil {
-		meta.ParentTaskID = *req.ParentTaskID
-	}
-	if req.Priority != nil {
-		meta.Priority = *req.Priority
-	}
-	if req.Status != nil {
-		meta.Status = *req.Status
 	}
 
 	// Validate

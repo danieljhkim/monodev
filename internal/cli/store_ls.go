@@ -14,7 +14,7 @@ var storeLsCmd = &cobra.Command{
 	Short: "List all stores",
 	Long: `Display all available stores.
 
-Use filter flags to narrow results. Use -v to show all fields.`,
+Use filter flags to narrow results.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		eng, err := newEngine()
@@ -42,14 +42,8 @@ Use filter flags to narrow results. Use -v to show all fields.`,
 			return nil
 		}
 
-		verbose, _ := cmd.Flags().GetBool("verbose")
-
 		PrintSection("Available Stores")
-		if verbose {
-			printVerboseStoreTable(storeList)
-		} else {
-			printDefaultStoreTable(storeList)
-		}
+		printStoreTable(storeList)
 		return nil
 	},
 }
@@ -61,39 +55,17 @@ func orDash(s string) string {
 	return s
 }
 
-func printDefaultStoreTable(storeList []stores.ScopedStore) {
+func printStoreTable(storeList []stores.ScopedStore) {
 	rows := make([][]string, 0, len(storeList))
 	for _, store := range storeList {
 		rows = append(rows, []string{
 			store.Meta.Name,
 			store.Scope,
-			orDash(store.Meta.Status),
-			orDash(store.Meta.Type),
-			orDash(store.Meta.Source),
-			orDash(store.Meta.TaskID),
-			orDash(store.Meta.Priority),
-		})
-	}
-	PrintTable([]string{"Name", "Scope", "Status", "Type", "Source", "Task ID", "Priority"}, rows)
-}
-
-func printVerboseStoreTable(storeList []stores.ScopedStore) {
-	rows := make([][]string, 0, len(storeList))
-	for _, store := range storeList {
-		rows = append(rows, []string{
-			store.Meta.Name,
-			store.Scope,
-			orDash(store.Meta.Status),
-			orDash(store.Meta.Type),
-			orDash(store.Meta.Source),
 			orDash(store.Meta.Owner),
-			orDash(store.Meta.TaskID),
-			orDash(store.Meta.ParentTaskID),
-			orDash(store.Meta.Priority),
 			orDash(store.Meta.Description),
 		})
 	}
-	PrintTable([]string{"Name", "Scope", "Status", "Type", "Source", "Owner", "Task ID", "Parent Task", "Priority", "Description"}, rows)
+	PrintTable([]string{"Name", "Scope", "Owner", "Description"}, rows)
 }
 
 func filterStores(cmd *cobra.Command, storeList []stores.ScopedStore) []stores.ScopedStore {
@@ -102,13 +74,7 @@ func filterStores(cmd *cobra.Command, storeList []stores.ScopedStore) []stores.S
 		match func(stores.ScopedStore, string) bool
 	}{
 		{"scope", func(s stores.ScopedStore, v string) bool { return strings.EqualFold(s.Scope, v) }},
-		{"status", func(s stores.ScopedStore, v string) bool { return strings.EqualFold(s.Meta.Status, v) }},
-		{"type", func(s stores.ScopedStore, v string) bool { return strings.EqualFold(s.Meta.Type, v) }},
-		{"source", func(s stores.ScopedStore, v string) bool { return strings.EqualFold(s.Meta.Source, v) }},
 		{"owner", func(s stores.ScopedStore, v string) bool { return strings.EqualFold(s.Meta.Owner, v) }},
-		{"task-id", func(s stores.ScopedStore, v string) bool { return s.Meta.TaskID == v }},
-		{"parent-task-id", func(s stores.ScopedStore, v string) bool { return s.Meta.ParentTaskID == v }},
-		{"priority", func(s stores.ScopedStore, v string) bool { return strings.EqualFold(s.Meta.Priority, v) }},
 	}
 
 	for _, f := range filters {
@@ -128,13 +94,6 @@ func filterStores(cmd *cobra.Command, storeList []stores.ScopedStore) []stores.S
 }
 
 func init() {
-	storeLsCmd.Flags().BoolP("verbose", "v", false, "Show all fields")
 	storeLsCmd.Flags().String("scope", "", "Filter by scope (global, component)")
-	storeLsCmd.Flags().String("status", "", "Filter by status")
-	storeLsCmd.Flags().String("type", "", "Filter by type")
-	storeLsCmd.Flags().String("source", "", "Filter by source")
 	storeLsCmd.Flags().String("owner", "", "Filter by owner")
-	storeLsCmd.Flags().String("task-id", "", "Filter by task ID")
-	storeLsCmd.Flags().String("parent-task-id", "", "Filter by parent task ID")
-	storeLsCmd.Flags().String("priority", "", "Filter by priority")
 }

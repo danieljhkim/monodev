@@ -137,19 +137,6 @@ func TestNewStoreMeta(t *testing.T) {
 		}
 	})
 
-	t.Run("creates meta with default status, priority, and type", func(t *testing.T) {
-		meta := NewStoreMeta("Test", "global", time.Now())
-
-		if meta.Status != StatusTodo {
-			t.Errorf("Status = %s, want %s", meta.Status, StatusTodo)
-		}
-		if meta.Priority != PriorityNone {
-			t.Errorf("Priority = %s, want %s", meta.Priority, PriorityNone)
-		}
-		if meta.Type != TypeOther {
-			t.Errorf("Type = %s, want %s", meta.Type, TypeOther)
-		}
-	})
 }
 
 func TestNewTrackFile(t *testing.T) {
@@ -399,54 +386,10 @@ func TestNewStoreMeta_SchemaVersion(t *testing.T) {
 }
 
 func TestStoreMeta_Validate(t *testing.T) {
-	t.Run("valid values pass", func(t *testing.T) {
+	t.Run("always passes", func(t *testing.T) {
 		meta := NewStoreMeta("test", "global", time.Now())
-		meta.Source = SourceHuman
-		meta.Type = TypeTask
-		meta.Priority = PriorityMedium
-		meta.Status = StatusTodo
-
 		if err := meta.Validate(); err != nil {
 			t.Errorf("unexpected validation error: %v", err)
-		}
-	})
-
-	t.Run("empty values pass", func(t *testing.T) {
-		meta := NewStoreMeta("test", "global", time.Now())
-		if err := meta.Validate(); err != nil {
-			t.Errorf("unexpected validation error for empty fields: %v", err)
-		}
-	})
-
-	t.Run("invalid source rejected", func(t *testing.T) {
-		meta := NewStoreMeta("test", "global", time.Now())
-		meta.Source = "invalid"
-		if err := meta.Validate(); err == nil {
-			t.Error("expected validation error for invalid source")
-		}
-	})
-
-	t.Run("invalid type rejected", func(t *testing.T) {
-		meta := NewStoreMeta("test", "global", time.Now())
-		meta.Type = "invalid"
-		if err := meta.Validate(); err == nil {
-			t.Error("expected validation error for invalid type")
-		}
-	})
-
-	t.Run("invalid priority rejected", func(t *testing.T) {
-		meta := NewStoreMeta("test", "global", time.Now())
-		meta.Priority = "critical"
-		if err := meta.Validate(); err == nil {
-			t.Error("expected validation error for invalid priority")
-		}
-	})
-
-	t.Run("invalid status rejected", func(t *testing.T) {
-		meta := NewStoreMeta("test", "global", time.Now())
-		meta.Status = "archived"
-		if err := meta.Validate(); err == nil {
-			t.Error("expected validation error for invalid status")
 		}
 	})
 }
@@ -466,39 +409,19 @@ func TestStoreMeta_BackwardCompat(t *testing.T) {
 		if meta.SchemaVersion != 0 {
 			t.Errorf("SchemaVersion = %d, want 0 (zero value)", meta.SchemaVersion)
 		}
-		if meta.Source != "" {
-			t.Errorf("Source = %s, want empty", meta.Source)
-		}
-		if meta.Type != "" {
-			t.Errorf("Type = %s, want empty", meta.Type)
-		}
 		if meta.Owner != "" {
 			t.Errorf("Owner = %s, want empty", meta.Owner)
 		}
 		if meta.TaskID != "" {
 			t.Errorf("TaskID = %s, want empty", meta.TaskID)
 		}
-		if meta.ParentTaskID != "" {
-			t.Errorf("ParentTaskID = %s, want empty", meta.ParentTaskID)
-		}
-		if meta.Priority != "" {
-			t.Errorf("Priority = %s, want empty", meta.Priority)
-		}
-		if meta.Status != "" {
-			t.Errorf("Status = %s, want empty", meta.Status)
-		}
 	})
 
-	t.Run("round-trip with all new fields", func(t *testing.T) {
+	t.Run("round-trip with remaining fields", func(t *testing.T) {
 		meta := NewStoreMeta("test", "global", time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
 		meta.Description = "a test store"
-		meta.Source = SourceAgent
-		meta.Type = TypeIssue
 		meta.Owner = "alice"
 		meta.TaskID = "TASK-123"
-		meta.ParentTaskID = "TASK-100"
-		meta.Priority = PriorityHigh
-		meta.Status = StatusInProgress
 
 		data, err := json.Marshal(meta)
 		if err != nil {
@@ -513,26 +436,14 @@ func TestStoreMeta_BackwardCompat(t *testing.T) {
 		if result.SchemaVersion != 2 {
 			t.Errorf("SchemaVersion = %d, want 2", result.SchemaVersion)
 		}
-		if result.Source != SourceAgent {
-			t.Errorf("Source = %s, want %s", result.Source, SourceAgent)
-		}
-		if result.Type != TypeIssue {
-			t.Errorf("Type = %s, want %s", result.Type, TypeIssue)
-		}
 		if result.Owner != "alice" {
 			t.Errorf("Owner = %s, want 'alice'", result.Owner)
 		}
 		if result.TaskID != "TASK-123" {
 			t.Errorf("TaskID = %s, want 'TASK-123'", result.TaskID)
 		}
-		if result.ParentTaskID != "TASK-100" {
-			t.Errorf("ParentTaskID = %s, want 'TASK-100'", result.ParentTaskID)
-		}
-		if result.Priority != PriorityHigh {
-			t.Errorf("Priority = %s, want %s", result.Priority, PriorityHigh)
-		}
-		if result.Status != StatusInProgress {
-			t.Errorf("Status = %s, want %s", result.Status, StatusInProgress)
+		if result.Description != "a test store" {
+			t.Errorf("Description = %s, want 'a test store'", result.Description)
 		}
 	})
 }

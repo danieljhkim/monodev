@@ -15,18 +15,13 @@ func TestCreateStore_WithMetadata(t *testing.T) {
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
 	err := eng.CreateStore(context.Background(), &CreateStoreRequest{
-		CWD:          "/repo",
-		StoreID:      "meta-store",
-		Name:         "meta-store",
-		Scope:        stores.ScopeGlobal,
-		Description:  "test desc",
-		Source:       stores.SourceAgent,
-		Type:         stores.TypeTask,
-		Owner:        "alice",
-		TaskID:       "T-1",
-		ParentTaskID: "T-0",
-		Priority:     stores.PriorityHigh,
-		Status:       stores.StatusTodo,
+		CWD:         "/repo",
+		StoreID:     "meta-store",
+		Name:        "meta-store",
+		Scope:       stores.ScopeGlobal,
+		Description: "test desc",
+		Owner:       "alice",
+		TaskID:      "T-1",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -39,42 +34,14 @@ func TestCreateStore_WithMetadata(t *testing.T) {
 	if meta.SchemaVersion != 2 {
 		t.Errorf("SchemaVersion = %d, want 2", meta.SchemaVersion)
 	}
-	if meta.Source != stores.SourceAgent {
-		t.Errorf("Source = %s, want %s", meta.Source, stores.SourceAgent)
-	}
-	if meta.Type != stores.TypeTask {
-		t.Errorf("Type = %s, want %s", meta.Type, stores.TypeTask)
-	}
 	if meta.Owner != "alice" {
 		t.Errorf("Owner = %s, want 'alice'", meta.Owner)
 	}
 	if meta.TaskID != "T-1" {
 		t.Errorf("TaskID = %s, want 'T-1'", meta.TaskID)
 	}
-	if meta.ParentTaskID != "T-0" {
-		t.Errorf("ParentTaskID = %s, want 'T-0'", meta.ParentTaskID)
-	}
-	if meta.Priority != stores.PriorityHigh {
-		t.Errorf("Priority = %s, want %s", meta.Priority, stores.PriorityHigh)
-	}
-	if meta.Status != stores.StatusTodo {
-		t.Errorf("Status = %s, want %s", meta.Status, stores.StatusTodo)
-	}
-}
-
-func TestCreateStore_InvalidMetadata(t *testing.T) {
-	globalRepo := newScopedMockStoreRepo()
-	eng := newScopedTestEngine(globalRepo, nil)
-
-	err := eng.CreateStore(context.Background(), &CreateStoreRequest{
-		CWD:     "/repo",
-		StoreID: "bad-store",
-		Name:    "bad-store",
-		Scope:   stores.ScopeGlobal,
-		Source:  "invalid_source",
-	})
-	if err == nil {
-		t.Fatal("expected validation error for invalid source")
+	if meta.Description != "test desc" {
+		t.Errorf("Description = %s, want 'test desc'", meta.Description)
 	}
 }
 
@@ -85,11 +52,9 @@ func TestUpdateStore_Success(t *testing.T) {
 
 	eng := newScopedTestEngine(globalRepo, nil)
 
-	newStatus := stores.StatusInProgress
 	newOwner := "bob"
 	err := eng.UpdateStore(context.Background(), &UpdateStoreRequest{
 		StoreID: "my-store",
-		Status:  &newStatus,
 		Owner:   &newOwner,
 	})
 	if err != nil {
@@ -97,9 +62,6 @@ func TestUpdateStore_Success(t *testing.T) {
 	}
 
 	meta := globalRepo.metas["my-store"]
-	if meta.Status != stores.StatusInProgress {
-		t.Errorf("Status = %s, want %s", meta.Status, stores.StatusInProgress)
-	}
 	if meta.Owner != "bob" {
 		t.Errorf("Owner = %s, want 'bob'", meta.Owner)
 	}
@@ -108,33 +70,33 @@ func TestUpdateStore_Success(t *testing.T) {
 func TestUpdateStore_PartialUpdate(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	meta := stores.NewStoreMeta("my-store", stores.ScopeGlobal, time.Now())
-	meta.Source = stores.SourceHuman
-	meta.Priority = stores.PriorityLow
+	meta.Owner = "alice"
+	meta.TaskID = "T-42"
 	globalRepo.storeIDs["my-store"] = true
 	globalRepo.metas["my-store"] = meta
 
 	eng := newScopedTestEngine(globalRepo, nil)
 
-	// Only update status, leave other fields untouched
-	newStatus := stores.StatusDone
+	// Only update description; owner and task-id should be unchanged
+	newDesc := "updated description"
 	err := eng.UpdateStore(context.Background(), &UpdateStoreRequest{
-		StoreID: "my-store",
-		Status:  &newStatus,
+		StoreID:     "my-store",
+		Description: &newDesc,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	updated := globalRepo.metas["my-store"]
-	if updated.Status != stores.StatusDone {
-		t.Errorf("Status = %s, want %s", updated.Status, stores.StatusDone)
+	if updated.Description != "updated description" {
+		t.Errorf("Description = %s, want 'updated description'", updated.Description)
 	}
 	// Unchanged fields should remain
-	if updated.Source != stores.SourceHuman {
-		t.Errorf("Source = %s, want %s (unchanged)", updated.Source, stores.SourceHuman)
+	if updated.Owner != "alice" {
+		t.Errorf("Owner = %s, want 'alice' (unchanged)", updated.Owner)
 	}
-	if updated.Priority != stores.PriorityLow {
-		t.Errorf("Priority = %s, want %s (unchanged)", updated.Priority, stores.PriorityLow)
+	if updated.TaskID != "T-42" {
+		t.Errorf("TaskID = %s, want 'T-42' (unchanged)", updated.TaskID)
 	}
 }
 
@@ -142,33 +104,16 @@ func TestUpdateStore_NotFound(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	eng := newScopedTestEngine(globalRepo, nil)
 
-	newStatus := stores.StatusDone
+	newOwner := "bob"
 	err := eng.UpdateStore(context.Background(), &UpdateStoreRequest{
 		StoreID: "nonexistent",
-		Status:  &newStatus,
+		Owner:   &newOwner,
 	})
 	if err == nil {
 		t.Fatal("expected error for non-existent store")
 	}
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
-	}
-}
-
-func TestUpdateStore_Validation(t *testing.T) {
-	globalRepo := newScopedMockStoreRepo()
-	globalRepo.storeIDs["my-store"] = true
-	globalRepo.metas["my-store"] = stores.NewStoreMeta("my-store", stores.ScopeGlobal, time.Now())
-
-	eng := newScopedTestEngine(globalRepo, nil)
-
-	badStatus := "invalid_status"
-	err := eng.UpdateStore(context.Background(), &UpdateStoreRequest{
-		StoreID: "my-store",
-		Status:  &badStatus,
-	})
-	if err == nil {
-		t.Fatal("expected validation error for invalid status")
 	}
 }
 

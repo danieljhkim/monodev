@@ -55,14 +55,6 @@ var storeUpdateCmd = &cobra.Command{
 			v, _ := cmd.Flags().GetString("description")
 			req.Description = &v
 		}
-		if cmd.Flags().Changed("source") {
-			v, _ := cmd.Flags().GetString("source")
-			req.Source = &v
-		}
-		if cmd.Flags().Changed("type") {
-			v, _ := cmd.Flags().GetString("type")
-			req.Type = &v
-		}
 		if cmd.Flags().Changed("owner") {
 			v, _ := cmd.Flags().GetString("owner")
 			req.Owner = &v
@@ -70,18 +62,6 @@ var storeUpdateCmd = &cobra.Command{
 		if cmd.Flags().Changed("task-id") {
 			v, _ := cmd.Flags().GetString("task-id")
 			req.TaskID = &v
-		}
-		if cmd.Flags().Changed("parent-task-id") {
-			v, _ := cmd.Flags().GetString("parent-task-id")
-			req.ParentTaskID = &v
-		}
-		if cmd.Flags().Changed("priority") {
-			v, _ := cmd.Flags().GetString("priority")
-			req.Priority = &v
-		}
-		if cmd.Flags().Changed("status") {
-			v, _ := cmd.Flags().GetString("status")
-			req.Status = &v
 		}
 
 		if err := eng.UpdateStore(ctx, req); err != nil {
@@ -107,11 +87,6 @@ var storeUpdateCmd = &cobra.Command{
 func init() {
 	storeUpdateCmd.Flags().String("scope", "", "Store scope to disambiguate (global or component)")
 	storeUpdateCmd.Flags().String("description", "", "Store description")
-	storeUpdateCmd.Flags().String("source", "", "Store source (human, agent, other)")
-	storeUpdateCmd.Flags().String("type", "", "Store type (issue, plan, feature, task, other)")
 	storeUpdateCmd.Flags().String("owner", "", "Store owner")
 	storeUpdateCmd.Flags().String("task-id", "", "External task ID")
-	storeUpdateCmd.Flags().String("parent-task-id", "", "Parent task ID")
-	storeUpdateCmd.Flags().String("priority", "", "Priority (low, medium, high, none)")
-	storeUpdateCmd.Flags().String("status", "", "Status (todo, in_progress, done, blocked, cancelled, other)")
 }

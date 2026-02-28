@@ -60,26 +60,11 @@ var storeDescribeCmd = &cobra.Command{
 			PrintLabelValue("Created", details.Meta.CreatedAt.Format("2006-01-02 15:04:05"))
 			PrintLabelValue("Updated", details.Meta.UpdatedAt.Format("2006-01-02 15:04:05"))
 
-			if details.Meta.Source != "" {
-				PrintLabelValue("Source", details.Meta.Source)
-			}
-			if details.Meta.Type != "" {
-				PrintLabelValue("Type", details.Meta.Type)
-			}
 			if details.Meta.Owner != "" {
 				PrintLabelValue("Owner", details.Meta.Owner)
 			}
 			if details.Meta.TaskID != "" {
 				PrintLabelValue("Task ID", details.Meta.TaskID)
-			}
-			if details.Meta.ParentTaskID != "" {
-				PrintLabelValue("Parent Task ID", details.Meta.ParentTaskID)
-			}
-			if details.Meta.Priority != "" {
-				PrintLabelValue("Priority", details.Meta.Priority)
-			}
-			if details.Meta.Status != "" {
-				PrintLabelValue("Status", details.Meta.Status)
 			}
 
 			if len(details.TrackedPaths) > 0 {
