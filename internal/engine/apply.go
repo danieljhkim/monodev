@@ -6,6 +6,7 @@ import (
 
 	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
+	"github.com/danieljhkim/monodev/internal/stores"
 )
 
 // Algorithm steps:
@@ -44,10 +45,22 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		return nil, fmt.Errorf("%w: existing mode is %s, requested mode is %s", ErrValidation, workspaceState.Mode, req.Mode)
 	}
 
-	// Resolve the store repo for the active store
-	applyRepo, err := e.activeStoreRepo(workspaceState)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve store repo: %w", err)
+	// Resolve the store repo.
+	// When StoreID is explicitly provided, search by store ID (no checkout required).
+	// Otherwise fall back to the workspace's active store.
+	var applyRepo stores.StoreRepo
+	if req.StoreID != "" {
+		var resolvedScope string
+		applyRepo, resolvedScope, err = e.resolveStoreRepo(storeToApply, "")
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve store: %w", err)
+		}
+		workspaceState.ActiveStoreScope = resolvedScope
+	} else {
+		applyRepo, err = e.activeStoreRepo(workspaceState)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve store repo: %w", err)
+		}
 	}
 
 	plan, err := planner.BuildApplyPlan(
