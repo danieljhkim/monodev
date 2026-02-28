@@ -9,6 +9,13 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ---
 
+## [0.2.6] — 2026-02-28
+
+### Fixed
+- Overlay paths are now stored relative to the workspace directory (CWD at track time) instead of the repository root. This makes stores portable across directories: applying a store from `packages/api/` correctly places files in `packages/api/`, even if the store was originally tracked from `packages/web/`.
+- `monodev unapply` now removes files from the correct workspace subdirectory.
+- `monodev apply <store-id>` no longer requires a prior `monodev use <store-id>` checkout. The store is resolved directly by ID.
+
 ## [0.2.5] — 2026-02-08
 
 ### Changed
