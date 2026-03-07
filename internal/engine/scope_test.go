@@ -425,6 +425,26 @@ func TestActiveStoreRepo_WithScope(t *testing.T) {
 	}
 }
 
+func TestActiveStoreRepo_FallsBackToGlobalWhenComponentUnavailable(t *testing.T) {
+	globalRepo := newScopedMockStoreRepo()
+	globalRepo.storeIDs["my-store"] = true
+
+	eng := newScopedTestEngine(globalRepo, nil)
+
+	ws := &state.WorkspaceState{
+		ActiveStore:      "my-store",
+		ActiveStoreScope: stores.ScopeComponent,
+	}
+
+	repo, err := eng.activeStoreRepo(ws)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo != globalRepo {
+		t.Error("expected global repo fallback when component scope is unavailable")
+	}
+}
+
 func TestActiveStoreRepo_LegacyNoScope(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 

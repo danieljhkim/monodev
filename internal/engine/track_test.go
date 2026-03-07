@@ -120,6 +120,13 @@ func setupWorkspaceWithStore(stateStore *mockStateStore, workspaceID, storeID st
 	stateStore.workspaces[workspaceID] = ws
 }
 
+func setupWorkspaceWithScopedStore(stateStore *mockStateStore, workspaceID, storeID, scope string) {
+	ws := state.NewWorkspaceState("fingerprint", ".", "copy")
+	ws.ActiveStore = storeID
+	ws.ActiveStoreScope = scope
+	stateStore.workspaces[workspaceID] = ws
+}
+
 // TestTrack_StoresPathRelativeToCWD verifies that tracking a file from a subdirectory
 // stores the path relative to that subdirectory (not the repo root).
 func TestTrack_StoresPathRelativeToCWD(t *testing.T) {
@@ -240,6 +247,44 @@ func TestTrack_RepoRootWorkspaceUnchanged(t *testing.T) {
 	// From repo root, docs/readme.md should remain docs/readme.md
 	if got != "docs/readme.md" {
 		t.Errorf("stored path = %q, want %q", got, "docs/readme.md")
+	}
+}
+
+func TestTrack_FallsBackToGlobalWhenComponentScopeUnavailable(t *testing.T) {
+	gitRepo := &trackGitRepo{
+		root:          "/repo",
+		fingerprint:   "fp1",
+		workspacePath: ".",
+	}
+	storeRepo := newTrackStoreRepo()
+	stateStore := newMockStateStore()
+	fs := newTrackFileInfoFS("/repo/woo.txt", "/repo/text2")
+
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	setupWorkspaceWithScopedStore(stateStore, workspaceID, "store1", stores.ScopeComponent)
+
+	eng := newTrackEngine(gitRepo, storeRepo, stateStore, fs)
+	eng.globalStoreRepo = storeRepo
+	eng.componentStoreRepo = nil
+
+	result, err := eng.Track(context.Background(), &TrackRequest{
+		CWD:   "/repo",
+		Paths: []string{"woo.txt", "text2"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.MissingPaths) > 0 {
+		t.Fatalf("unexpected missing paths: %v", result.MissingPaths)
+	}
+
+	saved := storeRepo.savedTracks["store1"]
+	if saved == nil {
+		t.Fatal("expected SaveTrack to be called")
+	}
+	if len(saved.Tracked) != 2 {
+		t.Fatalf("expected 2 tracked paths, got %d", len(saved.Tracked))
 	}
 }
 

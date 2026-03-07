@@ -166,34 +166,52 @@ func (e *Engine) defaultScope() string {
 	return stores.ScopeGlobal
 }
 
-// activeStoreRepo resolves the StoreRepo for the workspace's active store.
-// It uses ActiveStoreScope if set, otherwise searches both scopes.
-func (e *Engine) activeStoreRepo(ws *state.WorkspaceState) (stores.StoreRepo, error) {
+// resolveActiveStoreRepo returns the repo and effective scope for the workspace's active store.
+// If a saved component scope exists but the repo has no component .monodev, it falls back to global.
+func (e *Engine) resolveActiveStoreRepo(ws *state.WorkspaceState) (stores.StoreRepo, string, error) {
 	if ws.ActiveStore == "" {
-		return nil, ErrNoActiveStore
+		return nil, "", ErrNoActiveStore
 	}
 
-	// If scope is explicitly set, use it
+	// If scope is explicitly set, prefer it, but tolerate stale component scope metadata.
 	if ws.ActiveStoreScope != "" {
-		return e.storeRepoForScope(ws.ActiveStoreScope)
+		if ws.ActiveStoreScope == stores.ScopeComponent && e.componentStoreRepo == nil {
+			if e.globalStoreRepo != nil {
+				return e.globalStoreRepo, stores.ScopeGlobal, nil
+			}
+			return e.storeRepo, stores.ScopeGlobal, nil
+		}
+
+		repo, err := e.storeRepoForScope(ws.ActiveStoreScope)
+		if err != nil {
+			return nil, "", err
+		}
+		return repo, ws.ActiveStoreScope, nil
 	}
 
 	// Legacy: search both scopes
 	locations, err := e.findStore(ws.ActiveStore)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if len(locations) == 0 {
 		// Fallback to legacy storeRepo
-		return e.storeRepo, nil
+		return e.storeRepo, stores.ScopeGlobal, nil
 	}
 	// Prefer component scope for legacy states
 	for _, loc := range locations {
 		if loc.Scope == stores.ScopeComponent {
-			return loc.Repo, nil
+			return loc.Repo, loc.Scope, nil
 		}
 	}
-	return locations[0].Repo, nil
+	return locations[0].Repo, locations[0].Scope, nil
+}
+
+// activeStoreRepo resolves the StoreRepo for the workspace's active store.
+// It uses ActiveStoreScope if set, otherwise searches both scopes.
+func (e *Engine) activeStoreRepo(ws *state.WorkspaceState) (stores.StoreRepo, error) {
+	repo, _, err := e.resolveActiveStoreRepo(ws)
+	return repo, err
 }
 
 // touchStoreMetaIn updates the UpdatedAt timestamp of a store's metadata using a specific repo.
