@@ -50,12 +50,25 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	// Otherwise fall back to the workspace's active store.
 	var applyRepo stores.StoreRepo
 	if req.StoreID != "" {
-		var resolvedScope string
-		applyRepo, resolvedScope, err = e.resolveStoreRepo(storeToApply, "")
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve store: %w", err)
+		locations, findErr := e.findStore(storeToApply)
+		if findErr != nil {
+			return nil, fmt.Errorf("failed to resolve store: %w", findErr)
 		}
-		workspaceState.ActiveStoreScope = resolvedScope
+		if len(locations) == 0 {
+			return nil, fmt.Errorf("failed to resolve store: %w: store '%s' not found", ErrNotFound, storeToApply)
+		}
+
+		// Apply by explicit ID should remain usable without checkout.
+		// If duplicated across scopes, prefer component scope.
+		chosen := locations[0]
+		for _, loc := range locations {
+			if loc.Scope == stores.ScopeComponent {
+				chosen = loc
+				break
+			}
+		}
+		applyRepo = chosen.Repo
+		workspaceState.ActiveStoreScope = chosen.Scope
 	} else {
 		applyRepo, err = e.activeStoreRepo(workspaceState)
 		if err != nil {

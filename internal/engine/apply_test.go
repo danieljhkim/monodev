@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
 
@@ -71,5 +72,45 @@ func TestApply_WithoutStoreIDStillRequiresCheckout(t *testing.T) {
 
 	if !errors.Is(err, ErrNoActiveStore) {
 		t.Errorf("expected ErrNoActiveStore without StoreID, got: %v", err)
+	}
+}
+
+// TestApply_WithStoreIDPrefersComponentScopeWhenDuplicate verifies that applying
+// by store ID works even when the same ID exists in both scopes.
+func TestApply_WithStoreIDPrefersComponentScopeWhenDuplicate(t *testing.T) {
+	globalRepo := newScopedMockStoreRepo()
+	componentRepo := newScopedMockStoreRepo()
+	globalRepo.storeIDs["shared"] = true
+	componentRepo.storeIDs["shared"] = true
+	globalRepo.tracks["shared"] = stores.NewTrackFile()
+	componentRepo.tracks["shared"] = stores.NewTrackFile()
+
+	stateStore := newMockStateStore()
+	eng := newScopedTestEngineWithState(globalRepo, componentRepo, stateStore)
+
+	result, err := eng.Apply(context.Background(), &ApplyRequest{
+		CWD:     "/repo",
+		StoreID: "shared",
+		Mode:    "copy",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ws, err := stateStore.LoadWorkspace(result.WorkspaceID)
+	if err != nil {
+		t.Fatalf("failed to load workspace state: %v", err)
+	}
+	if ws.ActiveStoreScope != stores.ScopeComponent {
+		t.Errorf("ActiveStoreScope = %q, want %q", ws.ActiveStoreScope, stores.ScopeComponent)
+	}
+	if ws.ActiveStore != "shared" {
+		t.Errorf("ActiveStore = %q, want %q", ws.ActiveStore, "shared")
+	}
+
+	// Ensure workspace ID is stable and persisted.
+	wantWorkspaceID := state.ComputeWorkspaceID("", "")
+	if result.WorkspaceID != wantWorkspaceID {
+		t.Errorf("WorkspaceID = %q, want %q", result.WorkspaceID, wantWorkspaceID)
 	}
 }
