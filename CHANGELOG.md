@@ -9,6 +9,20 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ---
 
+## [0.2.7] — 2026-02-28
+
+### Changed
+- Removed deprecated `StoreMeta` fields: `type`, `status`, `priority`, `source`, and `parentTaskId`. Existing `meta.json` files with these fields are silently ignored on load.
+- `monodev store ls` now displays: Name, Scope, Owner, Description. Removed verbose mode (`-v`) and filters for removed fields.
+- `monodev store describe` no longer prints Source, Type, Priority, Status, or Parent Task ID.
+- `monodev store update` now accepts only `--description`, `--owner`, and `--task-id` flags.
+- `monodev checkout -n` now accepts only `--description`, `--owner`, and `--task-id` flags.
+
+### Fixed
+- Commands that reuse the active store, including `monodev track`, now fall back to global scope when workspace state still records `component` but the current repository has no `.monodev` directory.
+
+---
+
 ## [0.2.6] — 2026-02-28
 
 ### Fixed
