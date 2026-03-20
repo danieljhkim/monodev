@@ -1,3 +1,8 @@
 bin/
 coverage.html
 coverage.out
+.monodev
+.claude
+backlog
+.agents/
+.orbit/
