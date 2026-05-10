@@ -181,6 +181,50 @@ func TestSnapshotManager_Materialize(t *testing.T) {
 			t.Error("Expected error for invalid store ID, got nil")
 		}
 	})
+
+	t.Run("rejects overlay symlink before copying target contents", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+		storeID := "test-store"
+		createTestStore(t, repo, storeID)
+
+		outsidePath := filepath.Join(filepath.Dir(storesDir), "outside-secret.txt")
+		if err := os.WriteFile(outsidePath, []byte("do-not-persist"), 0644); err != nil {
+			t.Fatalf("failed to write outside file: %v", err)
+		}
+		requireSymlink(t, outsidePath, filepath.Join(repo.OverlayRoot(storeID), "leak.txt"))
+
+		persistStorePath := filepath.Join(persistRoot, ".monodev", "persist", "stores", storeID)
+		if err := os.MkdirAll(filepath.Join(persistStorePath, "overlay"), 0755); err != nil {
+			t.Fatalf("failed to create existing persisted store: %v", err)
+		}
+		sentinelPath := filepath.Join(persistStorePath, "sentinel.txt")
+		if err := os.WriteFile(sentinelPath, []byte("keep"), 0644); err != nil {
+			t.Fatalf("failed to write persisted sentinel: %v", err)
+		}
+
+		err := mgr.Materialize(storeID, repo, persistRoot)
+		if err == nil {
+			t.Fatal("Materialize succeeded, want symlink rejection")
+		}
+		if !strings.Contains(err.Error(), "overlay/leak.txt") || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("Materialize error %q should name the offending symlink path", err)
+		}
+
+		content, err := os.ReadFile(sentinelPath)
+		if err != nil {
+			t.Fatalf("existing persisted store should not be removed before validation: %v", err)
+		}
+		if string(content) != "keep" {
+			t.Fatalf("persisted sentinel = %q, want %q", content, "keep")
+		}
+
+		leakedPath := filepath.Join(persistStorePath, "overlay", "leak.txt")
+		if _, err := os.Lstat(leakedPath); !os.IsNotExist(err) {
+			t.Fatalf("persisted symlink target contents should not be copied, stat error: %v", err)
+		}
+	})
 }
 
 func TestSnapshotManager_Dematerialize(t *testing.T) {
@@ -285,6 +329,51 @@ func TestSnapshotManager_Dematerialize(t *testing.T) {
 		err := mgr.Dematerialize("../invalid", persistRoot, repo)
 		if err == nil {
 			t.Error("Expected error for invalid store ID, got nil")
+		}
+	})
+
+	t.Run("rejects persisted symlink before replacing local store", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+		storeID := "test-store"
+		createTestStore(t, repo, storeID)
+
+		if err := mgr.Materialize(storeID, repo, persistRoot); err != nil {
+			t.Fatalf("Materialize failed: %v", err)
+		}
+
+		localFile := filepath.Join(repo.OverlayRoot(storeID), "test.txt")
+		if err := os.WriteFile(localFile, []byte("local content"), 0644); err != nil {
+			t.Fatalf("failed to modify local file: %v", err)
+		}
+
+		outsidePath := filepath.Join(filepath.Dir(storesDir), "outside-secret.txt")
+		if err := os.WriteFile(outsidePath, []byte("do-not-dematerialize"), 0644); err != nil {
+			t.Fatalf("failed to write outside file: %v", err)
+		}
+		persistLeakPath := filepath.Join(persistRoot, ".monodev", "persist", "stores", storeID, "overlay", "leak.txt")
+		requireSymlink(t, outsidePath, persistLeakPath)
+
+		err := mgr.Dematerialize(storeID, persistRoot, repo)
+		if err == nil {
+			t.Fatal("Dematerialize succeeded, want symlink rejection")
+		}
+		if !strings.Contains(err.Error(), "overlay/leak.txt") || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("Dematerialize error %q should name the offending symlink path", err)
+		}
+
+		content, err := os.ReadFile(localFile)
+		if err != nil {
+			t.Fatalf("local store should not be removed before validation: %v", err)
+		}
+		if string(content) != "local content" {
+			t.Fatalf("local file content = %q, want %q", content, "local content")
+		}
+
+		localLeakPath := filepath.Join(repo.OverlayRoot(storeID), "leak.txt")
+		if _, err := os.Lstat(localLeakPath); !os.IsNotExist(err) {
+			t.Fatalf("local store should not receive symlink target contents, stat error: %v", err)
 		}
 	})
 }
@@ -600,4 +689,12 @@ func TestSnapshotManager_Roundtrip(t *testing.T) {
 			t.Errorf("Restored content = %q, want %q", restoredContent, originalContent)
 		}
 	})
+}
+
+func requireSymlink(t *testing.T, oldname, newname string) {
+	t.Helper()
+
+	if err := os.Symlink(oldname, newname); err != nil {
+		t.Skipf("symlink creation is not supported in this environment: %v", err)
+	}
 }
