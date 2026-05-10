@@ -1,8 +1,11 @@
 package persist
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +109,12 @@ func TestSnapshotManager_Materialize(t *testing.T) {
 		overlayPath := filepath.Join(persistStorePath, "overlay")
 		if _, err := os.Stat(overlayPath); os.IsNotExist(err) {
 			t.Error("overlay directory was not materialized")
+		}
+
+		// Verify checksum manifest exists
+		manifestPath := filepath.Join(persistStorePath, verificationManifestName)
+		if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+			t.Error("verification manifest was not materialized")
 		}
 
 		// Verify test file exists
@@ -281,7 +290,7 @@ func TestSnapshotManager_Dematerialize(t *testing.T) {
 }
 
 func TestSnapshotManager_Verify(t *testing.T) {
-	t.Run("verifies existing store", func(t *testing.T) {
+	t.Run("verifies existing store with manifest", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
 		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
 
@@ -298,6 +307,126 @@ func TestSnapshotManager_Verify(t *testing.T) {
 		err := mgr.Verify(storeID, persistRoot, hasher)
 		if err != nil {
 			t.Errorf("Verify failed: %v", err)
+		}
+	})
+
+	t.Run("returns legacy sentinel when manifest is missing", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+		storeID := "test-store"
+		createTestStore(t, repo, storeID)
+		if err := mgr.Materialize(storeID, repo, persistRoot); err != nil {
+			t.Fatalf("Materialize failed: %v", err)
+		}
+
+		manifestPath := filepath.Join(persistRoot, ".monodev", "persist", "stores", storeID, verificationManifestName)
+		if err := os.Remove(manifestPath); err != nil {
+			t.Fatalf("failed to remove manifest: %v", err)
+		}
+
+		hasher := hash.NewSHA256Hasher()
+		err := mgr.Verify(storeID, persistRoot, hasher)
+		if !errors.Is(err, ErrVerificationManifestMissing) {
+			t.Fatalf("Verify error = %v, want ErrVerificationManifestMissing", err)
+		}
+		if !strings.Contains(err.Error(), storeID) || !strings.Contains(err.Error(), manifestPath) {
+			t.Fatalf("Verify error %q should name store %q and path %q", err, storeID, manifestPath)
+		}
+	})
+
+	t.Run("returns error for corrupted overlay file", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+		storeID := "test-store"
+		createTestStore(t, repo, storeID)
+		if err := mgr.Materialize(storeID, repo, persistRoot); err != nil {
+			t.Fatalf("Materialize failed: %v", err)
+		}
+
+		corruptPath := filepath.Join(persistRoot, ".monodev", "persist", "stores", storeID, "overlay", "test.txt")
+		if err := os.WriteFile(corruptPath, []byte("tampered"), 0644); err != nil {
+			t.Fatalf("failed to corrupt overlay file: %v", err)
+		}
+
+		hasher := hash.NewSHA256Hasher()
+		err := mgr.Verify(storeID, persistRoot, hasher)
+		if err == nil {
+			t.Fatal("Expected verification error for corrupted overlay file, got nil")
+		}
+		if !strings.Contains(err.Error(), storeID) || !strings.Contains(err.Error(), corruptPath) || !strings.Contains(err.Error(), "checksum mismatch") {
+			t.Fatalf("Verify error %q should name store, path, and checksum mismatch", err)
+		}
+	})
+
+	t.Run("returns error for missing persisted file", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+		storeID := "test-store"
+		createTestStore(t, repo, storeID)
+		if err := mgr.Materialize(storeID, repo, persistRoot); err != nil {
+			t.Fatalf("Materialize failed: %v", err)
+		}
+
+		missingPath := filepath.Join(persistRoot, ".monodev", "persist", "stores", storeID, "overlay", "subdir", "nested.txt")
+		if err := os.Remove(missingPath); err != nil {
+			t.Fatalf("failed to remove persisted file: %v", err)
+		}
+
+		hasher := hash.NewSHA256Hasher()
+		err := mgr.Verify(storeID, persistRoot, hasher)
+		if err == nil {
+			t.Fatal("Expected verification error for missing persisted file, got nil")
+		}
+		if !strings.Contains(err.Error(), storeID) || !strings.Contains(err.Error(), missingPath) {
+			t.Fatalf("Verify error %q should name store %q and path %q", err, storeID, missingPath)
+		}
+	})
+
+	t.Run("returns error for manifest hash mismatch", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+		storeID := "test-store"
+		createTestStore(t, repo, storeID)
+		if err := mgr.Materialize(storeID, repo, persistRoot); err != nil {
+			t.Fatalf("Materialize failed: %v", err)
+		}
+
+		storePath := filepath.Join(persistRoot, ".monodev", "persist", "stores", storeID)
+		manifestPath := filepath.Join(storePath, verificationManifestName)
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Fatalf("failed to read manifest: %v", err)
+		}
+		var manifest verificationManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			t.Fatalf("failed to decode manifest: %v", err)
+		}
+		for i := range manifest.Files {
+			if manifest.Files[i].Path == "track.json" {
+				manifest.Files[i].Hash = "not-the-recorded-hash"
+			}
+		}
+		data, err = json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			t.Fatalf("failed to encode manifest: %v", err)
+		}
+		data = append(data, '\n')
+		if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+			t.Fatalf("failed to write manifest: %v", err)
+		}
+
+		hasher := hash.NewSHA256Hasher()
+		err = mgr.Verify(storeID, persistRoot, hasher)
+		if err == nil {
+			t.Fatal("Expected verification error for manifest hash mismatch, got nil")
+		}
+		trackPath := filepath.Join(storePath, "track.json")
+		if !strings.Contains(err.Error(), storeID) || !strings.Contains(err.Error(), trackPath) || !strings.Contains(err.Error(), "checksum mismatch") {
+			t.Fatalf("Verify error %q should name store, path, and checksum mismatch", err)
 		}
 	})
 

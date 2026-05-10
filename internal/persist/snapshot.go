@@ -1,14 +1,40 @@
 package persist
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/hash"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
+
+const (
+	verificationManifestName          = "verification-manifest.json"
+	verificationManifestSchemaVersion = 1
+	verificationHashAlgorithm         = "sha256"
+)
+
+// ErrVerificationManifestMissing is returned for persisted stores created
+// before checksum manifests existed. Callers may keep pulling these legacy
+// stores for compatibility, but they must not report checksum verification as
+// successful when this error is returned.
+var ErrVerificationManifestMissing = errors.New("verification manifest missing")
+
+type verificationManifest struct {
+	SchemaVersion int                        `json:"schemaVersion"`
+	HashAlgorithm string                     `json:"hashAlgorithm"`
+	Files         []verificationManifestFile `json:"files"`
+}
+
+type verificationManifestFile struct {
+	Path string `json:"path"`
+	Hash string `json:"hash"`
+}
 
 // SnapshotManager handles materialization and dematerialization of stores
 // between the user's home directory (~/.monodev/stores) and the persistence
@@ -69,6 +95,10 @@ func (s *SnapshotManager) Materialize(storeID string, storeRepo stores.StoreRepo
 		return fmt.Errorf("failed to copy store: %w", err)
 	}
 
+	if err := s.writeVerificationManifest(storeID, dstPath, hash.NewSHA256Hasher()); err != nil {
+		return fmt.Errorf("failed to write verification manifest for store %q: %w", storeID, err)
+	}
+
 	return nil
 }
 
@@ -112,8 +142,11 @@ func (s *SnapshotManager) Dematerialize(storeID string, persistRoot string, stor
 	return nil
 }
 
-// Verify verifies the integrity of a store in the persist directory using checksums.
-// This is optional for v1 and can be used with the --verify flag.
+// Verify verifies the integrity of a store in the persist directory using the
+// persisted verification manifest. The manifest covers meta.json, track.json,
+// and every regular file under overlay/. Stores without a manifest are legacy
+// snapshots and return ErrVerificationManifestMissing instead of pretending that
+// checksum verification succeeded.
 func (s *SnapshotManager) Verify(storeID string, persistRoot string, hasher hash.Hasher) error {
 	// Validate store ID
 	if err := s.fs.ValidateIdentifier(storeID); err != nil {
@@ -129,12 +162,31 @@ func (s *SnapshotManager) Verify(storeID string, persistRoot string, hasher hash
 		return fmt.Errorf("failed to check if store exists: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("store %q not found in persist directory", storeID)
+		return fmt.Errorf("store %q not found in persist directory at %s", storeID, storePath)
 	}
 
-	// TODO: Implement checksum verification
-	// For v1, we can just check that the directory exists and contains the expected files.
-	// Full checksum verification can be added later.
+	manifestPath := filepath.Join(storePath, verificationManifestName)
+	data, err := s.fs.ReadFile(manifestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("store %q path %s: %w", storeID, manifestPath, ErrVerificationManifestMissing)
+		}
+		return fmt.Errorf("store %q path %s: failed to read verification manifest: %w", storeID, manifestPath, err)
+	}
+
+	var manifest verificationManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("store %q path %s: invalid verification manifest: %w", storeID, manifestPath, err)
+	}
+	if manifest.SchemaVersion != verificationManifestSchemaVersion {
+		return fmt.Errorf("store %q path %s: unsupported verification manifest schema version %d", storeID, manifestPath, manifest.SchemaVersion)
+	}
+	if manifest.HashAlgorithm != verificationHashAlgorithm {
+		return fmt.Errorf("store %q path %s: unsupported verification hash algorithm %q", storeID, manifestPath, manifest.HashAlgorithm)
+	}
+	if err := s.verifyManifestFiles(storeID, storePath, manifest, hasher); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -170,4 +222,168 @@ func (s *SnapshotManager) ListPersistedStores(persistRoot string) ([]string, err
 	}
 
 	return storeIDs, nil
+}
+
+func (s *SnapshotManager) writeVerificationManifest(storeID, storePath string, hasher hash.Hasher) error {
+	if hasher == nil {
+		hasher = hash.NewSHA256Hasher()
+	}
+
+	relPaths, err := verifiableStoreFiles(storePath)
+	if err != nil {
+		return err
+	}
+
+	manifest := verificationManifest{
+		SchemaVersion: verificationManifestSchemaVersion,
+		HashAlgorithm: verificationHashAlgorithm,
+		Files:         make([]verificationManifestFile, 0, len(relPaths)),
+	}
+	for _, relPath := range relPaths {
+		absPath := filepath.Join(storePath, filepath.FromSlash(relPath))
+		sum, err := hasher.HashFile(absPath)
+		if err != nil {
+			return fmt.Errorf("store %q path %s: failed to hash persisted file: %w", storeID, absPath, err)
+		}
+		manifest.Files = append(manifest.Files, verificationManifestFile{
+			Path: relPath,
+			Hash: sum,
+		})
+	}
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to encode verification manifest: %w", err)
+	}
+	data = append(data, '\n')
+
+	manifestPath := filepath.Join(storePath, verificationManifestName)
+	if err := s.fs.AtomicWrite(manifestPath, data, 0644); err != nil {
+		return fmt.Errorf("path %s: failed to write verification manifest: %w", manifestPath, err)
+	}
+
+	return nil
+}
+
+func (s *SnapshotManager) verifyManifestFiles(storeID, storePath string, manifest verificationManifest, hasher hash.Hasher) error {
+	if hasher == nil {
+		hasher = hash.NewSHA256Hasher()
+	}
+
+	manifestPath := filepath.Join(storePath, verificationManifestName)
+	expected := make(map[string]string, len(manifest.Files))
+	for _, file := range manifest.Files {
+		if file.Path == "" {
+			return fmt.Errorf("store %q path %s: verification manifest contains an empty file path", storeID, manifestPath)
+		}
+		relPath := filepath.Clean(filepath.FromSlash(file.Path))
+		if err := s.fs.ValidateRelPath(relPath); err != nil {
+			return fmt.Errorf("store %q path %s: invalid manifest file path %q: %w", storeID, manifestPath, file.Path, err)
+		}
+		relPath = filepath.ToSlash(relPath)
+		if relPath == verificationManifestName {
+			return fmt.Errorf("store %q path %s: verification manifest must not hash itself", storeID, manifestPath)
+		}
+		if _, exists := expected[relPath]; exists {
+			return fmt.Errorf("store %q path %s: duplicate manifest entry for %s", storeID, manifestPath, relPath)
+		}
+		expected[relPath] = file.Hash
+	}
+
+	for _, requiredPath := range []string{"meta.json", "track.json"} {
+		if _, ok := expected[requiredPath]; !ok {
+			return fmt.Errorf("store %q path %s: required file missing from verification manifest", storeID, filepath.Join(storePath, requiredPath))
+		}
+	}
+
+	actualFiles, err := verifiableStoreFiles(storePath)
+	if err != nil {
+		return fmt.Errorf("store %q: %w", storeID, err)
+	}
+	actual := make(map[string]struct{}, len(actualFiles))
+	for _, relPath := range actualFiles {
+		actual[relPath] = struct{}{}
+		if _, ok := expected[relPath]; !ok {
+			return fmt.Errorf("store %q path %s: persisted file missing from verification manifest", storeID, filepath.Join(storePath, filepath.FromSlash(relPath)))
+		}
+	}
+
+	for relPath, expectedHash := range expected {
+		absPath := filepath.Join(storePath, filepath.FromSlash(relPath))
+		if _, ok := actual[relPath]; !ok {
+			return fmt.Errorf("store %q path %s: missing persisted file", storeID, absPath)
+		}
+
+		actualHash, err := hasher.HashFile(absPath)
+		if err != nil {
+			return fmt.Errorf("store %q path %s: failed to hash persisted file: %w", storeID, absPath, err)
+		}
+		if actualHash != expectedHash {
+			return fmt.Errorf("store %q path %s: checksum mismatch: expected %s, got %s", storeID, absPath, expectedHash, actualHash)
+		}
+	}
+
+	return nil
+}
+
+func verifiableStoreFiles(storePath string) ([]string, error) {
+	var relPaths []string
+	for _, relPath := range []string{"meta.json", "track.json"} {
+		absPath := filepath.Join(storePath, relPath)
+		info, err := os.Lstat(absPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("missing required file %s", absPath)
+			}
+			return nil, fmt.Errorf("failed to inspect required file %s: %w", absPath, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("required file %s is not a regular file", absPath)
+		}
+		relPaths = append(relPaths, relPath)
+	}
+
+	overlayPath := filepath.Join(storePath, "overlay")
+	info, err := os.Lstat(overlayPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("missing required directory %s", overlayPath)
+		}
+		return nil, fmt.Errorf("failed to inspect required directory %s: %w", overlayPath, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("required path %s is not a directory", overlayPath)
+	}
+
+	if err := filepath.WalkDir(overlayPath, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("failed to inspect path %s: %w", path, walkErr)
+		}
+		if path == overlayPath {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("failed to inspect path %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported persisted file type at %s", path)
+		}
+
+		relPath, err := filepath.Rel(storePath, path)
+		if err != nil {
+			return fmt.Errorf("failed to derive relative path for %s: %w", path, err)
+		}
+		relPaths = append(relPaths, filepath.ToSlash(relPath))
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	sort.Strings(relPaths)
+	return relPaths, nil
 }
