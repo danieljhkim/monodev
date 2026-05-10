@@ -220,6 +220,12 @@ monodev remote set-branch monodev/custom
 # Push existing stores to remote
 monodev push <store-id>...
 
+# Push the current workspace reference with stores
+monodev push <store-id>... --with-workspace
+
+# Push only the current workspace reference
+monodev push --with-workspace
+
 # Pull stores from remote
 monodev pull <store-id>...
 
@@ -234,9 +240,12 @@ monodev pull <store-id>... --force
 
 1. Remote configuration is stored locally at `.monodev/remote.json`
 2. Stores are materialized to `.monodev/persist/stores/` before pushing
-3. A separate Git repository is created at `.monodev/.git` with an orphan branch
-4. The orphan branch is pushed to your configured remote
-5. When pulling, stores are fetched and dematerialized to `~/.monodev/stores/`
+3. With `--with-workspace`, the current workspace reference is written to `.monodev/persist/workspaces/<workspace-id>.json`
+   with `schemaVersion`, `workspaceID`, `repo`, `workspacePath`, `absolutePath`, `activeStore`,
+   `activeStoreScope`, `stack`, `appliedStores`, `mode`, and a `pathOwnership` summary
+4. A separate Git repository is created at `.monodev/.git` with an orphan branch
+5. The orphan branch is pushed to your configured remote
+6. When pulling, stores are fetched and dematerialized to `~/.monodev/stores/`
 
 This approach keeps persistence separate from your main Git history while leveraging Git's compression and deduplication.
 
