@@ -5,9 +5,34 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/danieljhkim/monodev/internal/config"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
+
+type cancelOnLoadTrackStoreRepo struct {
+	*trackStoreRepo
+	cancel context.CancelFunc
+}
+
+func (r *cancelOnLoadTrackStoreRepo) LoadTrack(id string) (*stores.TrackFile, error) {
+	track, err := r.trackStoreRepo.LoadTrack(id)
+	if err == nil && r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	return track, err
+}
+
+type saveCountingStateStore struct {
+	*mockStateStore
+	saveCalls int
+}
+
+func (s *saveCountingStateStore) SaveWorkspace(id string, ws *state.WorkspaceState) error {
+	s.saveCalls++
+	return s.mockStateStore.SaveWorkspace(id, ws)
+}
 
 // TestApply_WithStoreIDRequiresNoCheckout verifies that monodev apply <store-id>
 // works even when no store has been checked out (no active store).
@@ -112,5 +137,54 @@ func TestApply_WithStoreIDPrefersComponentScopeWhenDuplicate(t *testing.T) {
 	wantWorkspaceID := state.ComputeWorkspaceID("", "")
 	if result.WorkspaceID != wantWorkspaceID {
 		t.Errorf("WorkspaceID = %q, want %q", result.WorkspaceID, wantWorkspaceID)
+	}
+}
+
+func TestApply_CancellationAfterPlanningDoesNotSaveState(t *testing.T) {
+	gitRepo := &trackGitRepo{root: "/repo", fingerprint: "fp1", workspacePath: "."}
+	baseRepo := newTrackStoreRepo()
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{{Path: "file.txt", Kind: "file"}}
+	baseRepo.tracks["store1"] = track
+
+	ctx, cancel := context.WithCancel(context.Background())
+	storeRepo := &cancelOnLoadTrackStoreRepo{
+		trackStoreRepo: baseRepo,
+		cancel:         cancel,
+	}
+
+	baseStateStore := newMockStateStore()
+	stateStore := &saveCountingStateStore{mockStateStore: baseStateStore}
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	ws := state.NewWorkspaceState("fp1", ".", "copy")
+	ws.ActiveStore = "store1"
+	baseStateStore.workspaces[workspaceID] = ws
+
+	fs := newTrackFileInfoFS("/stores/store1/overlay/file.txt")
+	eng := New(
+		gitRepo,
+		storeRepo,
+		stateStore,
+		fs,
+		&mockHasher{},
+		&mockClock{},
+		config.Paths{Root: "/tmp/monodev", Stores: "/tmp/monodev/stores", Workspaces: "/tmp/workspaces"},
+	)
+
+	result, err := eng.Apply(ctx, &ApplyRequest{
+		CWD:  "/repo",
+		Mode: "copy",
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Apply error = %v, want context.Canceled", err)
+	}
+	if result != nil {
+		t.Fatalf("Apply result = %#v, want nil", result)
+	}
+	if stateStore.saveCalls != 0 {
+		t.Fatalf("SaveWorkspace calls = %d, want 0 after cancellation", stateStore.saveCalls)
+	}
+	if _, ok := ws.Paths["file.txt"]; ok {
+		t.Fatal("workspace state was mutated for file.txt after cancellation")
 	}
 }
