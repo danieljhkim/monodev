@@ -1,0 +1,10 @@
+# Common generated/artifact directories that should stay out of the knowledge graph.
+.orbit/
+node_modules/
+target/
+dist/
+build/
+.venv/
+venv/
+__pycache__/
+*.egg-info/
