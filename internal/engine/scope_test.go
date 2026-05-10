@@ -90,13 +90,11 @@ func newScopedTestEngineWithState(globalRepo, componentRepo *scopedMockStoreRepo
 		&mockClock{},
 		paths,
 	)
-	// Wire up dual-scope fields
-	e.globalStoreRepo = globalRepo
-	e.globalStateStore = stateStore
+	var component stores.StoreRepo
 	if componentRepo != nil {
-		e.componentStoreRepo = componentRepo
-		e.componentStateStore = stateStore
+		component = componentRepo
 	}
+	e.storeResolver = newEngineStoreResolver(globalRepo, globalRepo, component)
 	return e
 }
 
@@ -335,7 +333,7 @@ func TestDefaultScope_WithRepoContext(t *testing.T) {
 	componentRepo := newScopedMockStoreRepo()
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
-	scope := eng.defaultScope()
+	scope := eng.storeResolver.defaultScope()
 	if scope != stores.ScopeComponent {
 		t.Errorf("expected default scope 'component' with repo context, got %s", scope)
 	}
@@ -345,7 +343,7 @@ func TestDefaultScope_NoRepoContext(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	eng := newScopedTestEngine(globalRepo, nil)
 
-	scope := eng.defaultScope()
+	scope := eng.storeResolver.defaultScope()
 	if scope != stores.ScopeGlobal {
 		t.Errorf("expected default scope 'global' without repo context, got %s", scope)
 	}
@@ -360,7 +358,7 @@ func TestFindStore_BothScopes(t *testing.T) {
 
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
-	locations, err := eng.findStore("shared")
+	locations, err := eng.storeResolver.findStore("shared")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -377,7 +375,7 @@ func TestFindStore_OnlyGlobal(t *testing.T) {
 
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
-	locations, err := eng.findStore("global-only")
+	locations, err := eng.storeResolver.findStore("global-only")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -394,7 +392,7 @@ func TestFindStore_NotFound(t *testing.T) {
 	componentRepo := newScopedMockStoreRepo()
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
-	locations, err := eng.findStore("nonexistent")
+	locations, err := eng.storeResolver.findStore("nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -416,7 +414,7 @@ func TestActiveStoreRepo_WithScope(t *testing.T) {
 		ActiveStoreScope: stores.ScopeGlobal,
 	}
 
-	repo, err := eng.activeStoreRepo(ws)
+	repo, err := eng.storeResolver.activeStoreRepo(ws)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -436,7 +434,7 @@ func TestActiveStoreRepo_FallsBackToGlobalWhenComponentUnavailable(t *testing.T)
 		ActiveStoreScope: stores.ScopeComponent,
 	}
 
-	repo, err := eng.activeStoreRepo(ws)
+	repo, err := eng.storeResolver.activeStoreRepo(ws)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -458,7 +456,7 @@ func TestActiveStoreRepo_LegacyNoScope(t *testing.T) {
 		ActiveStoreScope: "", // Legacy - no scope recorded
 	}
 
-	repo, err := eng.activeStoreRepo(ws)
+	repo, err := eng.storeResolver.activeStoreRepo(ws)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -477,7 +475,7 @@ func TestResolveStoreRepo_Ambiguous(t *testing.T) {
 
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
-	_, _, err := eng.resolveStoreRepo("shared", "")
+	_, _, err := eng.storeResolver.resolveStoreRepo("shared", "")
 	if err == nil {
 		t.Fatal("expected error for ambiguous store")
 	}
@@ -492,7 +490,7 @@ func TestResolveStoreRepo_WithExplicitScope(t *testing.T) {
 
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
-	repo, scope, err := eng.resolveStoreRepo("shared", stores.ScopeComponent)
+	repo, scope, err := eng.storeResolver.resolveStoreRepo("shared", stores.ScopeComponent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -535,6 +533,30 @@ func TestMultiStoreRepo_RoutesByID(t *testing.T) {
 	}
 	if meta.Scope != stores.ScopeComponent {
 		t.Errorf("expected component scope for store-b, got %s", meta.Scope)
+	}
+}
+
+func TestStoreResolverMultiRepoForStoresPrefersComponent(t *testing.T) {
+	globalRepo := newScopedMockStoreRepo()
+	globalRepo.storeIDs["shared"] = true
+	globalRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeGlobal, time.Now())
+
+	componentRepo := newScopedMockStoreRepo()
+	componentRepo.storeIDs["shared"] = true
+	componentRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeComponent, time.Now())
+
+	resolver := newEngineStoreResolver(globalRepo, globalRepo, componentRepo)
+	multiRepo, err := resolver.multiRepoForStores([]string{"shared"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	meta, err := multiRepo.LoadMeta("shared")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.Scope != stores.ScopeComponent {
+		t.Errorf("expected component repo to be preferred, got %s", meta.Scope)
 	}
 }
 

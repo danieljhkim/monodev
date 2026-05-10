@@ -81,7 +81,7 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 	activeStore := workspaceState.ActiveStore
 
 	// Resolve the store repo for the active store
-	repo, err := e.activeStoreRepo(workspaceState)
+	repo, err := e.storeResolver.activeStoreRepo(workspaceState)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +182,7 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) (*UntrackResu
 	activeStore := workspaceState.ActiveStore
 
 	// Resolve the store repo for the active store
-	repo, err := e.activeStoreRepo(workspaceState)
+	repo, err := e.storeResolver.activeStoreRepo(workspaceState)
 	if err != nil {
 		return nil, err
 	}

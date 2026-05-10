@@ -264,8 +264,7 @@ func TestTrack_FallsBackToGlobalWhenComponentScopeUnavailable(t *testing.T) {
 	setupWorkspaceWithScopedStore(stateStore, workspaceID, "store1", stores.ScopeComponent)
 
 	eng := newTrackEngine(gitRepo, storeRepo, stateStore, fs)
-	eng.globalStoreRepo = storeRepo
-	eng.componentStoreRepo = nil
+	eng.storeResolver = newEngineStoreResolver(storeRepo, storeRepo, nil)
 
 	result, err := eng.Track(context.Background(), &TrackRequest{
 		CWD:   "/repo",

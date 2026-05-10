@@ -90,6 +90,21 @@ type ScopedStoreDetails struct {
 	TrackedPaths []stores.TrackedPath
 }
 
+// touchStoreMetaIn updates the UpdatedAt timestamp of a store's metadata using a specific repo.
+func (e *Engine) touchStoreMetaIn(repo stores.StoreRepo, storeID string) error {
+	meta, err := repo.LoadMeta(storeID)
+	if err != nil {
+		return fmt.Errorf("failed to load store metadata: %w", err)
+	}
+
+	meta.UpdatedAt = e.clock.Now()
+	if err := repo.SaveMeta(storeID, meta); err != nil {
+		return fmt.Errorf("failed to save store metadata: %w", err)
+	}
+
+	return nil
+}
+
 // UseStore selects a store as the active store for the current repository.
 // If there's existing workspace state for a different store, it will be cleared
 // to avoid inconsistent state where applied=true but for the wrong store.
@@ -102,7 +117,7 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 
 	// Verify store exists and resolve scope
-	_, resolvedScope, err := e.resolveStoreRepo(req.StoreID, req.Scope)
+	_, resolvedScope, err := e.storeResolver.resolveStoreRepo(req.StoreID, req.Scope)
 	if err != nil {
 		return err
 	}
@@ -150,11 +165,11 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	// Determine effective scope
 	scope := req.Scope
 	if scope == "" {
-		scope = e.defaultScope()
+		scope = e.storeResolver.defaultScope()
 	}
 
 	// Route to the correct StoreRepo by scope
-	repo, err := e.storeRepoForScope(scope)
+	repo, err := e.storeResolver.repoForScope(scope)
 	if err != nil {
 		return fmt.Errorf("failed to resolve scope %q: %w", scope, err)
 	}
@@ -205,53 +220,13 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 // ListStores returns all available stores from both scopes.
 // Global stores are listed first, then component stores.
 func (e *Engine) ListStores(ctx context.Context) ([]stores.ScopedStore, error) {
-	var storeList []stores.ScopedStore
-
-	// List global stores first
-	if e.globalStoreRepo != nil {
-		ids, err := e.globalStoreRepo.List()
-		if err != nil {
-			return nil, fmt.Errorf("failed to list global stores: %w", err)
-		}
-		for _, id := range ids {
-			meta, err := e.globalStoreRepo.LoadMeta(id)
-			if err != nil {
-				continue
-			}
-			storeList = append(storeList, stores.ScopedStore{
-				ID:    id,
-				Meta:  meta,
-				Scope: stores.ScopeGlobal,
-			})
-		}
-	}
-
-	// List component stores
-	if e.componentStoreRepo != nil {
-		ids, err := e.componentStoreRepo.List()
-		if err != nil {
-			return nil, fmt.Errorf("failed to list component stores: %w", err)
-		}
-		for _, id := range ids {
-			meta, err := e.componentStoreRepo.LoadMeta(id)
-			if err != nil {
-				continue
-			}
-			storeList = append(storeList, stores.ScopedStore{
-				ID:    id,
-				Meta:  meta,
-				Scope: stores.ScopeComponent,
-			})
-		}
-	}
-
-	return storeList, nil
+	return e.storeResolver.listStores()
 }
 
 // DescribeStore returns detailed information about a store.
 // If the store exists in both scopes, returns details for both.
 func (e *Engine) DescribeStore(ctx context.Context, storeID string) ([]ScopedStoreDetails, error) {
-	locations, err := e.findStore(storeID)
+	locations, err := e.storeResolver.findStore(storeID)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +281,7 @@ func (e *Engine) GetActiveStoreID(ctx context.Context, cwd string) (storeID, sco
 // UpdateStore updates metadata fields on an existing store.
 func (e *Engine) UpdateStore(ctx context.Context, req *UpdateStoreRequest) error {
 	// Resolve the store repo
-	repo, _, err := e.resolveStoreRepo(req.StoreID, req.Scope)
+	repo, _, err := e.storeResolver.resolveStoreRepo(req.StoreID, req.Scope)
 	if err != nil {
 		return err
 	}

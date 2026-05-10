@@ -39,12 +39,12 @@ func (e *Engine) Diff(ctx context.Context, req *DiffRequest) (*DiffResult, error
 	// Resolve store repo (use active store scope or search both)
 	var repo stores.StoreRepo
 	if storeID == workspaceState.ActiveStore && workspaceState.ActiveStoreScope != "" {
-		repo, _, err = e.resolveActiveStoreRepo(workspaceState)
+		repo, _, err = e.storeResolver.resolveActiveStoreRepo(workspaceState)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		repo, _, err = e.resolveStoreRepo(storeID, "")
+		repo, _, err = e.storeResolver.resolveStoreRepo(storeID, "")
 		if err != nil {
 			return nil, err
 		}

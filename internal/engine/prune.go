@@ -50,7 +50,7 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 	}
 
 	// Resolve the store repo for the active store
-	repo, err := e.activeStoreRepo(workspaceState)
+	repo, err := e.storeResolver.activeStoreRepo(workspaceState)
 	if err != nil {
 		return nil, err
 	}
