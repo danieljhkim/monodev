@@ -60,7 +60,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	// Otherwise fall back to the workspace's active store.
 	var applyRepo stores.StoreRepo
 	if req.StoreID != "" {
-		locations, findErr := e.findStore(storeToApply)
+		locations, findErr := e.storeResolver.findStore(storeToApply)
 		if findErr != nil {
 			return nil, fmt.Errorf("failed to resolve store: %w", findErr)
 		}
@@ -80,7 +80,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		applyRepo = chosen.Repo
 		workspaceState.ActiveStoreScope = chosen.Scope
 	} else {
-		applyRepo, err = e.activeStoreRepo(workspaceState)
+		applyRepo, err = e.storeResolver.activeStoreRepo(workspaceState)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve store repo: %w", err)
 		}

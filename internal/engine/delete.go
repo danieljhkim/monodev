@@ -21,7 +21,7 @@ import (
 // 7. Return result
 func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*DeleteStoreResult, error) {
 	// Step 1: Resolve store scope
-	repo, _, err := e.resolveStoreRepo(req.StoreID, req.Scope)
+	repo, _, err := e.storeResolver.resolveStoreRepo(req.StoreID, req.Scope)
 	if err != nil {
 		return nil, err
 	}

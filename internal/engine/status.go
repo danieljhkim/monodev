@@ -67,7 +67,7 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 
 	// Load tracked paths from active store
 	if result.ActiveStore != "" {
-		repo, repoErr := e.activeStoreRepo(workspaceState)
+		repo, repoErr := e.storeResolver.activeStoreRepo(workspaceState)
 		if repoErr == nil {
 			track, err := repo.LoadTrack(result.ActiveStore)
 			if err == nil {

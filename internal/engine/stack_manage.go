@@ -47,7 +47,7 @@ func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
 	}
 
 	// Verify store exists in either scope
-	locations, err := e.findStore(req.StoreID)
+	locations, err := e.storeResolver.findStore(req.StoreID)
 	if err != nil {
 		return fmt.Errorf("failed to check if store exists: %w", err)
 	}

@@ -29,20 +29,14 @@ import (
 // Engine orchestrates all monodev operations.
 // It is the main API surface called by the CLI.
 type Engine struct {
-	gitRepo     gitx.GitRepo
-	storeRepo   stores.StoreRepo
-	stateStore  state.StateStore
-	fs          fsops.FS
-	hasher      hash.Hasher
-	clock       clock.Clock
-	configPaths config.Paths
-
-	// Dual-scope fields
-	globalStoreRepo     stores.StoreRepo
-	componentStoreRepo  stores.StoreRepo
-	globalStateStore    state.StateStore
-	componentStateStore state.StateStore
-	scopedPaths         *config.ScopedPaths
+	gitRepo       gitx.GitRepo
+	storeResolver *engineStoreResolver
+	stateStore    state.StateStore
+	fs            fsops.FS
+	hasher        hash.Hasher
+	clock         clock.Clock
+	configPaths   config.Paths
+	scopedPaths   *config.ScopedPaths
 }
 
 // New creates a new Engine with the given dependencies.
@@ -56,15 +50,13 @@ func New(
 	paths config.Paths,
 ) *Engine {
 	return &Engine{
-		gitRepo:          gitRepo,
-		storeRepo:        storeRepo,
-		stateStore:       stateStore,
-		fs:               fs,
-		hasher:           hasher,
-		clock:            clk,
-		configPaths:      paths,
-		globalStoreRepo:  storeRepo,
-		globalStateStore: stateStore,
+		gitRepo:       gitRepo,
+		storeResolver: newEngineStoreResolver(storeRepo, storeRepo, nil),
+		stateStore:    stateStore,
+		fs:            fs,
+		hasher:        hasher,
+		clock:         clk,
+		configPaths:   paths,
 	}
 }
 
@@ -77,182 +69,17 @@ func NewScoped(
 	hasher hash.Hasher,
 	clk clock.Clock,
 ) *Engine {
-	globalStoreRepo := stores.NewFileStoreRepo(fs, scopedPaths.Global.Stores)
 	globalStateStore := state.NewFileStateStore(fs, scopedPaths.Global.Workspaces)
 
-	e := &Engine{
-		gitRepo:          gitRepo,
-		fs:               fs,
-		hasher:           hasher,
-		clock:            clk,
-		configPaths:      *scopedPaths.Global,
-		globalStoreRepo:  globalStoreRepo,
-		globalStateStore: globalStateStore,
-		scopedPaths:      scopedPaths,
-		// Legacy fields default to global
-		storeRepo:  globalStoreRepo,
-		stateStore: globalStateStore,
-	}
-
-	if scopedPaths.Component != nil {
-		componentStoreRepo := stores.NewFileStoreRepo(fs, scopedPaths.Component.Stores)
-		componentStateStore := state.NewFileStateStore(fs, scopedPaths.Component.Workspaces)
-		e.componentStoreRepo = componentStoreRepo
-		e.componentStateStore = componentStateStore
-	}
-
-	return e
-}
-
-// storeRepoForScope returns the StoreRepo for the given scope.
-func (e *Engine) storeRepoForScope(scope string) (stores.StoreRepo, error) {
-	switch scope {
-	case stores.ScopeGlobal:
-		if e.globalStoreRepo != nil {
-			return e.globalStoreRepo, nil
-		}
-		return e.storeRepo, nil
-	case stores.ScopeComponent:
-		if e.componentStoreRepo != nil {
-			return e.componentStoreRepo, nil
-		}
-		return nil, fmt.Errorf("no component scope available (not in a repo with .monodev)")
-	default:
-		return nil, fmt.Errorf("unknown scope: %s", scope)
-	}
-}
-
-// findStore searches both scopes for a store with the given ID.
-// Returns the locations where the store was found.
-func (e *Engine) findStore(storeID string) ([]stores.StoreLocation, error) {
-	var locations []stores.StoreLocation
-
-	// Check global scope
-	if e.globalStoreRepo != nil {
-		exists, err := e.globalStoreRepo.Exists(storeID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check global store: %w", err)
-		}
-		if exists {
-			locations = append(locations, stores.StoreLocation{
-				Scope: stores.ScopeGlobal,
-				Repo:  e.globalStoreRepo,
-			})
-		}
-	}
-
-	// Check component scope
-	if e.componentStoreRepo != nil {
-		exists, err := e.componentStoreRepo.Exists(storeID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check component store: %w", err)
-		}
-		if exists {
-			locations = append(locations, stores.StoreLocation{
-				Scope: stores.ScopeComponent,
-				Repo:  e.componentStoreRepo,
-			})
-		}
-	}
-
-	return locations, nil
-}
-
-// defaultScope returns "component" if repo context exists, else "global".
-func (e *Engine) defaultScope() string {
-	if e.componentStoreRepo != nil {
-		return stores.ScopeComponent
-	}
-	return stores.ScopeGlobal
-}
-
-// resolveActiveStoreRepo returns the repo and effective scope for the workspace's active store.
-// If a saved component scope exists but the repo has no component .monodev, it falls back to global.
-func (e *Engine) resolveActiveStoreRepo(ws *state.WorkspaceState) (stores.StoreRepo, string, error) {
-	if ws.ActiveStore == "" {
-		return nil, "", ErrNoActiveStore
-	}
-
-	// If scope is explicitly set, prefer it, but tolerate stale component scope metadata.
-	if ws.ActiveStoreScope != "" {
-		if ws.ActiveStoreScope == stores.ScopeComponent && e.componentStoreRepo == nil {
-			if e.globalStoreRepo != nil {
-				return e.globalStoreRepo, stores.ScopeGlobal, nil
-			}
-			return e.storeRepo, stores.ScopeGlobal, nil
-		}
-
-		repo, err := e.storeRepoForScope(ws.ActiveStoreScope)
-		if err != nil {
-			return nil, "", err
-		}
-		return repo, ws.ActiveStoreScope, nil
-	}
-
-	// Legacy: search both scopes
-	locations, err := e.findStore(ws.ActiveStore)
-	if err != nil {
-		return nil, "", err
-	}
-	if len(locations) == 0 {
-		// Fallback to legacy storeRepo
-		return e.storeRepo, stores.ScopeGlobal, nil
-	}
-	// Prefer component scope for legacy states
-	for _, loc := range locations {
-		if loc.Scope == stores.ScopeComponent {
-			return loc.Repo, loc.Scope, nil
-		}
-	}
-	return locations[0].Repo, locations[0].Scope, nil
-}
-
-// activeStoreRepo resolves the StoreRepo for the workspace's active store.
-// It uses ActiveStoreScope if set, otherwise searches both scopes.
-func (e *Engine) activeStoreRepo(ws *state.WorkspaceState) (stores.StoreRepo, error) {
-	repo, _, err := e.resolveActiveStoreRepo(ws)
-	return repo, err
-}
-
-// touchStoreMetaIn updates the UpdatedAt timestamp of a store's metadata using a specific repo.
-func (e *Engine) touchStoreMetaIn(repo stores.StoreRepo, storeID string) error {
-	meta, err := repo.LoadMeta(storeID)
-	if err != nil {
-		return fmt.Errorf("failed to load store metadata: %w", err)
-	}
-
-	meta.UpdatedAt = e.clock.Now()
-	if err := repo.SaveMeta(storeID, meta); err != nil {
-		return fmt.Errorf("failed to save store metadata: %w", err)
-	}
-
-	return nil
-}
-
-// resolveStoreRepo resolves the StoreRepo for a given storeID and optional scope hint.
-// If scope is provided, uses that scope directly. Otherwise searches both scopes.
-// If found in exactly one scope, uses that. If found in both, returns error.
-func (e *Engine) resolveStoreRepo(storeID, scope string) (stores.StoreRepo, string, error) {
-	if scope != "" {
-		repo, err := e.storeRepoForScope(scope)
-		if err != nil {
-			return nil, "", err
-		}
-		return repo, scope, nil
-	}
-
-	locations, err := e.findStore(storeID)
-	if err != nil {
-		return nil, "", err
-	}
-
-	switch len(locations) {
-	case 0:
-		return nil, "", fmt.Errorf("%w: store '%s' not found", ErrNotFound, storeID)
-	case 1:
-		return locations[0].Repo, locations[0].Scope, nil
-	default:
-		return nil, "", fmt.Errorf("store '%s' exists in both global and component scopes; specify --scope to disambiguate", storeID)
+	return &Engine{
+		gitRepo:       gitRepo,
+		storeResolver: newScopedEngineStoreResolver(fs, scopedPaths),
+		stateStore:    globalStateStore,
+		fs:            fs,
+		hasher:        hasher,
+		clock:         clk,
+		configPaths:   *scopedPaths.Global,
+		scopedPaths:   scopedPaths,
 	}
 }
 
