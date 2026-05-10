@@ -37,3 +37,6 @@ jobs:
 
       - name: Test
         run: make test
+
+      - name: Integration Test
+        run: make test-integration

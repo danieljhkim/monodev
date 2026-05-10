@@ -17,10 +17,11 @@ import (
 // Use 'stack unapply' to remove stack-applied paths.
 //
 // Algorithm:
-// 1. Discover repo and load workspace state (must exist)
-// 2. Collect paths owned by the active store
-// 3. Remove paths in deepest-first order
-// 4. Update workspace state
+//  1. Discover repo and load workspace state (must exist)
+//  2. Collect paths owned by the active store
+//  3. Remove paths in deepest-first order
+//  4. Delete workspace state when no managed paths remain; otherwise retain
+//     any stack-owned paths in state.
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
 	// Step 1: Discover repository
 	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
@@ -111,13 +112,21 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		removed = append(removed, relPath)
 	}
 
-	// Step 6: Update workspace state
-	// do not delete workspace state if no paths remain
-	if len(workspaceState.Paths) > 0 {
-		// Still have paths from other stores - update state
-		workspaceState.Applied = false
-		workspaceState.PruneAppliedStores()
+	// Step 6: Update workspace state. Unapply removes only active-store paths:
+	// if that empties the managed path set, the workspace state is no longer
+	// useful and should be removed. Stack-owned paths keep the state alive.
+	if len(workspaceState.Paths) == 0 {
+		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
+			return nil, fmt.Errorf("failed to delete workspace state: %w", err)
+		}
+		return &UnapplyResult{
+			Removed:     removed,
+			WorkspaceID: workspaceID,
+		}, nil
 	}
+
+	workspaceState.Applied = true
+	workspaceState.PruneAppliedStores()
 
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return nil, fmt.Errorf("failed to save workspace state: %w", err)
