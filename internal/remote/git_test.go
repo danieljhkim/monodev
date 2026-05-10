@@ -54,7 +54,7 @@ func TestRealGitPersistenceRunGitHonorsContextCancellation(t *testing.T) {
 	}
 
 	fakeGit := filepath.Join(binDir, "git")
-	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nsleep 5\n"), 0755); err != nil {
+	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nsleep 1\n"), 0755); err != nil {
 		t.Fatalf("failed to write fake git: %v", err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -67,7 +67,7 @@ func TestRealGitPersistenceRunGitHonorsContextCancellation(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("runGit error = %v, want context deadline exceeded", err)
 	}
-	if elapsed := time.Since(start); elapsed > time.Second {
+	if elapsed := time.Since(start); elapsed > 750*time.Millisecond {
 		t.Fatalf("runGit returned after %s, want prompt cancellation", elapsed)
 	}
 }

@@ -93,6 +93,7 @@ func (g *RealGitPersistence) runGit(ctx context.Context, repoRoot string, args .
 	}
 
 	cmd := exec.CommandContext(ctx, "git", args...)
+	configureGitCommandForContext(cmd)
 	cmd.Dir = repoRoot
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("GIT_DIR=%s", g.gitDir(repoRoot)),
@@ -270,6 +271,7 @@ func (g *RealGitPersistence) GetRemoteURL(ctx context.Context, repoRoot, remoteN
 
 	// Run git command in the main repository (not the persistence repo)
 	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", remoteName)
+	configureGitCommandForContext(cmd)
 	cmd.Dir = repoRoot
 
 	var stdout, stderr bytes.Buffer
