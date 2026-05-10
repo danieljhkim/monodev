@@ -95,15 +95,43 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
+// sameFilesystemPath reports whether two path strings refer to the same
+// location. It prefers os.SameFile when both paths exist, and falls back to
+// normalized absolute paths for callers comparing paths that may not exist yet.
+func sameFilesystemPath(a, b string) bool {
+	aAbs, aErr := filepath.Abs(a)
+	if aErr != nil {
+		aAbs = filepath.Clean(a)
+	}
+	bAbs, bErr := filepath.Abs(b)
+	if bErr != nil {
+		bAbs = filepath.Clean(b)
+	}
+
+	aInfo, aStatErr := os.Stat(aAbs)
+	bInfo, bStatErr := os.Stat(bAbs)
+	if aStatErr == nil && bStatErr == nil {
+		return os.SameFile(aInfo, bInfo)
+	}
+
+	if resolved, err := filepath.EvalSymlinks(aAbs); err == nil {
+		aAbs = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(bAbs); err == nil {
+		bAbs = resolved
+	}
+	return filepath.Clean(aAbs) == filepath.Clean(bAbs)
+}
+
 // ScopedPaths provides dual-scope path resolution for global and component stores.
 type ScopedPaths struct {
 	// Global points to ~/.monodev (or MONODEV_ROOT)
 	Global *Paths
 
-	// Component points to repo_root/.monodev (nil if no repo context)
+	// Component points to repo_root/.monodev (nil if no separate component scope)
 	Component *Paths
 
-	// HasRepoContext is true when a git repo with .monodev was found
+	// HasRepoContext is true when a git repo with .monodev was found.
 	HasRepoContext bool
 
 	// RepoRoot is the git repository root (empty if no repo context)
@@ -133,8 +161,10 @@ func NewScopedPaths() (*ScopedPaths, error) {
 			sp.RepoRoot = repoRoot
 			repoLocalPath := filepath.Join(repoRoot, ".monodev")
 			if pathExists(repoLocalPath) {
-				sp.Component = buildPaths(repoLocalPath)
 				sp.HasRepoContext = true
+				if !sameFilesystemPath(sp.Global.Root, repoLocalPath) {
+					sp.Component = buildPaths(repoLocalPath)
+				}
 			}
 		}
 	}
