@@ -57,15 +57,6 @@ func (e *Engine) workspaceStateStores() []state.StateStore {
 	return stores
 }
 
-// workspacesDirs returns workspace directory paths for scanning (both scopes).
-func (e *Engine) workspacesDirs() []string {
-	var dirs []string
-	for _, source := range e.workspaceStateSources() {
-		dirs = append(dirs, source.dir)
-	}
-	return dirs
-}
-
 func (e *Engine) forEachWorkspaceState(fn func(workspaceID string, ws *state.WorkspaceState) error) error {
 	seen := make(map[string]bool)
 

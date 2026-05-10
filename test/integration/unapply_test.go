@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -291,21 +292,27 @@ func TestUnapply_DriftDetection(t *testing.T) {
 		Force: false,
 	}
 
-	// Note: Current implementation doesn't return warnings for drift,
-	// but validation should still pass (we remove the file anyway)
 	result, err := eng.Unapply(ctx, req)
+	if result != nil {
+		t.Fatalf("Unapply() result = %#v, want nil", result)
+	}
+	if !errors.Is(err, engine.ErrValidation) {
+		t.Fatalf("Unapply() error = %v, want ErrValidation", err)
+	}
+	if !errors.Is(err, engine.ErrDrift) {
+		t.Fatalf("Unapply() error = %v, want ErrDrift", err)
+	}
+
+	if _, ok := fs.files[configPath]; !ok {
+		t.Fatal("drifted workspace file was removed")
+	}
+
+	updated, err := stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
-		t.Fatalf("Unapply() error = %v", err)
+		t.Fatalf("failed to load workspace state: %v", err)
 	}
-
-	// Verify file was still removed (drift doesn't prevent removal)
-	if len(result.Removed) != 1 {
-		t.Errorf("expected 1 path removed, got %d", len(result.Removed))
-	}
-
-	// Verify file was removed from filesystem
-	if _, ok := fs.files[configPath]; ok {
-		t.Error("expected file to be removed despite drift")
+	if _, ok := updated.Paths["config.json"]; !ok {
+		t.Fatal("workspaceState.Paths removed drifted config.json; want entry intact")
 	}
 }
 
