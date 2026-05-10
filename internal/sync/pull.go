@@ -18,41 +18,14 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		return nil, err
 	}
 
-	// Load remote config
-	config, err := s.configStore.Load(req.RepoRoot)
+	config, remoteName, err := s.loadPullConfig(req.RepoRoot, req.Remote)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load remote config: %w", err)
-	}
-
-	// Use request remote if specified, otherwise use config
-	remoteName := config.Remote
-	if req.Remote != "" {
-		remoteName = req.Remote
+		return nil, err
 	}
 
 	// Ensure persistence repo exists
-	if err := checkContext(ctx); err != nil {
+	if err := s.ensurePersistenceRemote(ctx, req.RepoRoot, remoteName, config.Branch); err != nil {
 		return nil, err
-	}
-	if err := s.git.EnsureRepo(ctx, req.RepoRoot, config.Branch); err != nil {
-		return nil, fmt.Errorf("failed to ensure persistence repo: %w", err)
-	}
-
-	// Get the remote URL from the main repository
-	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-	remoteURL, err := s.git.GetRemoteURL(ctx, req.RepoRoot, remoteName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get remote URL: %w", err)
-	}
-
-	// Configure the remote in the persistence repository
-	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := s.git.SetRemote(ctx, req.RepoRoot, remoteName, remoteURL); err != nil {
-		return nil, fmt.Errorf("failed to set remote: %w", err)
 	}
 
 	// Fetch the persistence branch
