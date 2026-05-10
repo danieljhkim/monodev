@@ -3,9 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
-	"os"
 	"slices"
-	"strings"
 
 	"github.com/danieljhkim/monodev/internal/state"
 )
@@ -74,39 +72,16 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 
 // findWorkspacesUsingStore enumerates all workspaces (both scopes) and finds which ones use the given store.
 func (e *Engine) findWorkspacesUsingStore(storeID string) ([]WorkspaceUsage, error) {
-	seen := make(map[string]bool)
 	var usages []WorkspaceUsage
 
-	for _, dir := range e.workspacesDirs() {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("failed to read workspaces directory: %w", err)
+	if err := e.forEachWorkspaceState(func(workspaceID string, ws *state.WorkspaceState) error {
+		usage := e.checkWorkspaceUsage(ws, storeID, workspaceID)
+		if usage != nil {
+			usages = append(usages, *usage)
 		}
-
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-
-			workspaceID := strings.TrimSuffix(entry.Name(), ".json")
-			if seen[workspaceID] {
-				continue
-			}
-			seen[workspaceID] = true
-
-			ws, err := e.stateStore.LoadWorkspace(workspaceID)
-			if err != nil {
-				continue
-			}
-
-			usage := e.checkWorkspaceUsage(ws, storeID, workspaceID)
-			if usage != nil {
-				usages = append(usages, *usage)
-			}
-		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return usages, nil
@@ -143,7 +118,7 @@ func (e *Engine) checkWorkspaceUsage(ws *state.WorkspaceState, storeID, workspac
 func (e *Engine) cleanWorkspaceReferences(storeID string, affectedWorkspaces []WorkspaceUsage) error {
 	for _, usage := range affectedWorkspaces {
 		// Load workspace state
-		ws, err := e.stateStore.LoadWorkspace(usage.WorkspaceID)
+		ws, workspaceStore, err := e.loadWorkspaceFromScopes(usage.WorkspaceID)
 		if err != nil {
 			return fmt.Errorf("failed to load workspace %s: %w", usage.WorkspaceID, err)
 		}
@@ -178,7 +153,7 @@ func (e *Engine) cleanWorkspaceReferences(storeID string, affectedWorkspaces []W
 		}
 
 		// Save updated state
-		if err := e.stateStore.SaveWorkspace(usage.WorkspaceID, ws); err != nil {
+		if err := workspaceStore.SaveWorkspace(usage.WorkspaceID, ws); err != nil {
 			return fmt.Errorf("failed to save workspace %s: %w", usage.WorkspaceID, err)
 		}
 	}

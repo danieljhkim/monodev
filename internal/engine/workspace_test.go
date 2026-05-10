@@ -11,6 +11,47 @@ import (
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
+func newScopedWorkspaceStateTestEngine(t *testing.T) (*Engine, *state.FileStateStore, *state.FileStateStore) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	fs := fsops.NewRealFS()
+	globalPaths := &config.Paths{
+		Root:       filepath.Join(tmpDir, "global"),
+		Stores:     filepath.Join(tmpDir, "global", "stores"),
+		Workspaces: filepath.Join(tmpDir, "global", "workspaces"),
+		Config:     filepath.Join(tmpDir, "global", "config.yaml"),
+	}
+	repoRoot := filepath.Join(tmpDir, "repo")
+	componentPaths := &config.Paths{
+		Root:       filepath.Join(repoRoot, ".monodev"),
+		Stores:     filepath.Join(repoRoot, ".monodev", "stores"),
+		Workspaces: filepath.Join(repoRoot, ".monodev", "workspaces"),
+		Config:     filepath.Join(repoRoot, ".monodev", "config.yaml"),
+	}
+	scopedPaths := &config.ScopedPaths{
+		Global:         globalPaths,
+		Component:      componentPaths,
+		HasRepoContext: true,
+		RepoRoot:       repoRoot,
+	}
+	if err := scopedPaths.EnsureDirectories(); err != nil {
+		t.Fatalf("EnsureDirectories() error = %v", err)
+	}
+
+	globalStateStore := state.NewFileStateStore(fs, globalPaths.Workspaces)
+	componentStateStore := state.NewFileStateStore(fs, componentPaths.Workspaces)
+	eng := &Engine{
+		stateStore:          globalStateStore,
+		componentStateStore: componentStateStore,
+		fs:                  fs,
+		configPaths:         *globalPaths,
+		scopedPaths:         scopedPaths,
+	}
+
+	return eng, globalStateStore, componentStateStore
+}
+
 func TestListWorkspaces_Empty(t *testing.T) {
 	// Setup
 	tmpDir := t.TempDir()
@@ -186,6 +227,74 @@ func TestListWorkspaces_SkipsCorruptedFiles(t *testing.T) {
 	}
 }
 
+func TestListWorkspaces_ScopedComponentOnlyWorkspace(t *testing.T) {
+	eng, _, componentStateStore := newScopedWorkspaceStateTestEngine(t)
+
+	ws := state.NewWorkspaceState("repo1", "components/api", "copy")
+	ws.AbsolutePath = "/repo/components/api"
+	ws.Applied = true
+	ws.ActiveStore = "component-store"
+	ws.Stack = []string{"base-store", "component-store"}
+	ws.Paths["Makefile"] = state.PathOwnership{Store: "component-store", Type: "copy"}
+	ws.Paths["scripts/dev.sh"] = state.PathOwnership{Store: "component-store", Type: "copy"}
+
+	if err := componentStateStore.SaveWorkspace("component-ws", ws); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := eng.ListWorkspaces(context.Background())
+	if err != nil {
+		t.Fatalf("ListWorkspaces() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("ListWorkspaces() returned nil result")
+	}
+	if len(result.Workspaces) != 1 {
+		t.Fatalf("ListWorkspaces() returned %d workspaces, want 1", len(result.Workspaces))
+	}
+
+	got := result.Workspaces[0]
+	if got.WorkspaceID != "component-ws" {
+		t.Errorf("WorkspaceID = %q, want %q", got.WorkspaceID, "component-ws")
+	}
+	if got.WorkspacePath != "components/api" {
+		t.Errorf("WorkspacePath = %q, want %q", got.WorkspacePath, "components/api")
+	}
+	if got.ActiveStore != "component-store" {
+		t.Errorf("ActiveStore = %q, want %q", got.ActiveStore, "component-store")
+	}
+	if got.StackCount != 2 {
+		t.Errorf("StackCount = %d, want 2", got.StackCount)
+	}
+	if got.AppliedPathCount != 2 {
+		t.Errorf("AppliedPathCount = %d, want 2", got.AppliedPathCount)
+	}
+}
+
+func TestListWorkspaces_ScopedDuplicateWorkspaceIDPrefersGlobal(t *testing.T) {
+	eng, globalStateStore, componentStateStore := newScopedWorkspaceStateTestEngine(t)
+
+	globalWs := state.NewWorkspaceState("repo1", "global/path", "copy")
+	componentWs := state.NewWorkspaceState("repo1", "component/path", "copy")
+	if err := globalStateStore.SaveWorkspace("shared-ws", globalWs); err != nil {
+		t.Fatal(err)
+	}
+	if err := componentStateStore.SaveWorkspace("shared-ws", componentWs); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := eng.ListWorkspaces(context.Background())
+	if err != nil {
+		t.Fatalf("ListWorkspaces() error = %v", err)
+	}
+	if len(result.Workspaces) != 1 {
+		t.Fatalf("ListWorkspaces() returned %d workspaces, want 1", len(result.Workspaces))
+	}
+	if result.Workspaces[0].WorkspacePath != "global/path" {
+		t.Errorf("WorkspacePath = %q, want global scope to win duplicate IDs", result.Workspaces[0].WorkspacePath)
+	}
+}
+
 func TestDescribeWorkspace_Found(t *testing.T) {
 	// Setup
 	tmpDir := t.TempDir()
@@ -263,6 +372,33 @@ func TestDescribeWorkspace_NotFound(t *testing.T) {
 	}
 	if result != nil {
 		t.Errorf("DescribeWorkspace() result = %v, want nil", result)
+	}
+}
+
+func TestDescribeWorkspace_ScopedComponentOnlyWorkspace(t *testing.T) {
+	eng, _, componentStateStore := newScopedWorkspaceStateTestEngine(t)
+
+	ws := state.NewWorkspaceState("repo1", "components/api", "copy")
+	ws.ActiveStore = "component-store"
+	ws.Stack = []string{"base-store"}
+	ws.Paths["Makefile"] = state.PathOwnership{Store: "component-store", Type: "copy"}
+
+	if err := componentStateStore.SaveWorkspace("component-ws", ws); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := eng.DescribeWorkspace(context.Background(), "component-ws")
+	if err != nil {
+		t.Fatalf("DescribeWorkspace() error = %v", err)
+	}
+	if result.WorkspaceID != "component-ws" {
+		t.Errorf("WorkspaceID = %q, want %q", result.WorkspaceID, "component-ws")
+	}
+	if result.WorkspacePath != "components/api" {
+		t.Errorf("WorkspacePath = %q, want %q", result.WorkspacePath, "components/api")
+	}
+	if result.ActiveStore != "component-store" {
+		t.Errorf("ActiveStore = %q, want %q", result.ActiveStore, "component-store")
 	}
 }
 
@@ -499,5 +635,34 @@ func TestDeleteWorkspace_NotFound(t *testing.T) {
 	}
 	if result != nil {
 		t.Errorf("DeleteWorkspace() result = %v, want nil", result)
+	}
+}
+
+func TestDeleteWorkspace_ScopedComponentOnlyWorkspace(t *testing.T) {
+	eng, globalStateStore, componentStateStore := newScopedWorkspaceStateTestEngine(t)
+
+	ws := state.NewWorkspaceState("repo1", "components/api", "copy")
+	if err := componentStateStore.SaveWorkspace("component-ws", ws); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := eng.DeleteWorkspace(context.Background(), &DeleteWorkspaceRequest{
+		WorkspaceID: "component-ws",
+	})
+	if err != nil {
+		t.Fatalf("DeleteWorkspace() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("DeleteWorkspace() returned nil result")
+	}
+	if !result.Deleted {
+		t.Error("Deleted should be true")
+	}
+
+	if _, err := componentStateStore.LoadWorkspace("component-ws"); !os.IsNotExist(err) {
+		t.Error("component workspace file should be deleted")
+	}
+	if _, err := globalStateStore.LoadWorkspace("component-ws"); !os.IsNotExist(err) {
+		t.Error("global workspace state should not contain component workspace")
 	}
 }

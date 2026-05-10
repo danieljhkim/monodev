@@ -132,6 +132,17 @@ func newTestEngine(storeRepo stores.StoreRepo, stateStore state.StateStore, work
 	)
 }
 
+func newScopedDeleteStoreTestEngine(t *testing.T) (*Engine, *state.FileStateStore, *state.FileStateStore, *stores.FileStoreRepo, *stores.FileStoreRepo) {
+	t.Helper()
+
+	eng, globalStateStore, componentStateStore := newScopedWorkspaceStateTestEngine(t)
+	globalStoreRepo := stores.NewFileStoreRepo(eng.fs, eng.scopedPaths.Global.Stores)
+	componentStoreRepo := stores.NewFileStoreRepo(eng.fs, eng.scopedPaths.Component.Stores)
+	eng.storeResolver = newEngineStoreResolver(globalStoreRepo, globalStoreRepo, componentStoreRepo)
+
+	return eng, globalStateStore, componentStateStore, globalStoreRepo, componentStoreRepo
+}
+
 func TestDeleteStore_NotFound(t *testing.T) {
 	storeRepo := newMockStoreRepo()
 	stateStore := newMockStateStore()
@@ -559,6 +570,120 @@ func TestDeleteStore_DryRun(t *testing.T) {
 	originalWs, _ := stateStore.LoadWorkspace("ws1")
 	if originalWs.ActiveStore != "test-store" {
 		t.Error("workspace state should not have been modified in dry-run mode")
+	}
+}
+
+func TestDeleteStore_ScopedComponentWorkspaceReferences(t *testing.T) {
+	eng, globalStateStore, componentStateStore, _, componentStoreRepo := newScopedDeleteStoreTestEngine(t)
+
+	if err := componentStoreRepo.Create("component-store", stores.NewStoreMeta("component-store", stores.ScopeComponent, time.Now())); err != nil {
+		t.Fatalf("failed to create component store: %v", err)
+	}
+
+	ws := state.NewWorkspaceState("repo1", "components/api", "copy")
+	ws.Applied = true
+	ws.ActiveStore = "component-store"
+	ws.ActiveStoreScope = stores.ScopeComponent
+	ws.Stack = []string{"base-store", "component-store"}
+	ws.AppliedStores = []state.AppliedStore{
+		{Store: "component-store", Type: "copy"},
+		{Store: "other-store", Type: "copy"},
+	}
+	ws.Paths["Makefile"] = state.PathOwnership{Store: "component-store", Type: "copy"}
+	ws.Paths["scripts/dev.sh"] = state.PathOwnership{Store: "component-store", Type: "copy"}
+	ws.Paths["README.md"] = state.PathOwnership{Store: "other-store", Type: "copy"}
+	if err := componentStateStore.SaveWorkspace("component-ws", ws); err != nil {
+		t.Fatal(err)
+	}
+
+	dryRunResult, err := eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+		StoreID: "component-store",
+		Scope:   stores.ScopeComponent,
+		DryRun:  true,
+	})
+	if err != nil {
+		t.Fatalf("DeleteStore() dry-run error = %v", err)
+	}
+	if dryRunResult == nil {
+		t.Fatal("DeleteStore() dry-run returned nil result")
+	}
+	if dryRunResult.Deleted {
+		t.Error("dry-run should not delete the store")
+	}
+	if len(dryRunResult.AffectedWorkspaces) != 1 {
+		t.Fatalf("affected workspaces = %d, want 1", len(dryRunResult.AffectedWorkspaces))
+	}
+	usage := dryRunResult.AffectedWorkspaces[0]
+	if usage.WorkspaceID != "component-ws" {
+		t.Errorf("WorkspaceID = %q, want %q", usage.WorkspaceID, "component-ws")
+	}
+	if !usage.IsActive {
+		t.Error("expected component workspace usage to report active store")
+	}
+	if !usage.InStack {
+		t.Error("expected component workspace usage to report stack reference")
+	}
+	if usage.AppliedPathCount != 2 {
+		t.Errorf("AppliedPathCount = %d, want 2", usage.AppliedPathCount)
+	}
+
+	unchangedWs, err := componentStateStore.LoadWorkspace("component-ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchangedWs.ActiveStore != "component-store" || len(unchangedWs.Paths) != 3 {
+		t.Error("component workspace state should not be modified by dry-run")
+	}
+
+	forceResult, err := eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+		StoreID: "component-store",
+		Scope:   stores.ScopeComponent,
+		Force:   true,
+	})
+	if err != nil {
+		t.Fatalf("DeleteStore() force error = %v", err)
+	}
+	if forceResult == nil {
+		t.Fatal("DeleteStore() force returned nil result")
+	}
+	if !forceResult.Deleted {
+		t.Error("forced delete should delete the store")
+	}
+
+	cleanedWs, err := componentStateStore.LoadWorkspace("component-ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleanedWs.ActiveStore != "" {
+		t.Errorf("ActiveStore = %q, want empty", cleanedWs.ActiveStore)
+	}
+	if len(cleanedWs.Stack) != 1 || cleanedWs.Stack[0] != "base-store" {
+		t.Errorf("Stack = %v, want [base-store]", cleanedWs.Stack)
+	}
+	if cleanedWs.GetAppliedStore("component-store") != nil {
+		t.Error("component-store should be removed from AppliedStores")
+	}
+	if _, ok := cleanedWs.Paths["Makefile"]; ok {
+		t.Error("Makefile should be removed from component workspace paths")
+	}
+	if _, ok := cleanedWs.Paths["scripts/dev.sh"]; ok {
+		t.Error("scripts/dev.sh should be removed from component workspace paths")
+	}
+	if _, ok := cleanedWs.Paths["README.md"]; !ok {
+		t.Error("README.md from other-store should remain")
+	}
+	if !cleanedWs.Applied {
+		t.Error("Applied should remain true while other paths remain")
+	}
+	if _, err := globalStateStore.LoadWorkspace("component-ws"); !os.IsNotExist(err) {
+		t.Error("global workspace state should not be created or updated")
+	}
+	exists, err := componentStoreRepo.Exists("component-store")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Error("component store should be deleted")
 	}
 }
 

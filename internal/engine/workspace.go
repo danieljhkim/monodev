@@ -6,51 +6,30 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"github.com/danieljhkim/monodev/internal/state"
 )
 
 // ListWorkspaces enumerates all workspace state files and returns summary information.
 // Scans both global and component workspace directories, deduplicating by workspace ID.
 func (e *Engine) ListWorkspaces(ctx context.Context) (*ListWorkspacesResult, error) {
-	seen := make(map[string]bool)
 	var workspaces []WorkspaceInfo
 
-	for _, dir := range e.workspacesDirs() {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("failed to read workspaces directory: %w", err)
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-
-			workspaceID := strings.TrimSuffix(entry.Name(), ".json")
-			if seen[workspaceID] {
-				continue
-			}
-			seen[workspaceID] = true
-
-			ws, err := e.stateStore.LoadWorkspace(workspaceID)
-			if err != nil {
-				continue
-			}
-
-			workspaces = append(workspaces, WorkspaceInfo{
-				WorkspaceID:      workspaceID,
-				WorkspacePath:    ws.WorkspacePath,
-				AbsolutePath:     ws.AbsolutePath,
-				Repo:             ws.Repo,
-				Applied:          ws.Applied,
-				Mode:             ws.Mode,
-				ActiveStore:      ws.ActiveStore,
-				StackCount:       len(ws.Stack),
-				AppliedPathCount: len(ws.Paths),
-			})
-		}
+	if err := e.forEachWorkspaceState(func(workspaceID string, ws *state.WorkspaceState) error {
+		workspaces = append(workspaces, WorkspaceInfo{
+			WorkspaceID:      workspaceID,
+			WorkspacePath:    ws.WorkspacePath,
+			AbsolutePath:     ws.AbsolutePath,
+			Repo:             ws.Repo,
+			Applied:          ws.Applied,
+			Mode:             ws.Mode,
+			ActiveStore:      ws.ActiveStore,
+			StackCount:       len(ws.Stack),
+			AppliedPathCount: len(ws.Paths),
+		})
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	slices.SortFunc(workspaces, func(a, b WorkspaceInfo) int {
@@ -67,7 +46,7 @@ func (e *Engine) ListWorkspaces(ctx context.Context) (*ListWorkspacesResult, err
 // 3. Error if workspace not found
 func (e *Engine) DescribeWorkspace(ctx context.Context, workspaceID string) (*DescribeWorkspaceResult, error) {
 	// Step 1: Load workspace state
-	ws, err := e.stateStore.LoadWorkspace(workspaceID)
+	ws, _, err := e.loadWorkspaceFromScopes(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: workspace '%s' not found", ErrNotFound, workspaceID)
@@ -98,7 +77,7 @@ func (e *Engine) DescribeWorkspace(ctx context.Context, workspaceID string) (*De
 // 5. Return result with deletion status
 func (e *Engine) DeleteWorkspace(ctx context.Context, req *DeleteWorkspaceRequest) (*DeleteWorkspaceResult, error) {
 	// Step 1: Load workspace state
-	ws, err := e.stateStore.LoadWorkspace(req.WorkspaceID)
+	ws, workspaceStore, err := e.loadWorkspaceFromScopes(req.WorkspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: workspace '%s' not found", ErrNotFound, req.WorkspaceID)
@@ -125,7 +104,7 @@ func (e *Engine) DeleteWorkspace(ctx context.Context, req *DeleteWorkspaceReques
 	}
 
 	// Step 4: Delete workspace
-	if err := e.stateStore.DeleteWorkspace(req.WorkspaceID); err != nil {
+	if err := workspaceStore.DeleteWorkspace(req.WorkspaceID); err != nil {
 		return nil, fmt.Errorf("failed to delete workspace: %w", err)
 	}
 
