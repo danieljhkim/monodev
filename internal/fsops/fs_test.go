@@ -3,6 +3,7 @@ package fsops
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -353,4 +354,71 @@ func TestRealFS_Remove(t *testing.T) {
 			t.Error("File should have been removed")
 		}
 	})
+}
+
+func TestRealFS_Copy(t *testing.T) {
+	fs := &RealFS{}
+
+	t.Run("copies regular directory contents", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		src := filepath.Join(tmpDir, "src")
+		dst := filepath.Join(tmpDir, "dst")
+
+		if err := os.MkdirAll(filepath.Join(src, "nested"), 0755); err != nil {
+			t.Fatalf("failed to create source directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "nested", "file.txt"), []byte("regular content"), 0644); err != nil {
+			t.Fatalf("failed to write source file: %v", err)
+		}
+
+		if err := fs.Copy(src, dst); err != nil {
+			t.Fatalf("Copy failed: %v", err)
+		}
+
+		content, err := os.ReadFile(filepath.Join(dst, "nested", "file.txt"))
+		if err != nil {
+			t.Fatalf("failed to read copied file: %v", err)
+		}
+		if string(content) != "regular content" {
+			t.Fatalf("copied content = %q, want %q", content, "regular content")
+		}
+	})
+
+	t.Run("rejects symlink without copying target contents", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		src := filepath.Join(tmpDir, "src")
+		dst := filepath.Join(tmpDir, "dst")
+		outside := filepath.Join(tmpDir, "outside-secret.txt")
+
+		if err := os.MkdirAll(filepath.Join(src, "nested"), 0755); err != nil {
+			t.Fatalf("failed to create source directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "nested", "safe.txt"), []byte("safe content"), 0644); err != nil {
+			t.Fatalf("failed to write safe source file: %v", err)
+		}
+		if err := os.WriteFile(outside, []byte("do-not-copy"), 0644); err != nil {
+			t.Fatalf("failed to write outside file: %v", err)
+		}
+		requireSymlink(t, outside, filepath.Join(src, "nested", "leak.txt"))
+
+		err := fs.Copy(src, dst)
+		if err == nil {
+			t.Fatal("Copy succeeded, want symlink rejection")
+		}
+		if !strings.Contains(err.Error(), "nested/leak.txt") || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("Copy error %q should name the offending symlink path", err)
+		}
+
+		if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+			t.Fatalf("destination should not be created after symlink rejection, stat error: %v", err)
+		}
+	})
+}
+
+func requireSymlink(t *testing.T, oldname, newname string) {
+	t.Helper()
+
+	if err := os.Symlink(oldname, newname); err != nil {
+		t.Skipf("symlink creation is not supported in this environment: %v", err)
+	}
 }

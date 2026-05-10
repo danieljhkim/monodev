@@ -81,6 +81,10 @@ func (s *SnapshotManager) Materialize(storeID string, storeRepo stores.StoreRepo
 	// Destination path
 	dstPath := persistStoreDir(persistRoot, storeID)
 
+	if err := fsops.ValidateCopySource(storePath); err != nil {
+		return fmt.Errorf("store %q contains an unsafe copy source: %w", storeID, err)
+	}
+
 	// Remove existing destination if present
 	if exists, err := s.fs.Exists(dstPath); err != nil {
 		return fmt.Errorf("failed to check destination: %w", err)
@@ -124,6 +128,10 @@ func (s *SnapshotManager) Dematerialize(storeID string, persistRoot string, stor
 
 	// Destination path - overlay root's parent directory
 	dstPath := filepath.Dir(storeRepo.OverlayRoot(storeID))
+
+	if err := fsops.ValidateCopySource(srcPath); err != nil {
+		return fmt.Errorf("persisted store %q contains an unsafe copy source: %w", storeID, err)
+	}
 
 	// Remove existing destination if present
 	if exists, err := s.fs.Exists(dstPath); err != nil {
