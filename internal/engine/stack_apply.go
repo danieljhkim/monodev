@@ -177,12 +177,19 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		return stackPaths[i] > stackPaths[j] // Alphabetically for same depth
 	})
 
+	workspaceRoot := filepath.Join(root, workspacePath)
+
 	removed := []string{}
 	for _, relPath := range stackPaths {
 		ownership := workspaceState.Paths[relPath]
 
-		// Convert repo-relative path to absolute for filesystem operations
-		absPath := filepath.Join(root, relPath)
+		// Validate relative path for safety
+		if err := e.fs.ValidateRelPath(relPath); err != nil {
+			return nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
+		}
+
+		// Convert workspace-relative path to absolute for filesystem operations
+		absPath := filepath.Join(workspaceRoot, relPath)
 
 		// Validate the path before removing (unless force)
 		if !req.Force {
