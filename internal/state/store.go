@@ -38,7 +38,10 @@ func NewFileStateStore(fs fsops.FS, workspacesDir string) *FileStateStore {
 
 // LoadWorkspace loads the workspace state for the given workspace ID.
 func (s *FileStateStore) LoadWorkspace(id string) (*WorkspaceState, error) {
-	path := filepath.Join(s.workspacesDir, id+".json")
+	path, err := s.workspacePath(id)
+	if err != nil {
+		return nil, err
+	}
 
 	data, err := s.fs.ReadFile(path)
 	if err != nil {
@@ -58,7 +61,10 @@ func (s *FileStateStore) LoadWorkspace(id string) (*WorkspaceState, error) {
 
 // SaveWorkspace saves the workspace state atomically.
 func (s *FileStateStore) SaveWorkspace(id string, state *WorkspaceState) error {
-	path := filepath.Join(s.workspacesDir, id+".json")
+	path, err := s.workspacePath(id)
+	if err != nil {
+		return err
+	}
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -74,11 +80,22 @@ func (s *FileStateStore) SaveWorkspace(id string, state *WorkspaceState) error {
 
 // DeleteWorkspace deletes the workspace state file.
 func (s *FileStateStore) DeleteWorkspace(id string) error {
-	path := filepath.Join(s.workspacesDir, id+".json")
+	path, err := s.workspacePath(id)
+	if err != nil {
+		return err
+	}
 
 	if err := s.fs.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete workspace state: %w", err)
 	}
 
 	return nil
+}
+
+func (s *FileStateStore) workspacePath(id string) (string, error) {
+	if err := s.fs.ValidateIdentifier(id); err != nil {
+		return "", fmt.Errorf("invalid workspace ID: %w", err)
+	}
+
+	return filepath.Join(s.workspacesDir, id+".json"), nil
 }
