@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -577,6 +578,40 @@ func TestSyncer_PushStore(t *testing.T) {
 	})
 }
 
+func TestSyncer_PushStoreCancellationStopsBeforeLaterGitSteps(t *testing.T) {
+	repoRoot, _, syncer, git, storeRepo, _, cleanup := setupSyncerTest(t)
+	defer cleanup()
+
+	storeID := "test-store"
+	if err := storeRepo.Create(storeID, stores.NewStoreMeta("Test Store", "global", time.Now())); err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	git.EnsureRepoHook = func(context.Context, remote.EnsureRepoCall) error {
+		cancel()
+		return nil
+	}
+
+	_, err := syncer.PushStore(ctx, &PushRequest{
+		RepoRoot: repoRoot,
+		StoreIDs: []string{storeID},
+		Remote:   "origin",
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("PushStore error = %v, want context.Canceled", err)
+	}
+	if len(git.EnsureRepoCalls) != 1 {
+		t.Fatalf("EnsureRepo calls = %d, want 1", len(git.EnsureRepoCalls))
+	}
+	if len(git.GetRemoteCalls) != 0 {
+		t.Fatalf("GetRemoteURL calls = %d, want 0 after cancellation", len(git.GetRemoteCalls))
+	}
+	if len(git.SetRemoteCalls) != 0 || len(git.CommitCalls) != 0 || len(git.PushCalls) != 0 {
+		t.Fatalf("later git calls ran after cancellation: set=%d commit=%d push=%d", len(git.SetRemoteCalls), len(git.CommitCalls), len(git.PushCalls))
+	}
+}
+
 func TestSyncer_PullStore(t *testing.T) {
 	t.Run("pulls stores successfully", func(t *testing.T) {
 		repoRoot, _, syncer, git, storeRepo, configStore, cleanup := setupSyncerTest(t)
@@ -759,6 +794,37 @@ func TestSyncer_PullStore(t *testing.T) {
 			t.Error("Expected error when config not found, got nil")
 		}
 	})
+}
+
+func TestSyncer_PullStoreCancellationStopsBeforeCheckout(t *testing.T) {
+	repoRoot, _, syncer, git, _, configStore, cleanup := setupSyncerTest(t)
+	defer cleanup()
+
+	config := remote.DefaultRemoteConfig()
+	config.Remote = "origin"
+	if err := configStore.Save(repoRoot, config); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	git.FetchHook = func(context.Context, remote.FetchCall) error {
+		cancel()
+		return nil
+	}
+
+	_, err := syncer.PullStore(ctx, &PullRequest{
+		RepoRoot: repoRoot,
+		StoreIDs: []string{"remote-store"},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("PullStore error = %v, want context.Canceled", err)
+	}
+	if len(git.FetchCalls) != 1 {
+		t.Fatalf("Fetch calls = %d, want 1", len(git.FetchCalls))
+	}
+	if len(git.CheckoutCalls) != 0 {
+		t.Fatalf("Checkout calls = %d, want 0 after cancellation", len(git.CheckoutCalls))
+	}
 }
 
 func TestBuildPushCommitMessage(t *testing.T) {

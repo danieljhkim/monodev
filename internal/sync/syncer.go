@@ -56,3 +56,10 @@ func (s *Syncer) PushStore(ctx context.Context, req *PushRequest) (*PushResult, 
 func (s *Syncer) PullStore(ctx context.Context, req *PullRequest) (*PullResult, error) {
 	return s.pullStore(ctx, req)
 }
+
+func checkContext(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}

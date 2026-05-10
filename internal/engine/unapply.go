@@ -23,10 +23,17 @@ import (
 //  4. Delete workspace state when no managed paths remain; otherwise retain
 //     any stack-owned paths in state.
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+
 	// Step 1: Discover repository
 	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
 	}
 
 	// Step 2: Compute workspace ID
@@ -41,6 +48,9 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
 	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
 
 	// Step 4: Collect only paths owned by the active store (not stack stores)
 	activeStore := workspaceState.ActiveStore
@@ -85,6 +95,9 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 
 	removed := []string{}
 	for _, relPath := range activeStorePaths {
+		if err := checkContext(ctx); err != nil {
+			return nil, err
+		}
 		ownership := workspaceState.Paths[relPath]
 
 		// Validate relative path for safety
@@ -115,6 +128,9 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	// Step 6: Update workspace state. Unapply removes only active-store paths:
 	// if that empties the managed path set, the workspace state is no longer
 	// useful and should be removed. Stack-owned paths keep the state alive.
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
 	if len(workspaceState.Paths) == 0 {
 		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
 			return nil, fmt.Errorf("failed to delete workspace state: %w", err)
@@ -128,6 +144,9 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	workspaceState.Applied = true
 	workspaceState.PruneAppliedStores()
 
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return nil, fmt.Errorf("failed to save workspace state: %w", err)
 	}

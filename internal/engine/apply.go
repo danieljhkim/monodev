@@ -18,14 +18,24 @@ import (
 // 6. Persist workspace state
 // 7. Return result
 func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, error) {
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+
 	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
 	}
 
 	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, req.Mode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
 	}
 
 	var storeToApply string
@@ -76,6 +86,9 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		}
 	}
 
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
 	plan, err := planner.BuildApplyPlan(
 		workspaceState,
 		orderedStores,
@@ -87,6 +100,9 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build apply plan: %w", err)
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
 	}
 
 	if plan.HasConflicts() && !req.Force {
@@ -112,6 +128,9 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	// Apply overlays
 	appliedOps := []planner.Operation{}
 	for _, op := range plan.Operations {
+		if err := checkContext(ctx); err != nil {
+			return nil, err
+		}
 		if err := e.executeOperation(op); err != nil {
 			return nil, fmt.Errorf("failed to execute operation: %w", err)
 		}
@@ -142,6 +161,10 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		}
 	}
 
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+
 	// Update workspace state metadata (only active store, preserve stack)
 	workspaceState.Applied = true
 	workspaceState.Mode = req.Mode
@@ -150,6 +173,9 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	workspaceState.AddAppliedStore(storeToApply, req.Mode)
 
 	// Step 8: Persist workspace state atomically
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return nil, fmt.Errorf("failed to save workspace state: %w", err)
 	}

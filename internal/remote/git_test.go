@@ -1,6 +1,13 @@
 package remote
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestValidateGitRef(t *testing.T) {
 	tests := []struct {
@@ -37,5 +44,30 @@ func TestValidateGitRef(t *testing.T) {
 				t.Errorf("validateGitRef(%q, %q) error = %v, wantErr %v", tt.ref, tt.refType, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestRealGitPersistenceRunGitHonorsContextCancellation(t *testing.T) {
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("failed to create fake git dir: %v", err)
+	}
+
+	fakeGit := filepath.Join(binDir, "git")
+	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nsleep 5\n"), 0755); err != nil {
+		t.Fatalf("failed to write fake git: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := NewRealGitPersistence().runGit(ctx, t.TempDir(), "status")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runGit error = %v, want context deadline exceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("runGit returned after %s, want prompt cancellation", elapsed)
 	}
 }

@@ -82,7 +82,7 @@ func runRemoteUse(cmd *cobra.Command, args []string) error {
 
 	// Verify the remote exists in the main repository
 	gitPersist := remote.NewRealGitPersistence()
-	remoteURL, err := gitPersist.GetRemoteURL(repoRoot, remoteName)
+	remoteURL, err := gitPersist.GetRemoteURL(cmd.Context(), repoRoot, remoteName)
 	if err != nil {
 		return fmt.Errorf("remote %q not found in repository: %w", remoteName, err)
 	}
@@ -212,7 +212,7 @@ func runRemoteShow(cmd *cobra.Command, args []string) error {
 
 	// Get remote URL
 	gitPersist := remote.NewRealGitPersistence()
-	remoteURL, err := gitPersist.GetRemoteURL(repoRoot, config.Remote)
+	remoteURL, err := gitPersist.GetRemoteURL(cmd.Context(), repoRoot, config.Remote)
 	if err != nil {
 		PrintWarning(fmt.Sprintf("Remote %q not found in repository", config.Remote))
 		remoteURL = "(not found)"
