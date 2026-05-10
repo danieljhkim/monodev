@@ -10,6 +10,26 @@ import (
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
+func assertRemovedOrder(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("expected %d paths removed, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("removed[%d] = %q, want %q; full order: %v", i, got[i], want[i], got)
+		}
+	}
+}
+
+func assertWorkspaceDeleted(t *testing.T, stateStore *testStateStore, workspaceID string) {
+	t.Helper()
+	_, err := stateStore.LoadWorkspace(workspaceID)
+	if !os.IsNotExist(err) {
+		t.Fatalf("expected workspace state to be deleted, got err=%v", err)
+	}
+}
+
 func TestUnapply_DeepestFirstRemoval(t *testing.T) {
 	eng, fs, stateStore, _, _ := setupTestEngine(t)
 	ctx := context.Background()
@@ -62,28 +82,8 @@ func TestUnapply_DeepestFirstRemoval(t *testing.T) {
 		t.Fatalf("Unapply() error = %v", err)
 	}
 
-	// Verify all paths were removed
-	if len(result.Removed) != 5 {
-		t.Errorf("expected 5 paths removed, got %d", len(result.Removed))
-	}
-
-	// Verify deepest paths are removed first
-	// Deepest paths should be: scripts/utils/helper.sh (depth 2), scripts/init.sh (depth 1), scripts/utils (depth 1)
-	// Then: scripts (depth 0), Makefile (depth 0)
-
-	// Check that deepest paths appear first in removed list
-	removedMap := make(map[string]bool)
-	for _, path := range result.Removed {
-		removedMap[path] = true
-	}
-
-	// All paths should be in removed list
-	expectedPaths := []string{"scripts/utils/helper.sh", "scripts/init.sh", "scripts/utils", "scripts", "Makefile"}
-	for _, path := range expectedPaths {
-		if !removedMap[path] {
-			t.Errorf("expected %q to be in removed list", path)
-		}
-	}
+	expectedPaths := []string{"scripts/utils/helper.sh", "scripts/utils", "scripts/init.sh", "scripts", "Makefile"}
+	assertRemovedOrder(t, result.Removed, expectedPaths)
 
 	// Verify files were removed from filesystem
 	for _, path := range expectedPaths {
@@ -94,10 +94,7 @@ func TestUnapply_DeepestFirstRemoval(t *testing.T) {
 	}
 
 	// Verify workspace state was deleted (all paths removed)
-	_, err = stateStore.LoadWorkspace(workspaceID)
-	if err == nil {
-		t.Error("expected workspace state to be deleted after unapply")
-	}
+	assertWorkspaceDeleted(t, stateStore, workspaceID)
 }
 
 func TestUnapply_StateCleanup(t *testing.T) {
@@ -135,19 +132,15 @@ func TestUnapply_StateCleanup(t *testing.T) {
 		t.Fatalf("Unapply() error = %v", err)
 	}
 
-	// Verify all paths were removed
-	if len(result.Removed) != 2 {
-		t.Errorf("expected 2 paths removed, got %d", len(result.Removed))
+	assertRemovedOrder(t, result.Removed, []string{"file2.txt", "file1.txt"})
+	for _, path := range result.Removed {
+		if _, ok := fs.symlinks[filepath.Join(cwd, path)]; ok {
+			t.Errorf("expected %q to be removed from filesystem", path)
+		}
 	}
 
 	// Verify workspace state was deleted (all paths removed)
-	_, err = stateStore.LoadWorkspace(workspaceID)
-	if err == nil {
-		t.Error("expected workspace state to be deleted after removing all paths")
-	}
-	if err != nil && !os.IsNotExist(err) {
-		t.Errorf("expected ErrNotExist, got %v", err)
-	}
+	assertWorkspaceDeleted(t, stateStore, workspaceID)
 }
 
 func TestUnapply_PartialRemoval(t *testing.T) {
@@ -187,9 +180,12 @@ func TestUnapply_PartialRemoval(t *testing.T) {
 		t.Fatalf("Unapply() error = %v", err)
 	}
 
-	// Verify only active store path was removed (file1.txt from store1)
-	if len(result.Removed) != 1 {
-		t.Errorf("expected 1 path removed (active store only), got %d", len(result.Removed))
+	assertRemovedOrder(t, result.Removed, []string{"file1.txt"})
+	if _, ok := fs.symlinks[filepath.Join(cwd, "file1.txt")]; ok {
+		t.Error("expected active store path file1.txt to be removed from filesystem")
+	}
+	if _, ok := fs.symlinks[filepath.Join(cwd, "file2.txt")]; !ok {
+		t.Error("expected stack-owned path file2.txt to remain in filesystem")
 	}
 
 	// Verify workspace state still exists (stack path remains)
@@ -204,6 +200,9 @@ func TestUnapply_PartialRemoval(t *testing.T) {
 	}
 	if _, exists := updatedState.Paths["file2.txt"]; !exists {
 		t.Error("expected file2.txt (stack path) to remain in workspace state")
+	}
+	if !updatedState.Applied {
+		t.Error("expected workspace state to remain applied while stack-owned paths exist")
 	}
 }
 
@@ -342,16 +341,10 @@ func TestUnapply_ForceMode(t *testing.T) {
 		t.Fatalf("Unapply() error = %v", err)
 	}
 
-	// Verify file was removed
-	if len(result.Removed) != 1 {
-		t.Errorf("expected 1 path removed, got %d", len(result.Removed))
-	}
+	assertRemovedOrder(t, result.Removed, []string{"file.txt"})
 
 	// Verify workspace state was deleted
-	_, err = stateStore.LoadWorkspace(workspaceID)
-	if err == nil {
-		t.Error("expected workspace state to be deleted")
-	}
+	assertWorkspaceDeleted(t, stateStore, workspaceID)
 }
 
 func TestUnapply_NoState(t *testing.T) {
