@@ -85,23 +85,25 @@ func (s *SnapshotManager) Materialize(storeID string, storeRepo stores.StoreRepo
 		return fmt.Errorf("store %q contains an unsafe copy source: %w", storeID, err)
 	}
 
-	// Remove existing destination if present
-	if exists, err := s.fs.Exists(dstPath); err != nil {
-		return fmt.Errorf("failed to check destination: %w", err)
-	} else if exists {
-		if err := s.fs.RemoveAll(dstPath); err != nil {
-			return fmt.Errorf("failed to remove existing destination: %w", err)
+	stagedPath, err := s.stageStoreReplacement(storePath, dstPath)
+	if err != nil {
+		return err
+	}
+	stagedReady := true
+	defer func() {
+		if stagedReady {
+			_ = s.fs.RemoveAll(stagedPath)
 		}
-	}
+	}()
 
-	// Copy the store directory
-	if err := s.fs.Copy(storePath, dstPath); err != nil {
-		return fmt.Errorf("failed to copy store: %w", err)
-	}
-
-	if err := s.writeVerificationManifest(storeID, dstPath, hash.NewSHA256Hasher()); err != nil {
+	if err := s.writeVerificationManifest(storeID, stagedPath, hash.NewSHA256Hasher()); err != nil {
 		return fmt.Errorf("failed to write verification manifest for store %q: %w", storeID, err)
 	}
+
+	if err := s.replaceWithStagedStore(dstPath, stagedPath); err != nil {
+		return fmt.Errorf("failed to replace persisted store %q: %w", storeID, err)
+	}
+	stagedReady = false
 
 	return nil
 }
@@ -133,21 +135,95 @@ func (s *SnapshotManager) Dematerialize(storeID string, persistRoot string, stor
 		return fmt.Errorf("persisted store %q contains an unsafe copy source: %w", storeID, err)
 	}
 
-	// Remove existing destination if present
-	if exists, err := s.fs.Exists(dstPath); err != nil {
-		return fmt.Errorf("failed to check destination: %w", err)
-	} else if exists {
-		if err := s.fs.RemoveAll(dstPath); err != nil {
-			return fmt.Errorf("failed to remove existing destination: %w", err)
+	stagedPath, err := s.stageStoreReplacement(srcPath, dstPath)
+	if err != nil {
+		return err
+	}
+	stagedReady := true
+	defer func() {
+		if stagedReady {
+			_ = s.fs.RemoveAll(stagedPath)
 		}
+	}()
+
+	if err := s.replaceWithStagedStore(dstPath, stagedPath); err != nil {
+		return fmt.Errorf("failed to replace local store %q: %w", storeID, err)
+	}
+	stagedReady = false
+
+	return nil
+}
+
+func (s *SnapshotManager) stageStoreReplacement(srcPath, dstPath string) (string, error) {
+	dstParent := filepath.Dir(dstPath)
+	if err := s.fs.MkdirAll(dstParent, 0755); err != nil {
+		return "", fmt.Errorf("failed to create destination parent: %w", err)
 	}
 
-	// Copy the store directory
-	if err := s.fs.Copy(srcPath, dstPath); err != nil {
-		return fmt.Errorf("failed to copy store: %w", err)
+	stagedPath, err := os.MkdirTemp(dstParent, replacementTempPrefix(filepath.Base(dstPath), "replacement"))
+	if err != nil {
+		return "", fmt.Errorf("failed to create staged replacement directory: %w", err)
+	}
+
+	if err := s.fs.Copy(srcPath, stagedPath); err != nil {
+		_ = s.fs.RemoveAll(stagedPath)
+		return "", fmt.Errorf("failed to copy store into staged replacement: %w", err)
+	}
+
+	return stagedPath, nil
+}
+
+func (s *SnapshotManager) replaceWithStagedStore(dstPath, stagedPath string) error {
+	dstExists, err := s.fs.Exists(dstPath)
+	if err != nil {
+		return fmt.Errorf("failed to check destination: %w", err)
+	}
+	if !dstExists {
+		if err := os.Rename(stagedPath, dstPath); err != nil {
+			return fmt.Errorf("failed to move staged store into place: %w", err)
+		}
+		return nil
+	}
+
+	backupPath, err := reserveReplacementPath(filepath.Dir(dstPath), filepath.Base(dstPath), "backup")
+	if err != nil {
+		return err
+	}
+
+	// Directory replacement cannot be a single atomic rename on every platform.
+	// Keep the old store as a sibling backup until the complete staged store is
+	// in place, then remove the backup.
+	if err := os.Rename(dstPath, backupPath); err != nil {
+		return fmt.Errorf("failed to move existing store aside: %w", err)
+	}
+
+	if err := os.Rename(stagedPath, dstPath); err != nil {
+		if restoreErr := os.Rename(backupPath, dstPath); restoreErr != nil {
+			return fmt.Errorf("failed to move staged store into place: %w; additionally failed to restore existing store from %s: %v", err, backupPath, restoreErr)
+		}
+		return fmt.Errorf("failed to move staged store into place; existing store was restored: %w", err)
+	}
+
+	if err := s.fs.RemoveAll(backupPath); err != nil {
+		return fmt.Errorf("failed to remove previous store backup: %w", err)
 	}
 
 	return nil
+}
+
+func reserveReplacementPath(parent, storeID, purpose string) (string, error) {
+	path, err := os.MkdirTemp(parent, replacementTempPrefix(storeID, purpose))
+	if err != nil {
+		return "", fmt.Errorf("failed to reserve %s store path: %w", purpose, err)
+	}
+	if err := os.Remove(path); err != nil {
+		return "", fmt.Errorf("failed to reserve %s store path: %w", purpose, err)
+	}
+	return path, nil
+}
+
+func replacementTempPrefix(storeID, purpose string) string {
+	return fmt.Sprintf(".monodev-%s-%s-", storeID, purpose)
 }
 
 // Verify verifies the integrity of a store in the persist directory using the

@@ -156,10 +156,62 @@ func TestSnapshotManager_Materialize(t *testing.T) {
 
 		// Verify new file is in persist directory
 		persistStorePath := filepath.Join(persistRoot, ".monodev", "persist", "stores", storeID)
+		staleFilePath := filepath.Join(persistStorePath, "overlay", "stale.txt")
+		if err := os.WriteFile(staleFilePath, []byte("stale content"), 0644); err != nil {
+			t.Fatalf("failed to write stale persisted file: %v", err)
+		}
+
+		// Materialize again after adding stale destination-only content
+		if err := mgr.Materialize(storeID, repo, persistRoot); err != nil {
+			t.Fatalf("Third materialize failed: %v", err)
+		}
+
 		newFilePath := filepath.Join(persistStorePath, "overlay", "new.txt")
 		if _, err := os.Stat(newFilePath); os.IsNotExist(err) {
 			t.Error("New file was not materialized in second materialize")
 		}
+		if _, err := os.Stat(staleFilePath); !os.IsNotExist(err) {
+			t.Fatalf("stale destination-only file should have been removed, stat error: %v", err)
+		}
+		requireNoSnapshotTempDirs(t, filepath.Dir(persistStorePath))
+	})
+
+	t.Run("preserves existing persisted store when replacement copy fails", func(t *testing.T) {
+		storesDir, persistRoot, fs, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+		storeID := "test-store"
+		createTestStore(t, repo, storeID)
+
+		if err := mgr.Materialize(storeID, repo, persistRoot); err != nil {
+			t.Fatalf("Materialize failed: %v", err)
+		}
+
+		persistStorePath := filepath.Join(persistRoot, ".monodev", "persist", "stores", storeID)
+		persistedFile := filepath.Join(persistStorePath, "overlay", "test.txt")
+		if err := os.WriteFile(persistedFile, []byte("existing persisted content"), 0644); err != nil {
+			t.Fatalf("failed to write existing persisted content: %v", err)
+		}
+
+		localFile := filepath.Join(repo.OverlayRoot(storeID), "test.txt")
+		if err := os.WriteFile(localFile, []byte("replacement local content"), 0644); err != nil {
+			t.Fatalf("failed to write replacement local content: %v", err)
+		}
+
+		failingMgr := NewSnapshotManager(&copyFailingFS{
+			FS:  fs,
+			err: errors.New("injected copy failure"),
+		})
+		err := failingMgr.Materialize(storeID, repo, persistRoot)
+		if err == nil {
+			t.Fatal("Materialize succeeded, want injected copy failure")
+		}
+		if !strings.Contains(err.Error(), "injected copy failure") {
+			t.Fatalf("Materialize error = %v, want injected copy failure", err)
+		}
+
+		requireFileContent(t, persistedFile, "existing persisted content")
+		requireNoSnapshotTempDirs(t, filepath.Dir(persistStorePath))
 	})
 
 	t.Run("returns error for non-existent store", func(t *testing.T) {
@@ -296,6 +348,10 @@ func TestSnapshotManager_Dematerialize(t *testing.T) {
 		if err := os.WriteFile(modifiedFile, []byte("modified content"), 0644); err != nil {
 			t.Fatalf("failed to modify file: %v", err)
 		}
+		staleLocalFile := filepath.Join(overlayRoot, "local-only.txt")
+		if err := os.WriteFile(staleLocalFile, []byte("local-only content"), 0644); err != nil {
+			t.Fatalf("failed to write stale local file: %v", err)
+		}
 
 		// Dematerialize (should overwrite)
 		if err := mgr.Dematerialize(storeID, persistRoot, repo); err != nil {
@@ -310,6 +366,52 @@ func TestSnapshotManager_Dematerialize(t *testing.T) {
 		if string(content) != "test content" {
 			t.Error("Dematerialize should have overwritten modified content")
 		}
+		if _, err := os.Stat(staleLocalFile); !os.IsNotExist(err) {
+			t.Fatalf("stale local-only file should have been removed, stat error: %v", err)
+		}
+		requireNoSnapshotTempDirs(t, filepath.Dir(filepath.Dir(overlayRoot)))
+	})
+
+	t.Run("preserves existing local store when replacement copy fails", func(t *testing.T) {
+		storesDir, persistRoot, fs, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+		storeID := "test-store"
+		createTestStore(t, repo, storeID)
+
+		if err := mgr.Materialize(storeID, repo, persistRoot); err != nil {
+			t.Fatalf("Materialize failed: %v", err)
+		}
+
+		localFile := filepath.Join(repo.OverlayRoot(storeID), "test.txt")
+		if err := os.WriteFile(localFile, []byte("existing local content"), 0644); err != nil {
+			t.Fatalf("failed to write existing local content: %v", err)
+		}
+		localOnlyFile := filepath.Join(repo.OverlayRoot(storeID), "local-only.txt")
+		if err := os.WriteFile(localOnlyFile, []byte("existing local-only content"), 0644); err != nil {
+			t.Fatalf("failed to write existing local-only content: %v", err)
+		}
+
+		persistedFile := filepath.Join(persistRoot, ".monodev", "persist", "stores", storeID, "overlay", "test.txt")
+		if err := os.WriteFile(persistedFile, []byte("replacement persisted content"), 0644); err != nil {
+			t.Fatalf("failed to write replacement persisted content: %v", err)
+		}
+
+		failingMgr := NewSnapshotManager(&copyFailingFS{
+			FS:  fs,
+			err: errors.New("injected copy failure"),
+		})
+		err := failingMgr.Dematerialize(storeID, persistRoot, repo)
+		if err == nil {
+			t.Fatal("Dematerialize succeeded, want injected copy failure")
+		}
+		if !strings.Contains(err.Error(), "injected copy failure") {
+			t.Fatalf("Dematerialize error = %v, want injected copy failure", err)
+		}
+
+		requireFileContent(t, localFile, "existing local content")
+		requireFileContent(t, localOnlyFile, "existing local-only content")
+		requireNoSnapshotTempDirs(t, storesDir)
 	})
 
 	t.Run("returns error for non-existent persisted store", func(t *testing.T) {
@@ -696,5 +798,49 @@ func requireSymlink(t *testing.T, oldname, newname string) {
 
 	if err := os.Symlink(oldname, newname); err != nil {
 		t.Skipf("symlink creation is not supported in this environment: %v", err)
+	}
+}
+
+type copyFailingFS struct {
+	fsops.FS
+	err error
+}
+
+func (fs *copyFailingFS) Copy(src, dst string) error {
+	if strings.Contains(filepath.Base(dst), "-replacement-") {
+		if err := fs.FS.Copy(src, dst); err != nil {
+			return err
+		}
+		if fs.err != nil {
+			return fs.err
+		}
+		return errors.New("injected copy failure")
+	}
+	return fs.FS.Copy(src, dst)
+}
+
+func requireFileContent(t *testing.T, path, want string) {
+	t.Helper()
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	if string(content) != want {
+		t.Fatalf("%s content = %q, want %q", path, content, want)
+	}
+}
+
+func requireNoSnapshotTempDirs(t *testing.T, parent string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", parent, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".monodev-") {
+			t.Fatalf("temporary snapshot directory %q was left in %s", entry.Name(), parent)
+		}
 	}
 }
