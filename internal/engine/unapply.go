@@ -168,14 +168,14 @@ func (e *Engine) validateManagedPath(path string, ownership state.PathOwnership)
 		return nil
 	}
 
-	// For copies, check the checksum to detect drift
-	if ownership.Checksum != "" {
+	// For copies, check the checksum to detect drift.
+	if ownership.Type == "copy" && ownership.Checksum != "" {
 		currentHash, err := e.hasher.HashFile(path)
-		if err == nil && currentHash != ownership.Checksum {
-			// File has been modified - this is drift
-			// For unapply, we still remove it (user modifications are lost)
-			// A warning could be added here in the future
-			_ = currentHash // Acknowledge drift detection (no-op for now)
+		if err != nil {
+			return fmt.Errorf("%w: failed to verify copy checksum: %w", ErrValidation, err)
+		}
+		if currentHash != ownership.Checksum {
+			return fmt.Errorf("%w: %w: local modifications detected", ErrValidation, ErrDrift)
 		}
 	}
 
