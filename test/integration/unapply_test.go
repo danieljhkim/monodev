@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/danieljhkim/monodev/internal/engine"
@@ -260,60 +261,106 @@ func TestUnapply_DryRun(t *testing.T) {
 }
 
 func TestUnapply_DriftDetection(t *testing.T) {
-	eng, fs, stateStore, _, hasher := setupTestEngine(t)
-	ctx := context.Background()
+	const (
+		cwd              = "/repo/workspace"
+		relPath          = "config.json"
+		originalChecksum = "original-hash"
+		modifiedContent  = `{"modified": true}`
+	)
 
-	// Setup workspace state with a file in copy mode
-	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
-	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "copy")
-	workspaceState.Applied = true
-	workspaceState.ActiveStore = "store1" // Set active store
+	setupDriftedCopy := func(t *testing.T) (*engine.Engine, *testFS, *testStateStore, string, string) {
+		t.Helper()
 
-	originalChecksum := "original-hash"
-	workspaceState.Paths = map[string]state.PathOwnership{
-		"config.json": {
-			Store:    "store1",
-			Type:     "copy",
-			Checksum: originalChecksum,
-		},
-	}
-	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
+		eng, fs, stateStore, _, hasher := setupTestEngine(t)
+		workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
+		workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "copy")
+		workspaceState.Applied = true
+		workspaceState.ActiveStore = "store1"
+		workspaceState.Paths = map[string]state.PathOwnership{
+			relPath: {
+				Store:    "store1",
+				Type:     "copy",
+				Checksum: originalChecksum,
+			},
+		}
+		_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
 
-	cwd := "/repo/workspace"
-	configPath := filepath.Join(cwd, "config.json")
-	fs.files[configPath] = []byte(`{"modified": true}`) // Modified content
+		configPath := filepath.Join(cwd, relPath)
+		fs.files[configPath] = []byte(modifiedContent)
+		hasher.SetHash(configPath, "modified-hash")
 
-	// Set up hasher to return different checksum (simulating drift)
-	hasher.SetHash(configPath, "modified-hash") // Different from original
-
-	// Unapply with validation (no force)
-	req := &engine.UnapplyRequest{
-		CWD:   cwd,
-		Force: false,
-	}
-
-	result, err := eng.Unapply(ctx, req)
-	if result != nil {
-		t.Fatalf("Unapply() result = %#v, want nil", result)
-	}
-	if !errors.Is(err, engine.ErrValidation) {
-		t.Fatalf("Unapply() error = %v, want ErrValidation", err)
-	}
-	if !errors.Is(err, engine.ErrDrift) {
-		t.Fatalf("Unapply() error = %v, want ErrDrift", err)
+		return eng, fs, stateStore, workspaceID, configPath
 	}
 
-	if _, ok := fs.files[configPath]; !ok {
-		t.Fatal("drifted workspace file was removed")
-	}
+	t.Run("non-force protects drifted copy", func(t *testing.T) {
+		eng, fs, stateStore, workspaceID, configPath := setupDriftedCopy(t)
 
-	updated, err := stateStore.LoadWorkspace(workspaceID)
-	if err != nil {
-		t.Fatalf("failed to load workspace state: %v", err)
-	}
-	if _, ok := updated.Paths["config.json"]; !ok {
-		t.Fatal("workspaceState.Paths removed drifted config.json; want entry intact")
-	}
+		result, err := eng.Unapply(context.Background(), &engine.UnapplyRequest{
+			CWD:   cwd,
+			Force: false,
+		})
+
+		if result != nil {
+			t.Fatalf("Unapply() result = %#v, want nil", result)
+		}
+		if err == nil {
+			t.Fatal("Unapply() error = nil, want drift validation error")
+		}
+		if !errors.Is(err, engine.ErrValidation) {
+			t.Fatalf("Unapply() error = %v, want ErrValidation", err)
+		}
+		if !errors.Is(err, engine.ErrDrift) {
+			t.Fatalf("Unapply() error = %v, want ErrDrift", err)
+		}
+		errText := err.Error()
+		if !strings.Contains(errText, relPath) {
+			t.Fatalf("Unapply() error = %q, want workspace-relative path", errText)
+		}
+		if !strings.Contains(errText, "local modifications detected") {
+			t.Fatalf("Unapply() error = %q, want local modifications message", errText)
+		}
+
+		content, ok := fs.files[configPath]
+		if !ok {
+			t.Fatal("expected drifted file to remain on disk")
+		}
+		if string(content) != modifiedContent {
+			t.Fatalf("drifted file content = %q, want %q", string(content), modifiedContent)
+		}
+
+		updatedState, err := stateStore.LoadWorkspace(workspaceID)
+		if err != nil {
+			t.Fatalf("expected workspace state to remain: %v", err)
+		}
+		ownership, ok := updatedState.Paths[relPath]
+		if !ok {
+			t.Fatalf("expected workspace state to retain %s", relPath)
+		}
+		if ownership.Checksum != originalChecksum {
+			t.Fatalf("checksum = %q, want %q", ownership.Checksum, originalChecksum)
+		}
+		if !updatedState.Applied {
+			t.Fatal("expected workspace state to remain applied")
+		}
+	})
+
+	t.Run("force removes drifted copy", func(t *testing.T) {
+		eng, fs, stateStore, workspaceID, configPath := setupDriftedCopy(t)
+
+		result, err := eng.Unapply(context.Background(), &engine.UnapplyRequest{
+			CWD:   cwd,
+			Force: true,
+		})
+		if err != nil {
+			t.Fatalf("Unapply() error = %v", err)
+		}
+
+		assertRemovedOrder(t, result.Removed, []string{relPath})
+		if _, ok := fs.files[configPath]; ok {
+			t.Fatal("expected force unapply to remove drifted copy")
+		}
+		assertWorkspaceDeleted(t, stateStore, workspaceID)
+	})
 }
 
 func TestUnapply_ForceMode(t *testing.T) {
