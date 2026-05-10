@@ -389,6 +389,67 @@ func TestNewScopedPaths(t *testing.T) {
 		}
 	})
 
+	t.Run("does not duplicate component when MONODEV_ROOT is repo-local .monodev", func(t *testing.T) {
+		oldRoot := os.Getenv("MONODEV_ROOT")
+		defer func() {
+			if oldRoot != "" {
+				if err := os.Setenv("MONODEV_ROOT", oldRoot); err != nil {
+					t.Errorf("failed to restore MONODEV_ROOT: %v", err)
+				}
+			} else {
+				if err := os.Unsetenv("MONODEV_ROOT"); err != nil {
+					t.Errorf("failed to clear MONODEV_ROOT: %v", err)
+				}
+			}
+		}()
+
+		tmpDir, err := os.MkdirTemp("", "scoped-paths-test-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		defer func() {
+			if err := os.RemoveAll(tmpDir); err != nil {
+				t.Errorf("failed to remove temp dir: %v", err)
+			}
+		}()
+
+		if err := os.Mkdir(filepath.Join(tmpDir, ".git"), 0755); err != nil {
+			t.Fatalf("failed to create .git: %v", err)
+		}
+		monodevDir := filepath.Join(tmpDir, ".monodev")
+		if err := os.Mkdir(monodevDir, 0755); err != nil {
+			t.Fatalf("failed to create .monodev: %v", err)
+		}
+		if err := os.Setenv("MONODEV_ROOT", monodevDir); err != nil {
+			t.Fatalf("failed to set MONODEV_ROOT: %v", err)
+		}
+
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("failed to get cwd: %v", err)
+		}
+		defer func() {
+			if err := os.Chdir(oldWd); err != nil {
+				t.Errorf("failed to restore working directory: %v", err)
+			}
+		}()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatalf("failed to chdir: %v", err)
+		}
+
+		sp, err := NewScopedPaths()
+		if err != nil {
+			t.Fatalf("NewScopedPaths failed: %v", err)
+		}
+
+		if sp.Component != nil {
+			t.Fatalf("expected Component to be nil when global and component roots match, got %s", sp.Component.Root)
+		}
+		if !sp.HasRepoContext {
+			t.Error("expected HasRepoContext to stay true when repo-local .monodev exists")
+		}
+	})
+
 	t.Run("no component when repo has no .monodev", func(t *testing.T) {
 		oldRoot := os.Getenv("MONODEV_ROOT")
 		defer func() {
