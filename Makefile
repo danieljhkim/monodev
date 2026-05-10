@@ -8,7 +8,6 @@ BINARY_NAME := monodev
 BUILD_DIR := bin
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 
 # Installation variables (can be overridden)
 DESTDIR ?=
@@ -16,7 +15,7 @@ PREFIX ?= /usr/local
 INSTALL_DIR := $(DESTDIR)$(PREFIX)/bin
 
 # Go build flags
-LDFLAGS := -ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
+LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
 ##@ General
 
@@ -114,7 +113,6 @@ deps: ## Download dependencies
 
 version: ## Show version information
 	@echo "Version: $(VERSION)"
-	@echo "Build Time: $(BUILD_TIME)"
 
 size: build ## Show binary size
 	@ls -lh $(BUILD_DIR)/$(BINARY_NAME) | awk '{print "Binary size:", $$5}'
