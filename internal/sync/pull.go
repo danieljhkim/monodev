@@ -2,7 +2,10 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/danieljhkim/monodev/internal/persist"
 )
 
 // pullStore implements the pull operation for stores.
@@ -82,7 +85,7 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 			return &PullResult{
 				PulledStores:    []string{},
 				PulledWorkspace: false,
-				Verified:        req.Verify,
+				Verified:        false,
 				Remote:          remoteName,
 				Branch:          config.Branch,
 			}, nil
@@ -90,32 +93,36 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		storeIDs = persistedStores
 	}
 
-	// Dematerialize stores from .monodev/persist/stores/ to ~/.monodev/stores/
 	var pulledStores []string
+	verifiedStores := 0
 	for _, storeID := range storeIDs {
 		if err := checkContext(ctx); err != nil {
 			return nil, err
 		}
+
+		// Verify persisted content before copying it into the local store. Legacy
+		// persisted stores without manifests remain pullable, but they do not
+		// count as verified because there is no checksum metadata to check.
+		if req.Verify {
+			if err := s.snapshotMgr.Verify(storeID, req.RepoRoot, s.hasher); err != nil {
+				if !errors.Is(err, persist.ErrVerificationManifestMissing) {
+					return nil, fmt.Errorf("verification failed for store %q: %w", storeID, err)
+				}
+			} else {
+				verifiedStores++
+			}
+		}
+
 		if err := s.snapshotMgr.Dematerialize(storeID, req.RepoRoot, s.storeRepo); err != nil {
 			return nil, fmt.Errorf("failed to dematerialize store %q: %w", storeID, err)
 		}
 		pulledStores = append(pulledStores, storeID)
-
-		// Optionally verify checksums
-		if req.Verify {
-			if err := checkContext(ctx); err != nil {
-				return nil, err
-			}
-			if err := s.snapshotMgr.Verify(storeID, req.RepoRoot, s.hasher); err != nil {
-				return nil, fmt.Errorf("verification failed for store %q: %w", storeID, err)
-			}
-		}
 	}
 
 	return &PullResult{
 		PulledStores:    pulledStores,
 		PulledWorkspace: false, // Not implemented yet
-		Verified:        req.Verify,
+		Verified:        req.Verify && len(pulledStores) > 0 && verifiedStores == len(pulledStores),
 		Remote:          remoteName,
 		Branch:          config.Branch,
 	}, nil

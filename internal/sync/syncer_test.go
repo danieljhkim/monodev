@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,17 @@ func (r *fakeStoreRepo) Create(id string, meta *stores.StoreMeta) error {
 	}
 	r.stores[id] = meta
 	r.tracks[id] = stores.NewTrackFile()
+
+	storePath := filepath.Dir(r.OverlayRoot(id))
+	if err := os.MkdirAll(r.OverlayRoot(id), 0755); err != nil {
+		return err
+	}
+	if err := r.writeJSON(filepath.Join(storePath, "meta.json"), meta); err != nil {
+		return err
+	}
+	if err := r.writeJSON(filepath.Join(storePath, "track.json"), r.tracks[id]); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -66,7 +78,7 @@ func (r *fakeStoreRepo) LoadMeta(id string) (*stores.StoreMeta, error) {
 
 func (r *fakeStoreRepo) SaveMeta(id string, meta *stores.StoreMeta) error {
 	r.stores[id] = meta
-	return nil
+	return r.writeJSON(filepath.Join(filepath.Dir(r.OverlayRoot(id)), "meta.json"), meta)
 }
 
 func (r *fakeStoreRepo) LoadTrack(id string) (*stores.TrackFile, error) {
@@ -79,7 +91,7 @@ func (r *fakeStoreRepo) LoadTrack(id string) (*stores.TrackFile, error) {
 
 func (r *fakeStoreRepo) SaveTrack(id string, track *stores.TrackFile) error {
 	r.tracks[id] = track
-	return nil
+	return r.writeJSON(filepath.Join(filepath.Dir(r.OverlayRoot(id)), "track.json"), track)
 }
 
 func (r *fakeStoreRepo) OverlayRoot(id string) string {
@@ -90,6 +102,18 @@ func (r *fakeStoreRepo) Delete(id string) error {
 	delete(r.stores, id)
 	delete(r.tracks, id)
 	return nil
+}
+
+func (r *fakeStoreRepo) writeJSON(path string, value any) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 // fakeRemoteConfigStore implements an in-memory config store for testing.
@@ -163,7 +187,7 @@ func setupSyncerTest(t *testing.T) (
 	storeRepo = newFakeStoreRepo(storesDir)
 	configStore = newFakeRemoteConfigStore()
 	snapshotMgr := persist.NewSnapshotManager(fs)
-	hasher := hash.NewFakeHasher()
+	hasher := hash.NewSHA256Hasher()
 	clk := clock.NewFakeClock(time.Now())
 
 	// Create a fake state store (not used in current tests but required by Syncer)
@@ -612,6 +636,99 @@ func TestSyncer_PushStoreCancellationStopsBeforeLaterGitSteps(t *testing.T) {
 	}
 }
 
+func savePullRemoteConfig(t *testing.T, repoRoot string, configStore *fakeRemoteConfigStore) {
+	t.Helper()
+
+	config := remote.DefaultRemoteConfig()
+	config.Remote = "origin"
+	if err := configStore.Save(repoRoot, config); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+}
+
+func stagePersistedStoreForPull(t *testing.T, repoRoot string, snapshotMgr *persist.SnapshotManager, storeRepo *fakeStoreRepo, storeID string) (storeDir string, persistStorePath string) {
+	t.Helper()
+
+	meta := stores.NewStoreMeta("Remote Store", "global", time.Now())
+	if err := storeRepo.Create(storeID, meta); err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+
+	overlayDir := storeRepo.OverlayRoot(storeID)
+	if err := os.MkdirAll(overlayDir, 0755); err != nil {
+		t.Fatalf("failed to create overlay dir: %v", err)
+	}
+
+	testFile := filepath.Join(overlayDir, "remote.txt")
+	if err := os.WriteFile(testFile, []byte("remote content"), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	if err := snapshotMgr.Materialize(storeID, storeRepo, repoRoot); err != nil {
+		t.Fatalf("failed to materialize: %v", err)
+	}
+
+	storeDir = filepath.Dir(overlayDir)
+	if err := os.RemoveAll(storeDir); err != nil {
+		t.Fatalf("failed to remove local store dir: %v", err)
+	}
+
+	persistStorePath = filepath.Join(repoRoot, ".monodev", "persist", "stores", storeID)
+	return storeDir, persistStorePath
+}
+
+func assertPullVerificationPathError(t *testing.T, err error, storeID, path string) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatal("Expected PullStore verification error, got nil")
+	}
+	if !strings.Contains(err.Error(), storeID) || !strings.Contains(err.Error(), path) {
+		t.Fatalf("PullStore error %q should name store %q and path %q", err, storeID, path)
+	}
+}
+
+func rewriteManifestHash(t *testing.T, manifestPath, targetPath, newHash string) {
+	t.Helper()
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("failed to read manifest: %v", err)
+	}
+
+	var manifest struct {
+		SchemaVersion int    `json:"schemaVersion"`
+		HashAlgorithm string `json:"hashAlgorithm"`
+		Files         []struct {
+			Path string `json:"path"`
+			Hash string `json:"hash"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("failed to decode manifest: %v", err)
+	}
+
+	found := false
+	for i := range manifest.Files {
+		if manifest.Files[i].Path == targetPath {
+			manifest.Files[i].Hash = newHash
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("manifest did not contain path %q", targetPath)
+	}
+
+	data, err = json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to encode manifest: %v", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+}
+
 func TestSyncer_PullStore(t *testing.T) {
 	t.Run("pulls stores successfully", func(t *testing.T) {
 		repoRoot, _, syncer, git, storeRepo, configStore, cleanup := setupSyncerTest(t)
@@ -691,6 +808,116 @@ func TestSyncer_PullStore(t *testing.T) {
 		// Verify store was dematerialized back to stores dir
 		if _, err := os.Stat(storeDir); os.IsNotExist(err) {
 			t.Error("Store was not dematerialized to stores directory")
+		}
+	})
+
+	t.Run("pull verify succeeds when persisted files match manifest", func(t *testing.T) {
+		repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+		defer cleanup()
+
+		savePullRemoteConfig(t, repoRoot, configStore)
+		storeID := "remote-store"
+		stagePersistedStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, storeID)
+
+		result, err := syncer.PullStore(context.Background(), &PullRequest{
+			RepoRoot: repoRoot,
+			StoreIDs: []string{storeID},
+			Verify:   true,
+		})
+		if err != nil {
+			t.Fatalf("PullStore failed: %v", err)
+		}
+		if !result.Verified {
+			t.Fatal("Verified = false, want true for manifest-backed pull")
+		}
+	})
+
+	t.Run("pull verify fails when persisted overlay file is corrupted", func(t *testing.T) {
+		repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+		defer cleanup()
+
+		savePullRemoteConfig(t, repoRoot, configStore)
+		storeID := "remote-store"
+		storeDir, persistStorePath := stagePersistedStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, storeID)
+		corruptPath := filepath.Join(persistStorePath, "overlay", "remote.txt")
+		if err := os.WriteFile(corruptPath, []byte("tampered"), 0644); err != nil {
+			t.Fatalf("failed to corrupt persisted file: %v", err)
+		}
+
+		_, err := syncer.PullStore(context.Background(), &PullRequest{
+			RepoRoot: repoRoot,
+			StoreIDs: []string{storeID},
+			Verify:   true,
+		})
+		assertPullVerificationPathError(t, err, storeID, corruptPath)
+		if _, statErr := os.Stat(storeDir); !os.IsNotExist(statErr) {
+			t.Fatalf("store should not be dematerialized after failed verification, stat err = %v", statErr)
+		}
+	})
+
+	t.Run("pull verify fails when persisted overlay file is missing", func(t *testing.T) {
+		repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+		defer cleanup()
+
+		savePullRemoteConfig(t, repoRoot, configStore)
+		storeID := "remote-store"
+		stagePersistedStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, storeID)
+		missingPath := filepath.Join(repoRoot, ".monodev", "persist", "stores", storeID, "overlay", "remote.txt")
+		if err := os.Remove(missingPath); err != nil {
+			t.Fatalf("failed to remove persisted file: %v", err)
+		}
+
+		_, err := syncer.PullStore(context.Background(), &PullRequest{
+			RepoRoot: repoRoot,
+			StoreIDs: []string{storeID},
+			Verify:   true,
+		})
+		assertPullVerificationPathError(t, err, storeID, missingPath)
+	})
+
+	t.Run("pull verify fails when manifest hash mismatches", func(t *testing.T) {
+		repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+		defer cleanup()
+
+		savePullRemoteConfig(t, repoRoot, configStore)
+		storeID := "remote-store"
+		_, persistStorePath := stagePersistedStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, storeID)
+		manifestPath := filepath.Join(persistStorePath, "verification-manifest.json")
+		rewriteManifestHash(t, manifestPath, "overlay/remote.txt", "not-the-recorded-hash")
+
+		mismatchedPath := filepath.Join(persistStorePath, "overlay", "remote.txt")
+		_, err := syncer.PullStore(context.Background(), &PullRequest{
+			RepoRoot: repoRoot,
+			StoreIDs: []string{storeID},
+			Verify:   true,
+		})
+		assertPullVerificationPathError(t, err, storeID, mismatchedPath)
+	})
+
+	t.Run("pull verify keeps legacy stores pullable without reporting verified", func(t *testing.T) {
+		repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+		defer cleanup()
+
+		savePullRemoteConfig(t, repoRoot, configStore)
+		storeID := "legacy-store"
+		storeDir, persistStorePath := stagePersistedStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, storeID)
+		if err := os.Remove(filepath.Join(persistStorePath, "verification-manifest.json")); err != nil {
+			t.Fatalf("failed to remove manifest: %v", err)
+		}
+
+		result, err := syncer.PullStore(context.Background(), &PullRequest{
+			RepoRoot: repoRoot,
+			StoreIDs: []string{storeID},
+			Verify:   true,
+		})
+		if err != nil {
+			t.Fatalf("PullStore failed for legacy manifest-free store: %v", err)
+		}
+		if result.Verified {
+			t.Fatal("Verified = true for legacy manifest-free store, want false")
+		}
+		if _, err := os.Stat(storeDir); err != nil {
+			t.Fatalf("legacy store should still be dematerialized: %v", err)
 		}
 	})
 
