@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/danieljhkim/monodev/internal/gitx"
+	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -17,7 +19,8 @@ var pushCmd = &cobra.Command{
 Stores are pushed to a separate Git orphan branch at monodev/persist
 by default. This allows sharing stores across machines and teams.
 
-If no store IDs are specified, pushes all local stores.
+If no store IDs are specified, pushes all local stores. With --with-workspace,
+omitting store IDs pushes only the current workspace reference.
 
 Examples:
   # Push all local stores
@@ -80,6 +83,24 @@ func runPush(cmd *cobra.Command, args []string) error {
 		DryRun:        pushDryRun,
 		Force:         pushForce,
 	}
+	if pushWithWorkspace {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+
+		fingerprint, err := gitRepo.Fingerprint(repoRoot)
+		if err != nil {
+			return fmt.Errorf("failed to get workspace fingerprint: %w", err)
+		}
+
+		workspacePath, err := gitRepo.RelPath(repoRoot, cwd)
+		if err != nil {
+			return fmt.Errorf("failed to compute workspace path: %w", err)
+		}
+
+		req.WorkspaceID = state.ComputeWorkspaceID(fingerprint, workspacePath)
+	}
 
 	// Execute push
 	result, err := syncer.PushStore(ctx, req)
@@ -91,6 +112,11 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return outputJSON(result)
 	}
 
+	printPushResult(result, args)
+	return nil
+}
+
+func printPushResult(result *sync.PushResult, requestedStoreIDs []string) {
 	// Display result
 	if result.DryRun {
 		PrintInfo("Dry run - no changes made")
@@ -99,13 +125,13 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 	if len(result.PushedStores) > 0 {
 		if result.DryRun {
-			if len(args) == 0 {
+			if len(requestedStoreIDs) == 0 {
 				PrintInfo(fmt.Sprintf("Would push all stores (%d):", len(result.PushedStores)))
 			} else {
 				PrintInfo("Would push stores:")
 			}
 		} else {
-			if len(args) == 0 {
+			if len(requestedStoreIDs) == 0 {
 				PrintSuccess(fmt.Sprintf("Pushed all stores (%d):", len(result.PushedStores)))
 			} else {
 				PrintSuccess("Pushed stores:")
@@ -119,9 +145,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 	if result.PushedWorkspace {
 		if result.DryRun {
-			PrintInfo("Would push workspace references")
+			PrintInfo(fmt.Sprintf("Would push workspace reference: %s", result.WorkspaceRefPath))
 		} else {
-			PrintSuccess("Pushed workspace references")
+			PrintSuccess(fmt.Sprintf("Pushed workspace reference: %s", result.WorkspaceRefPath))
 		}
 		PrintInfo("")
 	}
@@ -131,6 +157,4 @@ func runPush(cmd *cobra.Command, args []string) error {
 		PrintInfo(fmt.Sprintf("Branch: %s", result.Branch))
 		PrintInfo(fmt.Sprintf("Commit: %s", result.CommitMessage))
 	}
-
-	return nil
 }

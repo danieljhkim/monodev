@@ -29,8 +29,14 @@ type PushResult struct {
 	// PushedStores is the list of store IDs that were pushed
 	PushedStores []string
 
-	// PushedWorkspace indicates whether a workspace ref was pushed
+	// PushedWorkspace indicates whether a workspace ref was pushed or would be pushed in a dry run
 	PushedWorkspace bool
+
+	// WorkspaceID is the ID of the workspace ref that was pushed
+	WorkspaceID string
+
+	// WorkspaceRefPath is the persistence work tree path for the workspace ref artifact
+	WorkspaceRefPath string
 
 	// CommitMessage is the commit message used
 	CommitMessage string
