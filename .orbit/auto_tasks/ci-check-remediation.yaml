@@ -1,0 +1,58 @@
+schemaVersion: 1
+name: ci-check-remediation
+description: Hourly remediation of failing GitHub CI checks on main and open PRs
+enabled: true
+schedule:
+  cron: 20 * * * *
+template:
+  title: Remediate failing CI checks
+  description: |-
+    Inspect GitHub Actions for this workspace and remediate real, current CI failures. The durable output is either a scoped fix in this repository, a filed Orbit task covering an out-of-scope failure, or a documented no-op when checks are green. Narrative-only output is not delivery.
+
+    ## Rules and command surfaces
+
+    - Use the GitHub CLI against this repository's `origin` remote. Snapshot checks with `gh run list --branch main --limit 20` and `gh pr list --state open --base main`. Inspect a failing run with `gh run view <run-id>` and `gh run view <run-id> --log-failed`. For an open PR, also run `gh pr checks <number>`.
+    - Fetch before concluding. Local `main` may be behind `origin/main`. Operate against the SHAs GitHub actually ran (`origin/main` HEAD and open PR heads), not a stale checkout.
+    - Local CI-parity commands for this repo are `make lint`, `make test`, and `make test-integration`. The GitHub `CI` workflow (`.github/workflows/ci.yml`) runs golangci-lint, then those same make targets. Also inspect other workflows that run on `main` or on PRs targeting `main` (including CodeQL). Do not treat Dependabot / dependency-graph informational jobs as blocking unless they are required checks.
+    - Search existing coverage before changing code or filing work: `orbit tool run orbit.search --input '{"query":"<failing job, error, or SHA>","kind":"task","all":true,"model":"<agent-family>"}'` and `orbit tool run orbit.task.list --input '{"status":["backlog","in-progress","proposed","blocked"],"tag":"ci-check-remediation","model":"<agent-family>"}'`. Inspect candidates with `orbit tool run orbit.task.show --input '{"id":"<id>","model":"<agent-family>"}'`.
+    - File follow-up work only through `orbit tool run orbit.task.add`. Do not use direct lifecycle CLI subcommands; they skip agent provenance. Tag new tasks `ci-check-remediation`. After filing, read the task back with `orbit.task.show` before counting it as coverage.
+    - If `gh` is unauthenticated or cannot reach GitHub, stop and persist that as a blocked outcome. Do not invent a local-only diagnosis and call CI green or red.
+
+    ## Classify each failure
+
+    For every failed or cancelled-as-failure check on `origin/main` HEAD and on each open PR targeting `main`:
+
+    1. Ignore `cancelled`, `skipped`, and still-running jobs. A newer green run on the same SHA supersedes an older red run — treat that as a flake or superseded attempt, not a defect to fix.
+    2. Classify the remainder as one of: product/test defect, lint or toolchain mismatch, workflow misconfiguration, flake, GitHub/infra outage, or already covered by an open/done task.
+    3. Reproduce locally with the CI-parity commands above (and any extra workflow step that failed, such as `govulncheck` or CodeQL autobuild constraints). Cite the run ID, job, step, SHA, and exact error.
+
+    ## Remediate
+
+    - When the failure is in this repository (workflow YAML, toolchain pin, linter version, test, or product code), implement the smallest change that makes the same checks pass. Do not weaken or skip a check to go green. If `version: latest` (or an equivalent floating pin) is what broke CI, pin a version compatible with the Go toolchain in `go.mod`.
+    - When an open or done task already covers the same underlying failure, do not file a duplicate and do not restyle the same fix. Record `<run-id/job> -> <task-id>` in the execution summary. Only add a CI-config workaround here if that existing task cannot land in time to unblock `main`.
+    - When the failure is not a safe in-repo fix (GitHub outage, runner flake with no local reproduction, third-party action outage, or a large product change that needs its own scoped bug), file exactly one evidence-backed bug task and leave the failure to that task. Include the run URL, SHA, failing command, error excerpt, and impact (blocks `main` vs blocks one PR).
+    - Fail open. Fully green checks are a successful no-op: make no code changes, file no filler tasks, and complete with an execution summary.
+
+    ## Pass
+
+    1. Snapshot `origin/main` HEAD and every open PR targeting `main`, with run IDs and conclusions.
+    2. Dedupe against existing tasks, including those tagged `ci-check-remediation`.
+    3. Reproduce and classify every current real failure.
+    4. Implement in-repo fixes or file at most one follow-up task per distinct underlying failure.
+    5. Re-run the local CI-parity commands after any code change. Persist an execution summary that lists each inspected SHA, run ID, failing job/step, classification, and action (fixed / filed / skipped / no-op).
+  acceptance_criteria:
+  - GitHub Actions on origin/main HEAD and on open PRs targeting main were inspected via gh; cancelled, skipped, and in-progress runs were not treated as failures.
+  - 'A fully green check set is a successful no-op: no code change, no filed tasks, and the execution summary names the inspected SHAs and run IDs.'
+  - Every real, non-duplicate failure was either fixed in this repository so the local CI-parity commands pass (make lint, make test, make test-integration, plus any extra workflow step that failed), or covered by exactly one active or done Orbit task with evidence; duplicates were not filed.
+  - Infra flakes, GitHub outages, and already-green later runs on the same SHA were not 'fixed' with code changes.
+  - The persisted execution summary lists each inspected SHA, run ID, failing job/step, classification (product / toolchain / flake / infra / already-covered), and the resulting action (fixed / filed / skipped / no-op).
+  task_type: chore
+  tags:
+  - ci-check-remediation
+  priority: high
+  status: backlog
+dedupe: skip_if_open
+created_by: unknown
+created_at: 2026-08-22T23:21:08.516428+00:00
+updated_by: unknown
+updated_at: 2026-08-22T23:21:08.516428+00:00
