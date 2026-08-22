@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/danieljhkim/monodev/internal/hash"
+	"github.com/danieljhkim/monodev/internal/stores"
 )
 
 const (
@@ -81,6 +82,97 @@ func (s *SnapshotManager) Verify(storeID string, persistRoot string, hasher hash
 	}
 
 	return nil
+}
+
+// DiffAgainstLocalCopy compares the content about to be pulled for storeID
+// (staged in persistRoot) against the store's existing local copy in
+// storeRepo, if one is already present, and returns the sorted relative
+// paths that were added, removed, or changed. It returns nil with no error
+// when there is no local copy to compare against, since a first-time pull
+// has nothing to diverge from.
+//
+// This check is deliberately independent of the verification manifest: the
+// manifest travels with the persisted content itself, so an actor with push
+// access to the persistence branch can rewrite both together and still pass
+// Verify. The developer's own pre-existing local copy is the one thing a
+// remote actor cannot have already rewritten, which is what makes it useful
+// for surfacing tampering (or a legitimate but unexpected remote edit)
+// before it lands in the working tree.
+func (s *SnapshotManager) DiffAgainstLocalCopy(storeID, persistRoot string, storeRepo stores.StoreRepo, hasher hash.Hasher) ([]string, error) {
+	if err := s.fs.ValidateIdentifier(storeID); err != nil {
+		return nil, fmt.Errorf("invalid store ID: %w", err)
+	}
+
+	localPath := filepath.Dir(storeRepo.OverlayRoot(storeID))
+
+	// Check the local store directory directly rather than going through
+	// storeRepo's own bookkeeping: what matters here is whether there is
+	// already content on disk that this pull would overwrite.
+	exists, err := s.fs.Exists(localPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if store %q exists locally: %w", storeID, err)
+	}
+	if !exists {
+		return nil, nil
+	}
+
+	if hasher == nil {
+		hasher = hash.NewSHA256Hasher()
+	}
+
+	persistPath := persistStoreDir(persistRoot, storeID)
+
+	localFiles, err := verifiableStoreFiles(localPath)
+	if err != nil {
+		return nil, fmt.Errorf("store %q: failed to inspect local copy: %w", storeID, err)
+	}
+	persistFiles, err := verifiableStoreFiles(persistPath)
+	if err != nil {
+		return nil, fmt.Errorf("store %q: failed to inspect persisted copy: %w", storeID, err)
+	}
+
+	localSet := make(map[string]struct{}, len(localFiles))
+	for _, relPath := range localFiles {
+		localSet[relPath] = struct{}{}
+	}
+	persistSet := make(map[string]struct{}, len(persistFiles))
+	for _, relPath := range persistFiles {
+		persistSet[relPath] = struct{}{}
+	}
+
+	changedSet := make(map[string]struct{})
+	for relPath := range persistSet {
+		if _, ok := localSet[relPath]; !ok {
+			changedSet[relPath] = struct{}{}
+			continue
+		}
+		localHash, err := hasher.HashFile(filepath.Join(localPath, filepath.FromSlash(relPath)))
+		if err != nil {
+			return nil, fmt.Errorf("store %q path %s: failed to hash local file: %w", storeID, relPath, err)
+		}
+		persistHash, err := hasher.HashFile(filepath.Join(persistPath, filepath.FromSlash(relPath)))
+		if err != nil {
+			return nil, fmt.Errorf("store %q path %s: failed to hash persisted file: %w", storeID, relPath, err)
+		}
+		if localHash != persistHash {
+			changedSet[relPath] = struct{}{}
+		}
+	}
+	for relPath := range localSet {
+		if _, ok := persistSet[relPath]; !ok {
+			changedSet[relPath] = struct{}{}
+		}
+	}
+
+	if len(changedSet) == 0 {
+		return nil, nil
+	}
+	changed := make([]string, 0, len(changedSet))
+	for relPath := range changedSet {
+		changed = append(changed, relPath)
+	}
+	sort.Strings(changed)
+	return changed, nil
 }
 
 func (s *SnapshotManager) writeVerificationManifest(storeID, storePath string, hasher hash.Hasher) error {

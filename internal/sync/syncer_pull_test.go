@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/hash"
 	"github.com/danieljhkim/monodev/internal/persist"
 	"github.com/danieljhkim/monodev/internal/remote"
 	"github.com/danieljhkim/monodev/internal/stores"
@@ -203,7 +204,6 @@ func TestSyncer_PullStore(t *testing.T) {
 		result, err := syncer.PullStore(context.Background(), &PullRequest{
 			RepoRoot: repoRoot,
 			StoreIDs: []string{storeID},
-			Verify:   true,
 		})
 		if err != nil {
 			t.Fatalf("PullStore failed: %v", err)
@@ -228,7 +228,6 @@ func TestSyncer_PullStore(t *testing.T) {
 		_, err := syncer.PullStore(context.Background(), &PullRequest{
 			RepoRoot: repoRoot,
 			StoreIDs: []string{storeID},
-			Verify:   true,
 		})
 		assertPullVerificationPathError(t, err, storeID, corruptPath)
 		if _, statErr := os.Stat(storeDir); !os.IsNotExist(statErr) {
@@ -251,7 +250,6 @@ func TestSyncer_PullStore(t *testing.T) {
 		_, err := syncer.PullStore(context.Background(), &PullRequest{
 			RepoRoot: repoRoot,
 			StoreIDs: []string{storeID},
-			Verify:   true,
 		})
 		assertPullVerificationPathError(t, err, storeID, missingPath)
 	})
@@ -270,7 +268,6 @@ func TestSyncer_PullStore(t *testing.T) {
 		_, err := syncer.PullStore(context.Background(), &PullRequest{
 			RepoRoot: repoRoot,
 			StoreIDs: []string{storeID},
-			Verify:   true,
 		})
 		assertPullVerificationPathError(t, err, storeID, mismatchedPath)
 	})
@@ -289,7 +286,6 @@ func TestSyncer_PullStore(t *testing.T) {
 		result, err := syncer.PullStore(context.Background(), &PullRequest{
 			RepoRoot: repoRoot,
 			StoreIDs: []string{storeID},
-			Verify:   true,
 		})
 		if err != nil {
 			t.Fatalf("PullStore failed for legacy manifest-free store: %v", err)
@@ -299,6 +295,97 @@ func TestSyncer_PullStore(t *testing.T) {
 		}
 		if _, err := os.Stat(storeDir); err != nil {
 			t.Fatalf("legacy store should still be dematerialized: %v", err)
+		}
+		if len(result.Warnings) != 1 {
+			t.Fatalf("expected 1 warning for manifest-free store, got %d: %v", len(result.Warnings), result.Warnings)
+		}
+		if !strings.Contains(result.Warnings[0], storeID) {
+			t.Fatalf("warning %q should name store %q", result.Warnings[0], storeID)
+		}
+	})
+
+	t.Run("pull refuses to overwrite local copy when persisted content changed after push", func(t *testing.T) {
+		repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+		defer cleanup()
+
+		savePullRemoteConfig(t, repoRoot, configStore)
+		storeID := "remote-store"
+
+		meta := stores.NewStoreMeta("Remote Store", "global", time.Now())
+		if err := storeRepo.Create(storeID, meta); err != nil {
+			t.Fatalf("failed to create store: %v", err)
+		}
+		overlayDir := storeRepo.OverlayRoot(storeID)
+		if err := os.MkdirAll(overlayDir, 0755); err != nil {
+			t.Fatalf("failed to create overlay dir: %v", err)
+		}
+		localFile := filepath.Join(overlayDir, "remote.txt")
+		if err := os.WriteFile(localFile, []byte("original content"), 0644); err != nil {
+			t.Fatalf("failed to write test file: %v", err)
+		}
+
+		// Push: materialize what the developer actually pushed.
+		if err := syncer.snapshotMgr.Materialize(storeID, storeRepo, repoRoot); err != nil {
+			t.Fatalf("failed to materialize: %v", err)
+		}
+
+		// Simulate the persist branch being changed by someone else after the
+		// push: rewrite both the persisted content and its manifest together,
+		// exactly as an actor with push access to the branch could do. Verify()
+		// alone cannot catch this, because the manifest is regenerated to match
+		// the new content it is meant to certify.
+		persistStorePath := filepath.Join(repoRoot, ".monodev", "persist", "stores", storeID)
+		persistFile := filepath.Join(persistStorePath, "overlay", "remote.txt")
+		if err := os.WriteFile(persistFile, []byte("tampered content"), 0644); err != nil {
+			t.Fatalf("failed to rewrite persisted file: %v", err)
+		}
+		newHash, err := hash.NewSHA256Hasher().HashFile(persistFile)
+		if err != nil {
+			t.Fatalf("failed to hash tampered file: %v", err)
+		}
+		manifestPath := filepath.Join(persistStorePath, "verification-manifest.json")
+		rewriteManifestHash(t, manifestPath, "overlay/remote.txt", newHash)
+
+		_, err = syncer.PullStore(context.Background(), &PullRequest{
+			RepoRoot: repoRoot,
+			StoreIDs: []string{storeID},
+		})
+		if err == nil {
+			t.Fatal("expected PullStore to refuse to overwrite a locally-diverged store, got nil error")
+		}
+		if !errors.Is(err, ErrPulledContentChanged) {
+			t.Fatalf("PullStore error = %v, want wrapping ErrPulledContentChanged", err)
+		}
+		if !strings.Contains(err.Error(), storeID) || !strings.Contains(err.Error(), "remote.txt") {
+			t.Fatalf("PullStore error %q should name the store and the changed file", err)
+		}
+
+		// The local copy must stay untouched until the operator opts in with Force.
+		data, readErr := os.ReadFile(localFile)
+		if readErr != nil {
+			t.Fatalf("failed to read local file after refused pull: %v", readErr)
+		}
+		if string(data) != "original content" {
+			t.Fatalf("local file content = %q, want unchanged %q", data, "original content")
+		}
+
+		result, err := syncer.PullStore(context.Background(), &PullRequest{
+			RepoRoot: repoRoot,
+			StoreIDs: []string{storeID},
+			Force:    true,
+		})
+		if err != nil {
+			t.Fatalf("PullStore with Force failed: %v", err)
+		}
+		if len(result.PulledStores) != 1 {
+			t.Fatalf("expected 1 pulled store with Force, got %d", len(result.PulledStores))
+		}
+		data, readErr = os.ReadFile(localFile)
+		if readErr != nil {
+			t.Fatalf("failed to read local file after forced pull: %v", readErr)
+		}
+		if string(data) != "tampered content" {
+			t.Fatalf("local file content after Force pull = %q, want %q", data, "tampered content")
 		}
 	})
 

@@ -19,6 +19,11 @@ and restores them to ~/.monodev/stores/.
 
 If no store IDs are specified, pulls all stores from the remote.
 
+Every pull verifies checksums against the persisted manifest and warns
+when a store has no manifest to check. If a store already exists locally
+and the pulled content differs from that local copy, the pull is refused
+and the changed paths are reported; pass --force to overwrite anyway.
+
 Examples:
   # Pull all stores from remote
   monodev pull
@@ -29,9 +34,6 @@ Examples:
   # Pull multiple stores
   monodev pull store1 store2
 
-  # Pull and verify checksums
-  monodev pull my-store --verify
-
   # Force pull (overwrite local changes)
   monodev pull my-store --force`,
 	Args: cobra.ArbitraryArgs,
@@ -41,13 +43,11 @@ Examples:
 var (
 	pullRemote string
 	pullForce  bool
-	pullVerify bool
 )
 
 func init() {
 	pullCmd.Flags().StringVar(&pullRemote, "remote", "", "Git remote to pull from (defaults to configured remote)")
-	pullCmd.Flags().BoolVar(&pullForce, "force", false, "Force pull (overwrite local stores)")
-	pullCmd.Flags().BoolVar(&pullVerify, "verify", false, "Verify store integrity with checksums after pulling")
+	pullCmd.Flags().BoolVar(&pullForce, "force", false, "Force pull, overwriting a local store whose content differs from what is being pulled")
 }
 
 func runPull(cmd *cobra.Command, args []string) error {
@@ -72,7 +72,6 @@ func runPull(cmd *cobra.Command, args []string) error {
 		StoreIDs: args,
 		Remote:   pullRemote,
 		Force:    pullForce,
-		Verify:   pullVerify,
 	}
 
 	// Execute pull
@@ -102,6 +101,13 @@ func runPull(cmd *cobra.Command, args []string) error {
 
 	if result.Verified {
 		PrintSuccess("All stores verified successfully")
+		PrintInfo("")
+	}
+
+	for _, warning := range result.Warnings {
+		PrintWarning(warning)
+	}
+	if len(result.Warnings) > 0 {
 		PrintInfo("")
 	}
 
