@@ -69,7 +69,7 @@ func (fs *RealFS) copyFile(src, dst string, mode os.FileMode, relPath string) er
 	}()
 
 	// Create parent directory if needed
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 		return fmt.Errorf("failed to create parent directory: %w", err)
 	}
 
@@ -83,7 +83,7 @@ func (fs *RealFS) copyFile(src, dst string, mode os.FileMode, relPath string) er
 		return fmt.Errorf("failed to stat destination: %w", err)
 	}
 
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, privateFileMode(mode))
 	if err != nil {
 		return fmt.Errorf("failed to create destination: %w", err)
 	}
@@ -122,7 +122,7 @@ func (fs *RealFS) copyDir(src, dst, root string) error {
 		return fmt.Errorf("failed to stat destination: %w", err)
 	}
 
-	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
+	if err := os.MkdirAll(dst, 0700); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
@@ -159,6 +159,12 @@ func (fs *RealFS) copyDir(src, dst, root string) error {
 	}
 
 	return nil
+}
+
+// privateFileMode preserves owner read/write and execute intent while
+// preventing copied store content from granting group or other access.
+func privateFileMode(mode os.FileMode) os.FileMode {
+	return mode.Perm() & 0700
 }
 
 // ValidateCopySource enforces monodev's managed-copy symlink policy before any

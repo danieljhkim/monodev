@@ -117,7 +117,7 @@ func (s *SnapshotManager) writeVerificationManifest(storeID, storePath string, h
 	data = append(data, '\n')
 
 	manifestPath := filepath.Join(storePath, verificationManifestName)
-	if err := s.fs.AtomicWrite(manifestPath, data, 0644); err != nil {
+	if err := s.fs.AtomicWrite(manifestPath, data, 0600); err != nil {
 		return fmt.Errorf("path %s: failed to write verification manifest: %w", manifestPath, err)
 	}
 

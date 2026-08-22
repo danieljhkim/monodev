@@ -8,7 +8,7 @@ import (
 
 func (s *SnapshotManager) stageStoreReplacement(srcPath, dstPath string) (string, error) {
 	dstParent := filepath.Dir(dstPath)
-	if err := s.fs.MkdirAll(dstParent, 0755); err != nil {
+	if err := s.fs.MkdirAll(dstParent, 0700); err != nil {
 		return "", fmt.Errorf("failed to create destination parent: %w", err)
 	}
 
