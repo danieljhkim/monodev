@@ -135,7 +135,7 @@ func (g *RealGitPersistence) EnsureRepo(ctx context.Context, repoRoot, branch st
 	}
 
 	// Create the work tree directory if it doesn't exist
-	if err := os.MkdirAll(workTreePath, 0755); err != nil {
+	if err := os.MkdirAll(workTreePath, 0700); err != nil {
 		return fmt.Errorf("failed to create work tree directory: %w", err)
 	}
 

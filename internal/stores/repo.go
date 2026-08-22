@@ -114,13 +114,13 @@ func (r *FileStoreRepo) Create(id string, meta *StoreMeta) error {
 	}
 
 	// Create store directory
-	if err := r.fs.MkdirAll(storePath, 0755); err != nil {
+	if err := r.fs.MkdirAll(storePath, 0700); err != nil {
 		return fmt.Errorf("failed to create store directory: %w", err)
 	}
 
 	// Create overlay directory
 	overlayPath := filepath.Join(storePath, "overlay")
-	if err := r.fs.MkdirAll(overlayPath, 0755); err != nil {
+	if err := r.fs.MkdirAll(overlayPath, 0700); err != nil {
 		return fmt.Errorf("failed to create overlay directory: %w", err)
 	}
 
@@ -177,7 +177,7 @@ func (r *FileStoreRepo) SaveMeta(id string, meta *StoreMeta) error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := r.fs.AtomicWrite(metaPath, data, 0644); err != nil {
+	if err := r.fs.AtomicWrite(metaPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write meta file: %w", err)
 	}
 
@@ -224,7 +224,7 @@ func (r *FileStoreRepo) SaveTrack(id string, track *TrackFile) error {
 		return fmt.Errorf("failed to marshal track file: %w", err)
 	}
 
-	if err := r.fs.AtomicWrite(trackPath, data, 0644); err != nil {
+	if err := r.fs.AtomicWrite(trackPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write track file: %w", err)
 	}
 

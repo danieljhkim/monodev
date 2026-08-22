@@ -97,7 +97,7 @@ func (s *FileRemoteConfigStore) Save(repoRoot string, config *RemoteConfig) erro
 
 	// Ensure the directory exists
 	dir := filepath.Dir(path)
-	if err := s.fs.MkdirAll(dir, 0755); err != nil {
+	if err := s.fs.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -108,7 +108,7 @@ func (s *FileRemoteConfigStore) Save(repoRoot string, config *RemoteConfig) erro
 	}
 
 	// Write atomically
-	if err := s.fs.AtomicWrite(path, data, 0644); err != nil {
+	if err := s.fs.AtomicWrite(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write remote config: %w", err)
 	}
 

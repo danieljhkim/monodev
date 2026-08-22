@@ -82,7 +82,7 @@ func (s *Syncer) pushStore(ctx context.Context, req *PushRequest) (*PushResult, 
 		if err := checkContext(ctx); err != nil {
 			return nil, err
 		}
-		if err := s.fs.AtomicWrite(workspaceRefPath, workspaceRefData, 0644); err != nil {
+		if err := s.fs.AtomicWrite(workspaceRefPath, workspaceRefData, 0600); err != nil {
 			return nil, fmt.Errorf("failed to write workspace reference: %w", err)
 		}
 	}

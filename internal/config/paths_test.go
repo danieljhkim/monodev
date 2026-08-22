@@ -535,8 +535,16 @@ func TestPaths_EnsureDirectories(t *testing.T) {
 		// Verify directories exist
 		dirs := []string{paths.Root, paths.Stores, paths.Workspaces}
 		for _, dir := range dirs {
-			if _, err := os.Stat(dir); os.IsNotExist(err) {
+			info, err := os.Stat(dir)
+			if os.IsNotExist(err) {
 				t.Errorf("Directory %s was not created", dir)
+				continue
+			}
+			if err != nil {
+				t.Fatalf("failed to stat directory %s: %v", dir, err)
+			}
+			if got := info.Mode().Perm(); got != 0700 {
+				t.Errorf("directory %s mode = %04o, want 0700", dir, got)
 			}
 		}
 	})

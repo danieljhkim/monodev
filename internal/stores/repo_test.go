@@ -173,6 +173,26 @@ func TestFileStoreRepo_Create(t *testing.T) {
 			t.Error("Overlay directory was not created")
 		}
 
+		for _, path := range []string{storePath, overlayPath} {
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("failed to stat %s: %v", path, err)
+			}
+			if got := info.Mode().Perm(); got != 0700 {
+				t.Errorf("directory %s mode = %04o, want 0700", path, got)
+			}
+		}
+		for _, name := range []string{"meta.json", "track.json"} {
+			path := filepath.Join(storePath, name)
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("failed to stat %s: %v", path, err)
+			}
+			if got := info.Mode().Perm(); got != 0600 {
+				t.Errorf("file %s mode = %04o, want 0600", path, got)
+			}
+		}
+
 		// Verify metadata file exists and is correct
 		loadedMeta, err := repo.LoadMeta(storeID)
 		if err != nil {

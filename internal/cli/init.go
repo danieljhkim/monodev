@@ -61,7 +61,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0700); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
@@ -69,7 +69,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// 4. Create .gitignore to exclude .monodev from git
 	gitignorePath := filepath.Join(monodevPath, ".gitignore")
 	gitignoreContent := []byte("# monodev artifacts (local-only)\n*\n")
-	if err := os.WriteFile(gitignorePath, gitignoreContent, 0644); err != nil {
+	if err := os.WriteFile(gitignorePath, gitignoreContent, 0600); err != nil {
 		return fmt.Errorf("failed to create .gitignore: %w", err)
 	}
 

@@ -10,7 +10,7 @@ import (
 func (fs *RealFS) AtomicWrite(path string, data []byte, perm os.FileMode) error {
 	// Create parent directory if needed
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create parent directory: %w", err)
 	}
 

@@ -41,7 +41,7 @@ func (e *Engine) executeRemove(op planner.Operation) error {
 func (e *Engine) executeCreateSymlink(op planner.Operation) error {
 	// Create parent directory if needed
 	parentDir := filepath.Dir(op.DestPath)
-	if err := e.fs.MkdirAll(parentDir, 0755); err != nil {
+	if err := e.fs.MkdirAll(parentDir, 0700); err != nil {
 		return fmt.Errorf("failed to create parent directory: %w", err)
 	}
 	if err := e.fs.Symlink(op.SourcePath, op.DestPath); err != nil {

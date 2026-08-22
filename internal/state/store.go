@@ -71,7 +71,7 @@ func (s *FileStateStore) SaveWorkspace(id string, state *WorkspaceState) error {
 		return fmt.Errorf("failed to marshal workspace state: %w", err)
 	}
 
-	if err := s.fs.AtomicWrite(path, data, 0644); err != nil {
+	if err := s.fs.AtomicWrite(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write workspace state: %w", err)
 	}
 
