@@ -9,6 +9,23 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ---
 
+## [0.2.8] — 2026-08-22
+
+### Security
+- Overlay apply can no longer write into `.git/`, which previously allowed RCE via git hooks.
+- Store directories that hold dev-only artifacts are no longer created world-readable.
+
+### Fixed
+- `monodev pull` applies store content from the shared remote instead of leaving the workspace unchanged.
+- Duplicate scoped stores no longer appear in `store ls`.
+- Apply prefers the explicit store ID when resolving which overlay to write.
+
+### Changed
+- Module and release builds use Go 1.27; CI runs `govulncheck`.
+- CI pins `golangci-lint` v2.13.1 (Go 1.27 support). Code scanning uses an advanced CodeQL workflow that installs Go from `go.mod` before analysis.
+
+---
+
 ## [0.2.7] — 2026-02-28
 
 ### Changed

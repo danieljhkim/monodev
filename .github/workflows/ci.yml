@@ -37,9 +37,11 @@ jobs:
           go-package: ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          # v4's "latest" resolved to golangci-lint v1.64.8 (go1.24), which
+          # cannot lint a Go 1.27 module. v2.13.0 added Go 1.27 support.
+          version: v2.13.1
 
       - name: Test
         run: make test
