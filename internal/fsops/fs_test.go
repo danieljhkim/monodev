@@ -72,6 +72,44 @@ func TestRealFS_ValidateRelPath(t *testing.T) {
 	}
 }
 
+func TestValidatePathOutsideGitDir(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    string
+		wantError bool
+	}{
+		{
+			name:      "repository file",
+			target:    "/repo/.github/workflows/test.yml",
+			wantError: false,
+		},
+		{
+			name:      "git directory itself",
+			target:    "/repo/.git",
+			wantError: true,
+		},
+		{
+			name:      "git hook",
+			target:    "/repo/.git/hooks/pre-commit",
+			wantError: true,
+		},
+		{
+			name:      "similarly named directory",
+			target:    "/repo/.git-hooks/pre-commit",
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePathOutsideGitDir("/repo", tt.target)
+			if (err != nil) != tt.wantError {
+				t.Errorf("ValidatePathOutsideGitDir(%q) error = %v, wantError %v", tt.target, err, tt.wantError)
+			}
+		})
+	}
+}
+
 func TestRealFS_ValidateIdentifier(t *testing.T) {
 	fs := &RealFS{}
 

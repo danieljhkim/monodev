@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -111,6 +112,9 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 
 		// Check if path exists in the workspace
 		absPath := filepath.Join(req.CWD, cwdRelPath)
+		if err := fsops.ValidatePathOutsideGitDir(root, absPath); err != nil {
+			return nil, fmt.Errorf("invalid path %q: %w", userPath, err)
+		}
 		info, err := e.fs.Lstat(absPath)
 		if err != nil {
 			result.MissingPaths = append(result.MissingPaths, userPath)
