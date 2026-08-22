@@ -68,11 +68,9 @@ type PullRequest struct {
 	// Remote is the name of the Git remote to pull from (defaults to config value)
 	Remote string
 
-	// Force indicates whether to overwrite local stores
+	// Force indicates whether to overwrite a local store whose content
+	// differs from what is about to be pulled.
 	Force bool
-
-	// Verify indicates whether to verify checksums after pulling
-	Verify bool
 }
 
 // PullResult contains the result of a pull operation.
@@ -91,4 +89,9 @@ type PullResult struct {
 
 	// Branch is the branch that was pulled
 	Branch string
+
+	// Warnings contains operator-visible messages about trust or integrity
+	// conditions that did not block the pull but should not pass silently,
+	// such as a store pulled without a verification manifest.
+	Warnings []string
 }

@@ -4,9 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/danieljhkim/monodev/internal/persist"
 )
+
+// ErrPulledContentChanged is wrapped by the error pullStore returns when a
+// store already present locally would be overwritten with content that
+// differs from that local copy. The persist branch's checksum manifest
+// cannot rule this out on its own: an actor with push access to the branch
+// can rewrite the manifest alongside the content it certifies. Comparing
+// against the developer's pre-existing local copy is what surfaces the
+// change so it is not silently applied to the working tree. Callers must
+// pass PullRequest.Force to proceed anyway.
+var ErrPulledContentChanged = errors.New("pulled store content differs from local copy")
 
 // pullStore implements the pull operation for stores.
 func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, error) {
@@ -67,23 +78,39 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 	}
 
 	var pulledStores []string
+	var warnings []string
 	verifiedStores := 0
 	for _, storeID := range storeIDs {
 		if err := checkContext(ctx); err != nil {
 			return nil, err
 		}
 
-		// Verify persisted content before copying it into the local store. Legacy
-		// persisted stores without manifests remain pullable, but they do not
-		// count as verified because there is no checksum metadata to check.
-		if req.Verify {
-			if err := s.snapshotMgr.Verify(storeID, req.RepoRoot, s.hasher); err != nil {
-				if !errors.Is(err, persist.ErrVerificationManifestMissing) {
-					return nil, fmt.Errorf("verification failed for store %q: %w", storeID, err)
-				}
-			} else {
-				verifiedStores++
+		// Compare the incoming content against the developer's pre-existing
+		// local copy, if any, before touching the working tree. This catches
+		// a remote-side change (tampering or otherwise) that a manifest-based
+		// check alone cannot: the manifest travels with the content it
+		// certifies, so an actor who can push to the persist branch can
+		// rewrite both together and still pass Verify.
+		changedFiles, err := s.snapshotMgr.DiffAgainstLocalCopy(storeID, req.RepoRoot, s.storeRepo, s.hasher)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compare store %q against local copy: %w", storeID, err)
+		}
+		if len(changedFiles) > 0 && !req.Force {
+			return nil, fmt.Errorf("%w: store %q (changed: %s); rerun with --force to overwrite the local copy", ErrPulledContentChanged, storeID, strings.Join(changedFiles, ", "))
+		}
+
+		// Verify persisted content before copying it into the local store.
+		// Verification always runs; a missing manifest is an explicit,
+		// reported warning rather than a silent pass. Legacy persisted
+		// stores without manifests remain pullable, but they must never be
+		// reported as verified.
+		if err := s.snapshotMgr.Verify(storeID, req.RepoRoot, s.hasher); err != nil {
+			if !errors.Is(err, persist.ErrVerificationManifestMissing) {
+				return nil, fmt.Errorf("verification failed for store %q: %w", storeID, err)
 			}
+			warnings = append(warnings, fmt.Sprintf("store %q has no verification manifest; content authenticity was not checked", storeID))
+		} else {
+			verifiedStores++
 		}
 
 		if err := s.snapshotMgr.Dematerialize(storeID, req.RepoRoot, s.storeRepo); err != nil {
@@ -95,8 +122,9 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 	return &PullResult{
 		PulledStores:    pulledStores,
 		PulledWorkspace: false, // Not implemented yet
-		Verified:        req.Verify && len(pulledStores) > 0 && verifiedStores == len(pulledStores),
+		Verified:        len(pulledStores) > 0 && verifiedStores == len(pulledStores),
 		Remote:          remoteName,
 		Branch:          config.Branch,
+		Warnings:        warnings,
 	}, nil
 }

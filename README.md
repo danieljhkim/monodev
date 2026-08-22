@@ -226,13 +226,10 @@ monodev push <store-id>... --with-workspace
 # Push only the current workspace reference
 monodev push --with-workspace
 
-# Pull stores from remote
+# Pull stores from remote (always verifies checksums; warns if a store has no manifest)
 monodev pull <store-id>...
 
-# Pull and verify checksums
-monodev pull <store-id>... --verify
-
-# Force pull (overwrite local stores)
+# Force pull (overwrite a local store whose content differs from what is being pulled)
 monodev pull <store-id>... --force
 ```
 
