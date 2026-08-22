@@ -54,6 +54,9 @@ func BuildApplyPlan(
 			// Compute absolute source and destination paths for FS operations
 			sourcePath := filepath.Join(overlayRoot, relPath)
 			destPath := filepath.Join(applyRoot, relPath)
+			if err := fsops.ValidatePathOutsideGitDir(repoRoot, destPath); err != nil {
+				return nil, fmt.Errorf("invalid tracked path %q in store %s: %w", relPath, storeID, err)
+			}
 
 			// Check if source path exists in store
 			sourceExists, err := fs.Exists(sourcePath)

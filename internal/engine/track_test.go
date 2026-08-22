@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,7 @@ func (m *trackStoreRepo) Delete(id string) error       { return nil }
 
 type trackFileInfoFS struct {
 	existingPaths map[string]bool
+	copiedPaths   []string
 }
 
 func newTrackFileInfoFS(paths ...string) *trackFileInfoFS {
@@ -86,7 +88,11 @@ func (m *trackFileInfoFS) Lstat(name string) (os.FileInfo, error) {
 	}
 	return nil, os.ErrNotExist
 }
-func (m *trackFileInfoFS) Copy(src, dst string) error           { return nil }
+func (m *trackFileInfoFS) Copy(src, dst string) error {
+	m.copiedPaths = append(m.copiedPaths, dst)
+	m.existingPaths[dst] = true
+	return nil
+}
 func (m *trackFileInfoFS) ValidateRelPath(relPath string) error { return nil }
 func (m *trackFileInfoFS) ValidateIdentifier(id string) error   { return nil }
 
@@ -247,6 +253,35 @@ func TestTrack_RepoRootWorkspaceUnchanged(t *testing.T) {
 	// From repo root, docs/readme.md should remain docs/readme.md
 	if got != "docs/readme.md" {
 		t.Errorf("stored path = %q, want %q", got, "docs/readme.md")
+	}
+}
+
+func TestTrack_RejectsPathInsideGitDirectory(t *testing.T) {
+	gitRepo := &trackGitRepo{
+		root:          "/repo",
+		fingerprint:   "fp1",
+		workspacePath: ".",
+	}
+	storeRepo := newTrackStoreRepo()
+	stateStore := newMockStateStore()
+	fs := newTrackFileInfoFS("/repo/.git/hooks/pre-commit")
+
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	setupWorkspaceWithStore(stateStore, workspaceID, "store1")
+
+	eng := newTrackEngine(gitRepo, storeRepo, stateStore, fs)
+	_, err := eng.Track(context.Background(), &TrackRequest{
+		CWD:   "/repo",
+		Paths: []string{".git/hooks/pre-commit"},
+	})
+	if err == nil {
+		t.Fatal("expected .git path to be rejected")
+	}
+	if !strings.Contains(err.Error(), "repository .git directory") {
+		t.Errorf("Track error = %q, want repository .git directory message", err)
+	}
+	if _, ok := storeRepo.savedTracks["store1"]; ok {
+		t.Fatal("Track saved a path inside .git")
 	}
 }
 

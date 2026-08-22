@@ -43,6 +43,22 @@ func (fs *RealFS) ValidateRelPath(relPath string) error {
 	return nil
 }
 
+// ValidatePathOutsideGitDir rejects paths targeting the repository's Git metadata.
+// The target path is expected to be absolute or relative to repoRoot consistently.
+func ValidatePathOutsideGitDir(repoRoot, targetPath string) error {
+	gitDir := filepath.Join(repoRoot, ".git")
+	relToGitDir, err := filepath.Rel(gitDir, targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to compare path with repository .git directory: %w", err)
+	}
+
+	if relToGitDir == "." || (relToGitDir != ".." && !strings.HasPrefix(relToGitDir, ".."+string(filepath.Separator))) {
+		return fmt.Errorf("path resolves inside repository .git directory")
+	}
+
+	return nil
+}
+
 // ValidateIdentifier validates an identifier (e.g., store ID, workspace ID) for safety.
 // Returns an error if the identifier contains invalid characters or path traversal attempts.
 func (fs *RealFS) ValidateIdentifier(id string) error {

@@ -3,6 +3,7 @@ package planner
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/danieljhkim/monodev/internal/state"
@@ -92,6 +93,32 @@ func TestBuildApplyPlan_SingleStore(t *testing.T) {
 	}
 	if len(plan.Conflicts) != 0 {
 		t.Errorf("expected no conflicts, got %d", len(plan.Conflicts))
+	}
+}
+
+func TestBuildApplyPlan_RejectsPathInsideGitDirectory(t *testing.T) {
+	fs := newMockFS()
+	storeRepo := newMockStoreRepo()
+	workspace := state.NewWorkspaceState("repo1", ".", "copy")
+
+	// This models a track.json loaded from a store received through monodev pull.
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{
+		{Path: ".git/hooks/pre-commit", Kind: "file"},
+	}
+	storeRepo.setTrack("untrusted-store", track)
+	storeRepo.setOverlayRoot("untrusted-store", "/stores/untrusted-store/overlay")
+	fs.setExists("/stores/untrusted-store/overlay/.git/hooks/pre-commit", true)
+
+	plan, err := BuildApplyPlan(workspace, []string{"untrusted-store"}, "copy", "/repo", storeRepo, fs, false)
+	if err == nil {
+		t.Fatal("expected .git path to be rejected")
+	}
+	if !strings.Contains(err.Error(), "repository .git directory") {
+		t.Errorf("BuildApplyPlan error = %q, want repository .git directory message", err)
+	}
+	if plan != nil {
+		t.Fatalf("BuildApplyPlan plan = %#v, want nil so no write operation can be created", plan)
 	}
 }
 

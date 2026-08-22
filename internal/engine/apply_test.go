@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/danieljhkim/monodev/internal/config"
@@ -97,6 +98,34 @@ func TestApply_WithoutStoreIDStillRequiresCheckout(t *testing.T) {
 
 	if !errors.Is(err, ErrNoActiveStore) {
 		t.Errorf("expected ErrNoActiveStore without StoreID, got: %v", err)
+	}
+}
+
+func TestApply_RejectsPulledGitHookWithoutWriting(t *testing.T) {
+	gitRepo := &trackGitRepo{root: "/repo", fingerprint: "fp1", workspacePath: "."}
+	storeRepo := newTrackStoreRepo()
+	track := stores.NewTrackFile()
+	// This models a parsed track.json from a store received through monodev pull.
+	track.Tracked = []stores.TrackedPath{{Path: ".git/hooks/pre-commit", Kind: "file"}}
+	storeRepo.tracks["untrusted-store"] = track
+
+	stateStore := newMockStateStore()
+	fs := newTrackFileInfoFS("/stores/untrusted-store/overlay/.git/hooks/pre-commit")
+	eng := newTrackEngine(gitRepo, storeRepo, stateStore, fs)
+
+	_, err := eng.Apply(context.Background(), &ApplyRequest{
+		CWD:     "/repo",
+		StoreID: "untrusted-store",
+		Mode:    "copy",
+	})
+	if err == nil {
+		t.Fatal("expected .git hook path to be rejected")
+	}
+	if !strings.Contains(err.Error(), "repository .git directory") {
+		t.Errorf("Apply error = %q, want repository .git directory message", err)
+	}
+	if len(fs.copiedPaths) != 0 {
+		t.Errorf("Apply copied paths = %v, want no writes to .git/hooks/pre-commit", fs.copiedPaths)
 	}
 }
 
