@@ -13,11 +13,18 @@ The Monodev Way:
 
 ## Quick Start
 
-Platform support: macOS (Apple Silicon only)
+Platform support: macOS (Apple Silicon and Intel), Linux (AMD64 and ARM64).
+Tagged releases publish a versioned `tar.gz` archive for each supported target
+plus a `SHA256SUMS` file. The release workflow runs `monodev version` on each
+target's native runner; Linux targets also run the filesystem and real-Git
+integration suite before their archives are released.
 
 ```bash
 # 1. Install
 brew install danieljhkim/tap/monodev
+
+# Or download the archive matching your OS and CPU from GitHub Releases,
+# verify it with SHA256SUMS, and place the contained monodev binary on PATH.
 
 # 2. Create your first store and track a file
 monodev checkout -n my-debug-tools

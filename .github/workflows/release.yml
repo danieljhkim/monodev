@@ -4,17 +4,43 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v prefix"
+        required: true
+        default: "0.0.0-test"
+      publish:
+        description: "Create a GitHub Release and update Homebrew"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
-  contents: write  # create GitHub Releases + upload assets
+  contents: write # create GitHub Releases + upload assets
 
 jobs:
   build-release:
-    runs-on: macos-latest
-    outputs:
-      version: ${{ steps.meta.outputs.version }}
-      asset: ${{ steps.meta.outputs.asset }}
-      sha256: ${{ steps.sha.outputs.sha256 }}
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+            runner: macos-15
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-24.04
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,53 +49,128 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
 
-      - name: Compute version
+      # Exercise filesystem and real-Git behavior on every Linux architecture
+      # before the corresponding archive can reach the release job.
+      - name: Run Linux integration tests
+        if: matrix.goos == 'linux'
+        run: make test-integration
+
+      - name: Compute release metadata
         id: meta
         shell: bash
         run: |
-          # tag is like refs/tags/v0.2.1
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "asset=monodev_${VERSION}_darwin_arm64.tar.gz" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
 
-      - name: Build binary (darwin/arm64)
+          ASSET="monodev_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "asset=${ASSET}" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary
         shell: bash
         run: |
-          VERSION="${{ steps.meta.outputs.version }}"
-          GOOS=darwin GOARCH=arm64 go build \
-            -ldflags "-s -w -X main.version=${VERSION}" \
-            -o monodev ./cmd/monodev
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" go build \
+            -trimpath -buildvcs=false \
+            -ldflags "-s -w -X main.version=${{ steps.meta.outputs.version }}" \
+            -o dist/monodev ./cmd/monodev
 
-          ./monodev version
+      - name: Smoke test version on native runner
+        run: ./dist/monodev version
 
-      - name: Package tarball
-        shell: bash
-        run: |
-          VERSION="${{ steps.meta.outputs.version }}"
-          ASSET="monodev_${VERSION}_darwin_arm64.tar.gz"
-          tar -czf "$ASSET" monodev
-          ls -lh "$ASSET"
-
-      - name: Compute sha256
-        id: sha
+      - name: Package archive and checksum
         shell: bash
         run: |
           ASSET="${{ steps.meta.outputs.asset }}"
-          SHA="$(shasum -a 256 "$ASSET" | awk '{print $1}')"
-          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
-          echo "SHA256=$SHA"
+          tar -C dist -czf "dist/${ASSET}" monodev
+          rm dist/monodev
 
-      - name: Create GitHub Release + upload asset
+          if [[ "${{ matrix.goos }}" == "darwin" ]]; then
+            SHA="$(shasum -a 256 "dist/${ASSET}" | awk '{print $1}')"
+          else
+            SHA="$(sha256sum "dist/${ASSET}" | awk '{print $1}')"
+          fi
+          printf '%s  %s\n' "$SHA" "$ASSET" > "dist/${ASSET}.sha256"
+
+      - name: Upload release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  publish-release:
+    name: Assemble release
+    needs: build-release
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      darwin_arm64_sha256: ${{ steps.meta.outputs.darwin_arm64_sha256 }}
+      published: ${{ steps.meta.outputs.published }}
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify archives and assemble checksums
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            PUBLISHED="${{ inputs.publish }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            PUBLISHED=true
+          fi
+
+          test "$(find dist -maxdepth 1 -name 'monodev_*.tar.gz' | wc -l | tr -d ' ')" = 4
+          (cd dist && sha256sum -c *.sha256)
+          LC_ALL=C sort dist/*.sha256 > dist/SHA256SUMS
+
+          DARWIN_ARM64="monodev_${VERSION}_darwin_arm64.tar.gz"
+          DARWIN_ARM64_SHA="$(awk -v asset="$DARWIN_ARM64" '$2 == asset {print $1}' dist/SHA256SUMS)"
+          test -n "$DARWIN_ARM64_SHA"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "darwin_arm64_sha256=${DARWIN_ARM64_SHA}" >> "$GITHUB_OUTPUT"
+          echo "published=${PUBLISHED}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload assets
+        if: github.event_name == 'push' || inputs.publish
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.meta.outputs.version }}
           name: v${{ steps.meta.outputs.version }}
-          files: ${{ steps.meta.outputs.asset }}
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
           generate_release_notes: true
 
+      - name: Upload dry-run artifacts
+        if: github.event_name == 'workflow_dispatch' && !inputs.publish
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run-${{ steps.meta.outputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
   bump-homebrew-tap:
-    needs: build-release
-    runs-on: ubuntu-latest
+    needs: publish-release
+    if: needs.publish-release.outputs.published == 'true'
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -83,18 +184,15 @@ jobs:
       - name: Update formula
         shell: bash
         run: |
-          VERSION="${{ needs.build-release.outputs.version }}"
-          SHA="${{ needs.build-release.outputs.sha256 }}"
+          VERSION="${{ needs.publish-release.outputs.version }}"
+          SHA="${{ needs.publish-release.outputs.darwin_arm64_sha256 }}"
           URL="https://github.com/danieljhkim/monodev/releases/download/v${VERSION}/monodev_${VERSION}_darwin_arm64.tar.gz"
 
           FORMULA="tap/Formula/monodev.rb"
-
-          # Update url/sha256/version lines (assumes they exist)
           perl -0777 -i -pe "s|^\s*url\s+\".*?\"|  url \"${URL}\"|m" "$FORMULA"
           perl -0777 -i -pe "s|^\s*sha256\s+\".*?\"|  sha256 \"${SHA}\"|m" "$FORMULA"
           perl -0777 -i -pe "s|^\s*version\s+\".*?\"|  version \"${VERSION}\"|m" "$FORMULA"
 
-          echo "Updated formula:"
           sed -n '1,120p' "$FORMULA"
 
       - name: Commit and push tap update
@@ -103,7 +201,6 @@ jobs:
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           git add Formula/monodev.rb
-          git commit -m "monodev v${{ needs.build-release.outputs.version }}"
+          git commit -m "monodev v${{ needs.publish-release.outputs.version }}"
           git push
