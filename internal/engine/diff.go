@@ -10,6 +10,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
+	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
 
@@ -21,8 +23,15 @@ func (e *Engine) Diff(ctx context.Context, req *DiffRequest) (*DiffResult, error
 		return nil, err
 	}
 
+	workspaceID := state.ComputeWorkspaceID(fingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
+
 	// Load or create workspace state
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, fingerprint, workspacePath, "copy")
+	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, fingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +58,11 @@ func (e *Engine) Diff(ctx context.Context, req *DiffRequest) (*DiffResult, error
 			return nil, err
 		}
 	}
+	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: repo, id: storeID, mode: lockfile.Shared})
+	if err != nil {
+		return nil, err
+	}
+	defer unlockStore()
 
 	// Load tracked paths from store
 	trackFile, err := repo.LoadTrack(storeID)

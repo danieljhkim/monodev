@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/danieljhkim/monodev/internal/lockfile"
+	"github.com/danieljhkim/monodev/internal/state"
 )
 
 // PruneRequest represents a request to prune untracked files from a store.
@@ -40,7 +43,13 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
+	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
@@ -54,6 +63,11 @@ func (e *Engine) Prune(ctx context.Context, req *PruneRequest) (*PruneResult, er
 	if err != nil {
 		return nil, err
 	}
+	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: repo, id: workspaceState.ActiveStore, mode: lockfile.Exclusive})
+	if err != nil {
+		return nil, err
+	}
+	defer unlockStore()
 
 	// Load track file to get tracked paths
 	track, err := repo.LoadTrack(workspaceState.ActiveStore)

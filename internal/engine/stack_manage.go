@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
@@ -17,6 +18,11 @@ func (e *Engine) StackList(ctx context.Context, req *StackListRequest) (*StackLi
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -41,7 +47,13 @@ func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
 	if err != nil {
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return err
+	}
+	defer unlockWorkspace()
+	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -54,6 +66,15 @@ func (e *Engine) StackAdd(ctx context.Context, req *StackAddRequest) error {
 	if len(locations) == 0 {
 		return fmt.Errorf("%w: store %s does not exist", ErrNotFound, req.StoreID)
 	}
+	storeRequests := make([]storeLockRequest, 0, len(locations))
+	for _, location := range locations {
+		storeRequests = append(storeRequests, storeLockRequest{repo: location.Repo, id: req.StoreID, mode: lockfile.Shared})
+	}
+	unlockStores, err := e.lockStores(ctx, storeRequests...)
+	if err != nil {
+		return err
+	}
+	defer unlockStores()
 
 	// Check for duplicates
 	if slices.Contains(workspaceState.Stack, req.StoreID) {
@@ -80,7 +101,13 @@ func (e *Engine) StackPop(ctx context.Context, req *StackPopRequest) (*StackPopR
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
+	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -129,7 +156,13 @@ func (e *Engine) StackClear(ctx context.Context, req *StackClearRequest) error {
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return err
+	}
+	defer unlockWorkspace()
+	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return fmt.Errorf("failed to load or create workspace state: %w", err)
 	}

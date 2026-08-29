@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -60,7 +61,14 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
+
+	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -74,6 +82,11 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	if err != nil {
 		return nil, err
 	}
+	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: repo, id: workspaceState.ActiveStore, mode: lockfile.Exclusive})
+	if err != nil {
+		return nil, err
+	}
+	defer unlockStore()
 
 	// Load track file to see what paths are tracked
 	track, err := repo.LoadTrack(workspaceState.ActiveStore)

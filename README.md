@@ -67,6 +67,26 @@ A **workspace** represents a specific directory within a repository where overla
 
 > **In short:** stores define *what* dev artifacts exist, and workspaces define *where* and *when* they are applied.
 
+### Concurrency and locking
+
+Monodev coordinates local processes with advisory file locks under each state
+root's `.locks/` directory. A mutating command holds the lock for the complete
+read, plan, filesystem mutation, and JSON save sequence—not only for the final
+write.
+
+- Locks are scoped per workspace and per store, so unrelated workspaces and
+  stores can proceed concurrently.
+- Operations that need both acquire the workspace first, then store locks in
+  canonical path order. Multi-workspace operations sort workspace IDs first.
+- Lock acquisition is bounded to two seconds. Contention returns an actionable
+  `resource lock contention` error instead of waiting indefinitely.
+- Locks are attached to open file descriptors, so the operating system releases
+  them if a process exits or crashes. The `.lock` file may remain and is not an
+  indication that a lock is still held.
+- Composite read-only commands such as `status`, `diff`, and resource
+  `describe` use shared locks with the same bound. Simple listings read each
+  atomically replaced JSON file as an individual consistent snapshot.
+
 ---
 
 ## Basic workflow

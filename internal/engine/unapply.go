@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
@@ -38,6 +39,11 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 
 	// Step 2: Compute workspace ID
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
 
 	// Step 3: Load workspace state
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)

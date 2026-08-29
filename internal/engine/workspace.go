@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
@@ -45,6 +46,19 @@ func (e *Engine) ListWorkspaces(ctx context.Context) (*ListWorkspacesResult, err
 // 2. Return detailed information
 // 3. Error if workspace not found
 func (e *Engine) DescribeWorkspace(ctx context.Context, workspaceID string) (*DescribeWorkspaceResult, error) {
+	workspaceStore, err := e.workspaceStoreForID(workspaceID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: workspace '%s' not found", ErrNotFound, workspaceID)
+		}
+		return nil, fmt.Errorf("failed to resolve workspace: %w", err)
+	}
+	unlockWorkspace, err := lockWorkspace(ctx, workspaceStore, workspaceID, lockfile.Shared)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
+
 	// Step 1: Load workspace state
 	ws, _, err := e.loadWorkspaceFromScopes(workspaceID)
 	if err != nil {
@@ -76,6 +90,23 @@ func (e *Engine) DescribeWorkspace(ctx context.Context, workspaceID string) (*De
 // 4. Otherwise: call stateStore.DeleteWorkspace(workspaceID)
 // 5. Return result with deletion status
 func (e *Engine) DeleteWorkspace(ctx context.Context, req *DeleteWorkspaceRequest) (*DeleteWorkspaceResult, error) {
+	workspaceStore, err := e.workspaceStoreForID(req.WorkspaceID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: workspace '%s' not found", ErrNotFound, req.WorkspaceID)
+		}
+		return nil, fmt.Errorf("failed to resolve workspace: %w", err)
+	}
+	mode := lockfile.Exclusive
+	if req.DryRun {
+		mode = lockfile.Shared
+	}
+	unlockWorkspace, err := lockWorkspace(ctx, workspaceStore, req.WorkspaceID, mode)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
+
 	// Step 1: Load workspace state
 	ws, workspaceStore, err := e.loadWorkspaceFromScopes(req.WorkspaceID)
 	if err != nil {

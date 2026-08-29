@@ -1,12 +1,14 @@
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/lockfile"
 )
 
 // StateStore provides an interface for persisting workspace state.
@@ -20,6 +22,13 @@ type StateStore interface {
 
 	// DeleteWorkspace deletes the workspace state file.
 	DeleteWorkspace(id string) error
+}
+
+// WorkspaceLocker is implemented by state stores that can coordinate a
+// complete workspace transaction across processes. Engine callers use this as
+// an optional capability so in-memory test stores remain lightweight.
+type WorkspaceLocker interface {
+	LockWorkspace(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error)
 }
 
 // FileStateStore implements StateStore using JSON files on disk.
@@ -90,6 +99,15 @@ func (s *FileStateStore) DeleteWorkspace(id string) error {
 	}
 
 	return nil
+}
+
+// LockWorkspace acquires the process-wide lock for one workspace. Locks live
+// beside (not inside) workspace JSON so deletion cannot invalidate the lock.
+func (s *FileStateStore) LockWorkspace(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error) {
+	if err := s.fs.ValidateIdentifier(id); err != nil {
+		return nil, fmt.Errorf("invalid workspace ID: %w", err)
+	}
+	return lockfile.Acquire(ctx, filepath.Join(s.workspacesDir, ".locks", id+".lock"), mode, lockfile.DefaultTimeout)
 }
 
 func (s *FileStateStore) workspacePath(id string) (string, error) {

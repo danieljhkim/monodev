@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -115,12 +116,22 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-
-	// Verify store exists and resolve scope
-	_, resolvedScope, err := e.storeResolver.resolveStoreRepo(req.StoreID, req.Scope)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
 	if err != nil {
 		return err
 	}
+	defer unlockWorkspace()
+
+	// Verify store exists and resolve scope
+	repo, resolvedScope, err := e.storeResolver.resolveStoreRepo(req.StoreID, req.Scope)
+	if err != nil {
+		return err
+	}
+	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: repo, id: req.StoreID, mode: lockfile.Shared})
+	if err != nil {
+		return err
+	}
+	defer unlockStore()
 
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
@@ -161,6 +172,11 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return err
+	}
+	defer unlockWorkspace()
 
 	// Determine effective scope
 	scope := req.Scope
@@ -173,6 +189,11 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	if err != nil {
 		return fmt.Errorf("failed to resolve scope %q: %w", scope, err)
 	}
+	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: repo, id: req.StoreID, mode: lockfile.Exclusive})
+	if err != nil {
+		return err
+	}
+	defer unlockStore()
 
 	// Create store metadata
 	meta := stores.NewStoreMeta(req.Name, scope, e.clock.Now())
@@ -233,6 +254,15 @@ func (e *Engine) DescribeStore(ctx context.Context, storeID string) ([]ScopedSto
 	if len(locations) == 0 {
 		return nil, fmt.Errorf("%w: store '%s' not found", ErrNotFound, storeID)
 	}
+	lockRequests := make([]storeLockRequest, 0, len(locations))
+	for _, loc := range locations {
+		lockRequests = append(lockRequests, storeLockRequest{repo: loc.Repo, id: storeID, mode: lockfile.Shared})
+	}
+	unlockStores, err := e.lockStores(ctx, lockRequests...)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockStores()
 
 	var results []ScopedStoreDetails
 	for _, loc := range locations {
@@ -263,6 +293,11 @@ func (e *Engine) GetActiveStoreID(ctx context.Context, cwd string) (storeID, sco
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	if err != nil {
+		return "", "", err
+	}
+	defer unlockWorkspace()
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -285,6 +320,11 @@ func (e *Engine) UpdateStore(ctx context.Context, req *UpdateStoreRequest) error
 	if err != nil {
 		return err
 	}
+	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: repo, id: req.StoreID, mode: lockfile.Exclusive})
+	if err != nil {
+		return err
+	}
+	defer unlockStore()
 
 	// Load current metadata
 	meta, err := repo.LoadMeta(req.StoreID)

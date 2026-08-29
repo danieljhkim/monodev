@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
 )
@@ -18,7 +19,13 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
+	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -39,6 +46,15 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 	if err != nil {
 		return nil, err
 	}
+	storeRequests := make([]storeLockRequest, 0, len(orderedStores))
+	for _, storeID := range orderedStores {
+		storeRequests = append(storeRequests, storeLockRequest{repo: multiRepo, id: storeID, mode: lockfile.Shared})
+	}
+	unlockStores, err := e.lockStores(ctx, storeRequests...)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockStores()
 
 	// Always detect conflicts (force=false for detection)
 	plan, err := planner.BuildApplyPlan(
@@ -134,7 +150,13 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
+	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}

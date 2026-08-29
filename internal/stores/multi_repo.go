@@ -1,6 +1,11 @@
 package stores
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+
+	"github.com/danieljhkim/monodev/internal/lockfile"
+)
 
 // MultiStoreRepo wraps multiple StoreRepo instances and routes operations
 // by store ID. This is used when a stack contains stores from both scopes.
@@ -91,4 +96,20 @@ func (m *MultiStoreRepo) Delete(id string) error {
 		return fmt.Errorf("no repo found for store %s", id)
 	}
 	return repo.Delete(id)
+}
+
+func (m *MultiStoreRepo) StoreLockKey(id string) (string, error) {
+	locker, ok := m.repoFor(id).(StoreLocker)
+	if !ok {
+		return "", fmt.Errorf("%w: %s", ErrLockUnsupported, id)
+	}
+	return locker.StoreLockKey(id)
+}
+
+func (m *MultiStoreRepo) LockStore(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error) {
+	locker, ok := m.repoFor(id).(StoreLocker)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrLockUnsupported, id)
+	}
+	return locker.LockStore(ctx, id, mode)
 }

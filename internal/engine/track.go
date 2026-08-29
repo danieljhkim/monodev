@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -65,6 +66,11 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
 
 	// Load workspace state to get active store
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
@@ -86,6 +92,11 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 	if err != nil {
 		return nil, err
 	}
+	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: repo, id: activeStore, mode: lockfile.Exclusive})
+	if err != nil {
+		return nil, err
+	}
+	defer unlockStore()
 
 	// Load current track file
 	track, err := repo.LoadTrack(activeStore)
@@ -169,6 +180,11 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) (*UntrackResu
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
 
 	// Load workspace state to get active store
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
@@ -190,6 +206,11 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) (*UntrackResu
 	if err != nil {
 		return nil, err
 	}
+	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: repo, id: activeStore, mode: lockfile.Exclusive})
+	if err != nil {
+		return nil, err
+	}
+	defer unlockStore()
 
 	// Load current track file
 	track, err := repo.LoadTrack(activeStore)
