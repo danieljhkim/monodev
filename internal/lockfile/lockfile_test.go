@@ -16,7 +16,7 @@ func TestAcquireExclusiveContentionIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
+	defer closeLock(t, first)
 
 	started := time.Now()
 	_, err = Acquire(context.Background(), path, Exclusive, 40*time.Millisecond)
@@ -34,12 +34,12 @@ func TestAcquireSharedLocksCanOverlapAndExcludeWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer one.Close()
+	defer closeLock(t, one)
 	two, err := Acquire(context.Background(), path, Shared, time.Second)
 	if err != nil {
 		t.Fatalf("second shared lock: %v", err)
 	}
-	defer two.Close()
+	defer closeLock(t, two)
 
 	if _, err := Acquire(context.Background(), path, Exclusive, 30*time.Millisecond); !errors.Is(err, ErrContended) {
 		t.Fatalf("exclusive Acquire error = %v, want ErrContended", err)
@@ -67,7 +67,7 @@ func TestLockIsReleasedWhenProcessExits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lock remained held after helper exit: %v", err)
 	}
-	defer lock.Close()
+	defer closeLock(t, lock)
 }
 
 func TestUnrelatedLocksProceedConcurrently(t *testing.T) {
@@ -76,11 +76,18 @@ func TestUnrelatedLocksProceedConcurrently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first.Close()
+	defer closeLock(t, first)
 
 	second, err := Acquire(context.Background(), filepath.Join(dir, "two.lock"), Exclusive, 30*time.Millisecond)
 	if err != nil {
 		t.Fatalf("unrelated lock was blocked: %v", err)
 	}
-	defer second.Close()
+	defer closeLock(t, second)
+}
+
+func closeLock(t *testing.T, lock *Lock) {
+	t.Helper()
+	if err := lock.Close(); err != nil {
+		t.Errorf("close lock: %v", err)
+	}
 }

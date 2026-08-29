@@ -287,7 +287,7 @@ func TestOverlayTxn_NthFilesystemFailureIsRecoverable(t *testing.T) {
 				}
 				clean := fx.engine(t, nil, cleanStore)
 				if recoverErr := runOverlayKind(t, clean, fx, kind); recoverErr != nil {
-					if !((kind == overlayTxnUnapply || kind == overlayTxnStackUnapply) && errors.Is(recoverErr, ErrStateMissing)) {
+					if (kind != overlayTxnUnapply && kind != overlayTxnStackUnapply) || !errors.Is(recoverErr, ErrStateMissing) {
 						t.Fatalf("kind %s failAt %d recovery: %v", kind, failAt, recoverErr)
 					}
 				}
@@ -330,7 +330,7 @@ func TestOverlayTxn_StateSaveFailureIsRecoverable(t *testing.T) {
 			}
 			clean := fx.engine(t, nil, cleanStore)
 			if recoverErr := runOverlayKind(t, clean, fx, kind); recoverErr != nil {
-				if !((kind == overlayTxnUnapply || kind == overlayTxnStackUnapply) && errors.Is(recoverErr, ErrStateMissing)) {
+				if (kind != overlayTxnUnapply && kind != overlayTxnStackUnapply) || !errors.Is(recoverErr, ErrStateMissing) {
 					t.Fatalf("recovery: %v", recoverErr)
 				}
 			}
