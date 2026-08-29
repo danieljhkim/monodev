@@ -17,6 +17,16 @@ import (
 // This prevents command injection via malicious branch/remote names.
 var validGitRefPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
 
+var (
+	// ErrPersistenceWorkTreeDirty is returned when pulling would move the
+	// persistence branch while tracked changes are present in its work tree.
+	ErrPersistenceWorkTreeDirty = errors.New("persistence work tree has uncommitted changes")
+
+	// ErrPersistenceBranchDiverged is returned when the fetched commit cannot
+	// fast-forward the local persistence branch.
+	ErrPersistenceBranchDiverged = errors.New("local persistence branch has diverged from fetched branch")
+)
+
 func contextOrBackground(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()
@@ -57,8 +67,9 @@ type GitPersistence interface {
 	// Fetch fetches the specified branch from the remote.
 	Fetch(ctx context.Context, repoRoot, remote, branch string) error
 
-	// Checkout checks out the specified branch to the .monodev work tree.
-	Checkout(ctx context.Context, repoRoot, branch string) error
+	// CheckoutFetched fast-forwards the specified branch to the exact commit
+	// recorded in FETCH_HEAD and checks it out in the .monodev work tree.
+	CheckoutFetched(ctx context.Context, repoRoot, branch string) error
 
 	// GetRemoteURL retrieves the URL of the specified remote from the main repository.
 	GetRemoteURL(ctx context.Context, repoRoot, remoteName string) (string, error)
@@ -245,15 +256,50 @@ func (g *RealGitPersistence) Fetch(ctx context.Context, repoRoot, remote, branch
 	return nil
 }
 
-// Checkout checks out the specified branch.
-func (g *RealGitPersistence) Checkout(ctx context.Context, repoRoot, branch string) error {
+// CheckoutFetched fast-forwards branch to the exact commit in FETCH_HEAD.
+// It refuses dirty or divergent persistence state rather than resetting it.
+func (g *RealGitPersistence) CheckoutFetched(ctx context.Context, repoRoot, branch string) error {
 	ctx = contextOrBackground(ctx)
 	if err := validateGitRef(branch, "branch"); err != nil {
 		return err
 	}
 
-	if _, err := g.runGit(ctx, repoRoot, "checkout", branch); err != nil {
-		return fmt.Errorf("failed to checkout: %w", err)
+	status, err := g.runGit(ctx, repoRoot, "status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return fmt.Errorf("failed to inspect persistence work tree: %w", err)
+	}
+	if status != "" {
+		return fmt.Errorf("%w; commit or discard the tracked changes before pulling", ErrPersistenceWorkTreeDirty)
+	}
+
+	fetchedCommit, err := g.runGit(ctx, repoRoot, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
+	if err != nil {
+		return fmt.Errorf("failed to resolve fetched persistence commit: %w", err)
+	}
+
+	localRef := "refs/heads/" + branch
+	localCommit, localErr := g.runGit(ctx, repoRoot, "rev-parse", "--verify", localRef+"^{commit}")
+	if localErr == nil {
+		if _, err := g.runGit(ctx, repoRoot, "merge-base", "--is-ancestor", localCommit, fetchedCommit); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			return fmt.Errorf("%w; local %s is %s and fetched commit is %s", ErrPersistenceBranchDiverged, branch, localCommit, fetchedCommit)
+		}
+	} else if errors.Is(localErr, context.Canceled) || errors.Is(localErr, context.DeadlineExceeded) {
+		return localErr
+	}
+
+	if _, err := g.runGit(ctx, repoRoot, "checkout", "-B", branch, fetchedCommit); err != nil {
+		return fmt.Errorf("failed to checkout fetched persistence commit: %w", err)
+	}
+
+	checkedOutCommit, err := g.runGit(ctx, repoRoot, "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("failed to verify checked out persistence commit: %w", err)
+	}
+	if checkedOutCommit != fetchedCommit {
+		return fmt.Errorf("checked out persistence commit %s does not match fetched commit %s", checkedOutCommit, fetchedCommit)
 	}
 
 	return nil
@@ -323,31 +369,31 @@ func (g *RealGitPersistence) SetRemote(ctx context.Context, repoRoot, remoteName
 
 // FakeGitPersistence is a test double that tracks operations without executing them.
 type FakeGitPersistence struct {
-	EnsureRepoCalls []EnsureRepoCall
-	CommitCalls     []CommitCall
-	PushCalls       []PushCall
-	FetchCalls      []FetchCall
-	CheckoutCalls   []CheckoutCall
-	GetRemoteCalls  []GetRemoteCall
-	SetRemoteCalls  []SetRemoteCall
+	EnsureRepoCalls      []EnsureRepoCall
+	CommitCalls          []CommitCall
+	PushCalls            []PushCall
+	FetchCalls           []FetchCall
+	CheckoutFetchedCalls []CheckoutFetchedCall
+	GetRemoteCalls       []GetRemoteCall
+	SetRemoteCalls       []SetRemoteCall
 
 	// Configurable responses
-	EnsureRepoErr error
-	CommitErr     error
-	PushErr       error
-	FetchErr      error
-	CheckoutErr   error
-	RemoteURL     string
-	GetRemoteErr  error
-	SetRemoteErr  error
+	EnsureRepoErr      error
+	CommitErr          error
+	PushErr            error
+	FetchErr           error
+	CheckoutFetchedErr error
+	RemoteURL          string
+	GetRemoteErr       error
+	SetRemoteErr       error
 
-	EnsureRepoHook func(context.Context, EnsureRepoCall) error
-	CommitHook     func(context.Context, CommitCall) error
-	PushHook       func(context.Context, PushCall) error
-	FetchHook      func(context.Context, FetchCall) error
-	CheckoutHook   func(context.Context, CheckoutCall) error
-	GetRemoteHook  func(context.Context, GetRemoteCall) error
-	SetRemoteHook  func(context.Context, SetRemoteCall) error
+	EnsureRepoHook      func(context.Context, EnsureRepoCall) error
+	CommitHook          func(context.Context, CommitCall) error
+	PushHook            func(context.Context, PushCall) error
+	FetchHook           func(context.Context, FetchCall) error
+	CheckoutFetchedHook func(context.Context, CheckoutFetchedCall) error
+	GetRemoteHook       func(context.Context, GetRemoteCall) error
+	SetRemoteHook       func(context.Context, SetRemoteCall) error
 }
 
 type EnsureRepoCall struct {
@@ -374,7 +420,7 @@ type FetchCall struct {
 	Branch   string
 }
 
-type CheckoutCall struct {
+type CheckoutFetchedCall struct {
 	RepoRoot string
 	Branch   string
 }
@@ -473,22 +519,22 @@ func (f *FakeGitPersistence) Fetch(ctx context.Context, repoRoot, remote, branch
 	return f.FetchErr
 }
 
-func (f *FakeGitPersistence) Checkout(ctx context.Context, repoRoot, branch string) error {
+func (f *FakeGitPersistence) CheckoutFetched(ctx context.Context, repoRoot, branch string) error {
 	ctx = contextOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	call := CheckoutCall{
+	call := CheckoutFetchedCall{
 		RepoRoot: repoRoot,
 		Branch:   branch,
 	}
-	f.CheckoutCalls = append(f.CheckoutCalls, call)
-	if f.CheckoutHook != nil {
-		if err := f.CheckoutHook(ctx, call); err != nil {
+	f.CheckoutFetchedCalls = append(f.CheckoutFetchedCalls, call)
+	if f.CheckoutFetchedHook != nil {
+		if err := f.CheckoutFetchedHook(ctx, call); err != nil {
 			return err
 		}
 	}
-	return f.CheckoutErr
+	return f.CheckoutFetchedErr
 }
 
 func (f *FakeGitPersistence) GetRemoteURL(ctx context.Context, repoRoot, remoteName string) (string, error) {

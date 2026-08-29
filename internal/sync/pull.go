@@ -47,12 +47,13 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		return nil, fmt.Errorf("failed to fetch: %w", err)
 	}
 
-	// Checkout to work tree
+	// Fast-forward the local persistence branch to the exact fetched commit
+	// and materialize that commit in the persistence work tree.
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
-	if err := s.git.Checkout(ctx, req.RepoRoot, config.Branch); err != nil {
-		return nil, fmt.Errorf("failed to checkout: %w", err)
+	if err := s.git.CheckoutFetched(ctx, req.RepoRoot, config.Branch); err != nil {
+		return nil, fmt.Errorf("failed to materialize fetched persistence branch: %w", err)
 	}
 
 	// If no store IDs specified, pull all stores from the persist directory
