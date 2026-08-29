@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
@@ -45,6 +46,23 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	}
 	if err := checkContext(ctx); err != nil {
 		return nil, err
+	}
+
+	workspaceRoot := filepath.Join(root, workspacePath)
+	if !req.DryRun {
+		if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
+			return nil, err
+		}
+		reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
+		if reloadErr == nil {
+			workspaceState = reloaded
+			workspaceState.AbsolutePath = workspaceRoot
+		} else if !os.IsNotExist(reloadErr) {
+			return nil, fmt.Errorf("failed to reload workspace state: %w", reloadErr)
+		} else {
+			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, req.Mode)
+			workspaceState.AbsolutePath = workspaceRoot
+		}
 	}
 
 	var storeToApply string
@@ -140,43 +158,32 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		}, nil
 	}
 
-	// Apply overlays
-	appliedOps := []planner.Operation{}
-	workspaceRoot := filepath.Join(root, workspacePath)
-	for _, op := range plan.Operations {
-		if err := checkContext(ctx); err != nil {
-			return nil, err
-		}
-		if err := e.executeOperation(workspaceRoot, op); err != nil {
-			return nil, fmt.Errorf("failed to execute operation: %w", err)
-		}
-		appliedOps = append(appliedOps, op)
-
-		// Update workspace state for non-remove operations
-		if op.Type != planner.OpRemove {
-			workspaceState.Paths[op.RelPath] = e.ownershipForAppliedPath(op, req.Mode)
-		} else {
-			delete(workspaceState.Paths, op.RelPath)
-		}
-	}
-
-	if err := checkContext(ctx); err != nil {
+	appliedOps := append([]planner.Operation{}, plan.Operations...)
+	if err := e.runOverlayTxn(ctx, overlayTxnRequest{
+		kind:          overlayTxnApply,
+		workspaceID:   workspaceID,
+		workspaceRoot: workspaceRoot,
+		ops:           plan.Operations,
+		finalize: func() (*state.WorkspaceState, bool, error) {
+			final := state.CloneWorkspaceState(workspaceState)
+			if final.Paths == nil {
+				final.Paths = map[string]state.PathOwnership{}
+			}
+			for _, op := range plan.Operations {
+				if op.Type != planner.OpRemove {
+					final.Paths[op.RelPath] = e.ownershipForAppliedPath(op, req.Mode)
+				} else {
+					delete(final.Paths, op.RelPath)
+				}
+			}
+			final.Applied = true
+			final.Mode = req.Mode
+			final.ActiveStore = storeToApply
+			final.AddAppliedStore(storeToApply, req.Mode)
+			return final, false, nil
+		},
+	}); err != nil {
 		return nil, err
-	}
-
-	// Update workspace state metadata (only active store, preserve stack)
-	workspaceState.Applied = true
-	workspaceState.Mode = req.Mode
-	// Note: Stack is NOT modified here - apply is for single stores only
-	workspaceState.ActiveStore = storeToApply
-	workspaceState.AddAppliedStore(storeToApply, req.Mode)
-
-	// Step 8: Persist workspace state atomically
-	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
-		return nil, fmt.Errorf("failed to save workspace state: %w", err)
 	}
 
 	return &ApplyResult{

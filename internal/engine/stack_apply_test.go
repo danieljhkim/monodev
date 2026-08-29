@@ -72,10 +72,11 @@ func TestStackUnapply_RemovesWorkspaceRelativePathForSubdirectoryWorkspace(t *te
 		t.Fatalf("Removed = %v, want [config.yml]", result.Removed)
 	}
 
-	if len(fs.removed) != 1 {
-		t.Fatalf("RemoveAll calls = %v, want one call", fs.removed)
+	removedCalls := workspaceRemoveAllCalls(fs.removed)
+	if len(removedCalls) != 1 {
+		t.Fatalf("RemoveAll calls = %v, want one workspace call", removedCalls)
 	}
-	if got, want := fs.removed[0], "/repo/services/api/config.yml"; got != want {
+	if got, want := removedCalls[0], "/repo/services/api/config.yml"; got != want {
 		t.Fatalf("RemoveAll path = %q, want %q", got, want)
 	}
 	if !fs.existingPaths["/repo/config.yml"] {

@@ -15,6 +15,17 @@ import (
 	"github.com/danieljhkim/monodev/internal/stores"
 )
 
+func workspaceRemoveAllCalls(paths []string) []string {
+	filtered := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if strings.HasSuffix(path, ".txn") || strings.Contains(path, ".txn"+string(filepath.Separator)) {
+			continue
+		}
+		filtered = append(filtered, path)
+	}
+	return filtered
+}
+
 func newUnapplyDriftEngine(gitRepo *trackGitRepo, stateStore *mockStateStore, fs *removeCapturingFS, hasher *hash.FakeHasher) *Engine {
 	return New(
 		gitRepo,
@@ -175,8 +186,8 @@ func TestUnapply_ForceRemovesDriftedCopyAndUpdatesWorkspaceState(t *testing.T) {
 	if len(result.Removed) != 1 || result.Removed[0] != "config.yml" {
 		t.Fatalf("Removed = %v, want [config.yml]", result.Removed)
 	}
-	if len(fs.removed) != 1 || fs.removed[0] != "/repo/config.yml" {
-		t.Fatalf("RemoveAll calls = %v, want [/repo/config.yml]", fs.removed)
+	if removed := workspaceRemoveAllCalls(fs.removed); len(removed) != 1 || removed[0] != "/repo/config.yml" {
+		t.Fatalf("RemoveAll calls = %v, want [/repo/config.yml]", removed)
 	}
 	if fs.existingPaths["/repo/config.yml"] {
 		t.Fatal("drifted workspace file still exists; want force to remove it")

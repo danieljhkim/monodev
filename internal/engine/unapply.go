@@ -57,6 +57,22 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return nil, err
 	}
 
+	workspaceRoot := filepath.Join(root, workspacePath)
+	if !req.DryRun {
+		if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
+			return nil, err
+		}
+		reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
+		if reloadErr != nil {
+			if os.IsNotExist(reloadErr) {
+				return nil, fmt.Errorf("%w: workspace has no managed paths", ErrStateMissing)
+			}
+			return nil, fmt.Errorf("failed to reload workspace state: %w", reloadErr)
+		}
+		workspaceState = reloaded
+		workspaceState.AbsolutePath = workspaceRoot
+	}
+
 	// Step 4: Collect only paths owned by the active store (not stack stores)
 	activeStore := workspaceState.ActiveStore
 	activeStorePaths := []string{}
@@ -88,37 +104,36 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return nil, err
 	}
 
-	workspaceRoot := filepath.Join(root, workspacePath)
-	removed, err := e.removeManagedPaths(workspaceRoot, workspaceState, activeStorePaths, req.Force)
+	ops, removed, err := e.planManagedPathRemoval(workspaceRoot, workspaceState, activeStorePaths, req.Force)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 6: Update workspace state. Unapply removes only active-store paths:
-	// if that empties the managed path set, the workspace state is no longer
-	// useful and should be removed. Stack-owned paths keep the state alive.
-	if err := checkContext(ctx); err != nil {
-		return nil, err
+	final := state.CloneWorkspaceState(workspaceState)
+	for _, relPath := range removed {
+		delete(final.Paths, relPath)
 	}
-	if len(workspaceState.Paths) == 0 {
-		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
-			return nil, fmt.Errorf("failed to delete workspace state: %w", err)
-		}
-		return &UnapplyResult{
-			Removed:     removed,
-			WorkspaceID: workspaceID,
-		}, nil
+	deleteState := len(final.Paths) == 0
+	if !deleteState {
+		final.Applied = true
+		final.PruneAppliedStores()
 	}
 
-	workspaceState.Applied = true
-	workspaceState.PruneAppliedStores()
-
-	if err := checkContext(ctx); err != nil {
+	if err := e.runOverlayTxn(ctx, overlayTxnRequest{
+		kind:          overlayTxnUnapply,
+		workspaceID:   workspaceID,
+		workspaceRoot: workspaceRoot,
+		ops:           ops,
+		finalize: func() (*state.WorkspaceState, bool, error) {
+			if deleteState {
+				return nil, true, nil
+			}
+			return final, false, nil
+		},
+	}); err != nil {
 		return nil, err
 	}
-	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
-		return nil, fmt.Errorf("failed to save workspace state: %w", err)
-	}
+
 	return &UnapplyResult{
 		Removed:     removed,
 		WorkspaceID: workspaceID,

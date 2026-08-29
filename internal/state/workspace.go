@@ -83,6 +83,33 @@ func NewWorkspaceState(repo, workspacePath, mode string) *WorkspaceState {
 	}
 }
 
+// CloneWorkspaceState returns a deep copy so overlay transactions can mutate a
+// candidate ledger without touching the caller-owned in-memory state until commit.
+func CloneWorkspaceState(ws *WorkspaceState) *WorkspaceState {
+	if ws == nil {
+		return nil
+	}
+	clone := *ws
+	if ws.Stack != nil {
+		clone.Stack = append([]string{}, ws.Stack...)
+	}
+	if ws.AppliedStores != nil {
+		clone.AppliedStores = append([]AppliedStore{}, ws.AppliedStores...)
+	}
+	clone.Paths = make(map[string]PathOwnership, len(ws.Paths))
+	for relPath, ownership := range ws.Paths {
+		if ownership.Contents != nil {
+			files := make(map[string]string, len(ownership.Contents.Files))
+			for name, checksum := range ownership.Contents.Files {
+				files[name] = checksum
+			}
+			ownership.Contents = &DirContents{Files: files}
+		}
+		clone.Paths[relPath] = ownership
+	}
+	return &clone
+}
+
 func (ws *WorkspaceState) AddAppliedStore(store string, mode string) {
 	ws.RemoveAppliedStore(store)
 	ws.AppliedStores = append(ws.AppliedStores, AppliedStore{Store: store, Type: mode})

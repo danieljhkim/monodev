@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
@@ -13,6 +14,9 @@ import (
 // StackApply applies all stores in the configured stack to the workspace.
 // This does not include the active store - only stores added via 'stack add'.
 func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*StackApplyResult, error) {
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
 	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
@@ -26,6 +30,22 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
+	}
+	workspaceRoot := filepath.Join(root, workspacePath)
+	if !req.DryRun {
+		if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
+			return nil, err
+		}
+		reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
+		if reloadErr == nil {
+			workspaceState = reloaded
+			workspaceState.AbsolutePath = workspaceRoot
+		} else if !os.IsNotExist(reloadErr) {
+			return nil, fmt.Errorf("failed to reload workspace state: %w", reloadErr)
+		} else {
+			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "copy")
+			workspaceState.AbsolutePath = workspaceRoot
+		}
 	}
 
 	if len(workspaceState.Stack) == 0 {
@@ -90,27 +110,29 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 		}, nil
 	}
 
-	// Apply overlays
-	appliedOps := []planner.Operation{}
-	workspaceRoot := filepath.Join(root, workspacePath)
-	for _, op := range plan.Operations {
-		if err := e.executeOperation(workspaceRoot, op); err != nil {
-			return nil, fmt.Errorf("failed to execute operation: %w", err)
-		}
-		appliedOps = append(appliedOps, op)
-
-		// Update workspace state for non-remove operations
-		if op.Type != planner.OpRemove {
-			workspaceState.Paths[op.RelPath] = e.ownershipForAppliedPath(op, req.Mode)
-		} else {
-			delete(workspaceState.Paths, op.RelPath)
-		}
-	}
-
-	workspaceState.RefreshAppliedStores()
-
-	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
-		return nil, fmt.Errorf("failed to save workspace state: %w", err)
+	appliedOps := append([]planner.Operation{}, plan.Operations...)
+	if err := e.runOverlayTxn(ctx, overlayTxnRequest{
+		kind:          overlayTxnStackApply,
+		workspaceID:   workspaceID,
+		workspaceRoot: workspaceRoot,
+		ops:           plan.Operations,
+		finalize: func() (*state.WorkspaceState, bool, error) {
+			final := state.CloneWorkspaceState(workspaceState)
+			if final.Paths == nil {
+				final.Paths = map[string]state.PathOwnership{}
+			}
+			for _, op := range plan.Operations {
+				if op.Type != planner.OpRemove {
+					final.Paths[op.RelPath] = e.ownershipForAppliedPath(op, req.Mode)
+				} else {
+					delete(final.Paths, op.RelPath)
+				}
+			}
+			final.RefreshAppliedStores()
+			return final, false, nil
+		},
+	}); err != nil {
+		return nil, err
 	}
 
 	return &StackApplyResult{
@@ -125,6 +147,9 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 // StackUnapply removes only paths applied by the stack stores.
 // Paths applied by the active store are not affected, unless they overlap
 func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*StackUnapplyResult, error) {
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
 	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
@@ -138,6 +163,22 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
+	}
+	workspaceRoot := filepath.Join(root, workspacePath)
+	if !req.DryRun {
+		if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
+			return nil, err
+		}
+		reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
+		if reloadErr == nil {
+			workspaceState = reloaded
+			workspaceState.AbsolutePath = workspaceRoot
+		} else if !os.IsNotExist(reloadErr) {
+			return nil, fmt.Errorf("failed to reload workspace state: %w", reloadErr)
+		} else {
+			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "copy")
+			workspaceState.AbsolutePath = workspaceRoot
+		}
 	}
 	if len(workspaceState.Stack) == 0 {
 		return nil, fmt.Errorf("%w: stack is empty", ErrValidation)
@@ -169,14 +210,27 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		}, nil
 	}
 
-	workspaceRoot := filepath.Join(root, workspacePath)
-	removed, err := e.removeManagedPaths(workspaceRoot, workspaceState, stackPaths, req.Force)
+	ops, removed, err := e.planManagedPathRemoval(workspaceRoot, workspaceState, stackPaths, req.Force)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
-		return nil, fmt.Errorf("failed to save workspace state: %w", err)
+	final := state.CloneWorkspaceState(workspaceState)
+	for _, relPath := range removed {
+		delete(final.Paths, relPath)
+	}
+	final.RefreshAppliedStores()
+
+	if err := e.runOverlayTxn(ctx, overlayTxnRequest{
+		kind:          overlayTxnStackUnapply,
+		workspaceID:   workspaceID,
+		workspaceRoot: workspaceRoot,
+		ops:           ops,
+		finalize: func() (*state.WorkspaceState, bool, error) {
+			return final, false, nil
+		},
+	}); err != nil {
+		return nil, err
 	}
 
 	return &StackUnapplyResult{

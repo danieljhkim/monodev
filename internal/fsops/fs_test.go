@@ -1,6 +1,7 @@
 package fsops
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -392,6 +393,44 @@ func TestRealFS_Remove(t *testing.T) {
 			t.Error("File should have been removed")
 		}
 	})
+}
+
+type failAfterReader struct {
+	data []byte
+	off  int
+}
+
+func (r *failAfterReader) Read(p []byte) (int, error) {
+	if r.off >= len(r.data) {
+		return 0, errors.New("injected copy failure")
+	}
+	n := copy(p, r.data[r.off:])
+	r.off += n
+	return n, errors.New("injected copy failure")
+}
+
+func TestWriteFileAtomically_FailureDoesNotTruncateDestination(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "dest.txt")
+	original := "original-destination-bytes"
+	if err := os.WriteFile(dst, []byte(original), 0600); err != nil {
+		t.Fatalf("failed to write destination: %v", err)
+	}
+
+	err := writeFileAtomically(dst, &failAfterReader{data: []byte("partial-new-content")}, 0600)
+	if err == nil {
+		t.Fatal("writeFileAtomically succeeded, want injected copy failure")
+	}
+	if !strings.Contains(err.Error(), "injected copy failure") {
+		t.Fatalf("error = %v, want injected copy failure", err)
+	}
+
+	got, readErr := os.ReadFile(dst)
+	if readErr != nil {
+		t.Fatalf("failed to read destination after failed copy: %v", readErr)
+	}
+	if string(got) != original {
+		t.Fatalf("destination content = %q, want original %q", got, original)
+	}
 }
 
 func TestRealFS_Copy(t *testing.T) {
