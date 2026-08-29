@@ -56,6 +56,11 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		return nil, fmt.Errorf("failed to materialize fetched persistence branch: %w", err)
 	}
 
+	workspaceRef, workspaceFound, err := s.loadWorkspaceReference(req)
+	if err != nil {
+		return nil, err
+	}
+
 	// If no store IDs specified, pull all stores from the persist directory
 	storeIDs := req.StoreIDs
 	if len(storeIDs) == 0 {
@@ -66,7 +71,7 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		if err != nil {
 			return nil, fmt.Errorf("failed to list persisted stores: %w", err)
 		}
-		if len(persistedStores) == 0 {
+		if len(persistedStores) == 0 && workspaceRef == nil {
 			return &PullResult{
 				PulledStores:    []string{},
 				PulledWorkspace: false,
@@ -76,6 +81,9 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 			}, nil
 		}
 		storeIDs = persistedStores
+	}
+	if workspaceRef != nil && req.WithStores {
+		storeIDs = appendUniqueStores(storeIDs, workspaceRef.Stack, workspaceRef.ActiveStore)
 	}
 
 	var pulledStores []string
@@ -120,12 +128,40 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		pulledStores = append(pulledStores, storeID)
 	}
 
-	return &PullResult{
-		PulledStores:    pulledStores,
-		PulledWorkspace: false, // Not implemented yet
-		Verified:        len(pulledStores) > 0 && verifiedStores == len(pulledStores),
-		Remote:          remoteName,
-		Branch:          config.Branch,
-		Warnings:        warnings,
-	}, nil
+	result := &PullResult{
+		PulledStores:                pulledStores,
+		PulledWorkspace:             false,
+		WorkspaceReferenceFound:     workspaceFound,
+		WorkspaceReferenceValidated: workspaceRef != nil,
+		Verified:                    len(pulledStores) > 0 && verifiedStores == len(pulledStores),
+		Remote:                      remoteName,
+		Branch:                      config.Branch,
+		Warnings:                    warnings,
+	}
+	if workspaceRef != nil {
+		if err := s.restoreWorkspaceReference(req, workspaceRef); err != nil {
+			return nil, err
+		}
+		result.PulledWorkspace = true
+		result.WorkspaceID = req.LocalWorkspaceID
+	}
+	return result, nil
+}
+
+func appendUniqueStores(storeIDs []string, additional []string, activeStore string) []string {
+	seen := make(map[string]struct{}, len(storeIDs)+len(additional)+1)
+	for _, storeID := range storeIDs {
+		seen[storeID] = struct{}{}
+	}
+	for _, storeID := range append(additional, activeStore) {
+		if storeID == "" {
+			continue
+		}
+		if _, exists := seen[storeID]; exists {
+			continue
+		}
+		seen[storeID] = struct{}{}
+		storeIDs = append(storeIDs, storeID)
+	}
+	return storeIDs
 }

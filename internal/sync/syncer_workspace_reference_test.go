@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -202,4 +203,181 @@ func TestSyncer_PushWorkspaceReference(t *testing.T) {
 			t.Error("Push should not be called in dry run")
 		}
 	})
+}
+
+func TestSyncer_PullWorkspaceReferenceRestoresPortableLocalState(t *testing.T) {
+	repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+	defer cleanup()
+	savePullRemoteConfig(t, repoRoot, configStore)
+
+	for _, storeID := range []string{"stack-store", "active-store"} {
+		if err := storeRepo.Create(storeID, stores.NewStoreMeta(storeID, "global", time.Now())); err != nil {
+			t.Fatalf("create store %q: %v", storeID, err)
+		}
+		if err := os.WriteFile(filepath.Join(storeRepo.OverlayRoot(storeID), "portable.txt"), []byte(storeID), 0644); err != nil {
+			t.Fatalf("write store %q: %v", storeID, err)
+		}
+	}
+
+	remoteWorkspaceID := "source-workspace"
+	if err := syncer.stateStore.SaveWorkspace(remoteWorkspaceID, &state.WorkspaceState{
+		Repo:             "source-only-fingerprint",
+		WorkspacePath:    "services/api",
+		AbsolutePath:     "/remote-machine/checkout/services/api",
+		Applied:          true,
+		Mode:             "copy",
+		Stack:            []string{"stack-store"},
+		AppliedStores:    []state.AppliedStore{{Store: "stack-store", Type: "copy"}, {Store: "active-store", Type: "copy"}},
+		ActiveStore:      "active-store",
+		ActiveStoreScope: "component",
+		Paths: map[string]state.PathOwnership{
+			"remote-only.txt": {Store: "active-store", Type: "copy", Timestamp: time.Now()},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := syncer.PushStore(context.Background(), &PushRequest{
+		RepoRoot:           repoRoot,
+		StoreIDs:           []string{"stack-store", "active-store"},
+		WorkspaceID:        remoteWorkspaceID,
+		RepositoryIdentity: "git@example.test:team/repo.git",
+		WithWorkspace:      true,
+		Remote:             "origin",
+	}); err != nil {
+		t.Fatalf("push workspace reference: %v", err)
+	}
+	if err := syncer.stateStore.DeleteWorkspace(remoteWorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+
+	localWorkspaceID := "local-workspace"
+	result, err := syncer.PullStore(context.Background(), &PullRequest{
+		RepoRoot:           repoRoot,
+		WorkspaceID:        remoteWorkspaceID,
+		LocalWorkspaceID:   localWorkspaceID,
+		RepoFingerprint:    "local-only-fingerprint",
+		RepositoryIdentity: "git@example.test:team/repo.git",
+		WorkspacePath:      "services/api",
+		WithStores:         true,
+	})
+	if err != nil {
+		t.Fatalf("pull workspace reference: %v", err)
+	}
+	if !result.WorkspaceReferenceFound || !result.WorkspaceReferenceValidated || !result.PulledWorkspace {
+		t.Fatalf("workspace result = %#v, want found, validated, and restored", result)
+	}
+	if result.WorkspaceID != localWorkspaceID {
+		t.Errorf("WorkspaceID = %q, want local %q", result.WorkspaceID, localWorkspaceID)
+	}
+
+	restored, err := syncer.stateStore.LoadWorkspace(localWorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.AbsolutePath != filepath.Join(repoRoot, "services/api") {
+		t.Errorf("AbsolutePath = %q, want local checkout path", restored.AbsolutePath)
+	}
+	if restored.Repo != "local-only-fingerprint" {
+		t.Errorf("Repo = %q, want local fingerprint", restored.Repo)
+	}
+	if restored.ActiveStore != "active-store" || restored.ActiveStoreScope != "component" {
+		t.Errorf("active store = %q/%q", restored.ActiveStore, restored.ActiveStoreScope)
+	}
+	if len(restored.Stack) != 1 || restored.Stack[0] != "stack-store" {
+		t.Errorf("Stack = %#v, want [stack-store]", restored.Stack)
+	}
+	if restored.Applied || len(restored.Paths) != 0 || len(restored.AppliedStores) != 0 {
+		t.Errorf("restored state claims remote applied files: %#v", restored)
+	}
+}
+
+func TestSyncer_PullWorkspaceReferenceFailsClosed(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		mutate     func(*workspaceReference)
+		localState bool
+		wantError  string
+	}{
+		{
+			name:      "unknown schema",
+			mutate:    func(ref *workspaceReference) { ref.SchemaVersion++ },
+			wantError: "unsupported workspace reference schema version",
+		},
+		{
+			name:      "repository mismatch",
+			mutate:    func(ref *workspaceReference) { ref.Repo = "git@example.test:other/repo.git" },
+			wantError: "repository mismatch",
+		},
+		{
+			name:      "missing store",
+			mutate:    func(ref *workspaceReference) { ref.ActiveStore = "missing-store" },
+			wantError: "unavailable locally",
+		},
+		{
+			name:       "local state conflict",
+			localState: true,
+			mutate:     func(*workspaceReference) {},
+			wantError:  "already exists",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+			defer cleanup()
+			savePullRemoteConfig(t, repoRoot, configStore)
+			if err := storeRepo.Create("active-store", stores.NewStoreMeta("active", "global", time.Now())); err != nil {
+				t.Fatal(err)
+			}
+
+			remoteWorkspaceID := "remote-workspace"
+			ref := workspaceReference{
+				SchemaVersion: workspaceReferenceSchemaVersion,
+				WorkspaceID:   remoteWorkspaceID,
+				Repo:          "git@example.test:team/repo.git",
+				WorkspacePath: ".",
+				Mode:          "copy",
+				ActiveStore:   "active-store",
+				Stack:         []string{},
+				PathOwnership: workspacePathOwnershipSummary{},
+			}
+			tt.mutate(&ref)
+			data, err := json.Marshal(ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refPath := workspaceReferencePath(repoRoot, remoteWorkspaceID)
+			if err := os.MkdirAll(filepath.Dir(refPath), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(refPath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			localWorkspaceID := "local-workspace"
+			if tt.localState {
+				if err := syncer.stateStore.SaveWorkspace(localWorkspaceID, &state.WorkspaceState{ActiveStore: "local-store", Paths: map[string]state.PathOwnership{}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err = syncer.PullStore(context.Background(), &PullRequest{
+				RepoRoot:           repoRoot,
+				WorkspaceID:        remoteWorkspaceID,
+				LocalWorkspaceID:   localWorkspaceID,
+				RepoFingerprint:    "local-fingerprint",
+				RepositoryIdentity: "git@example.test:team/repo.git",
+				WorkspacePath:      ".",
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("PullStore error = %v, want %q", err, tt.wantError)
+			}
+
+			stateAfter, loadErr := syncer.stateStore.LoadWorkspace(localWorkspaceID)
+			if tt.localState {
+				if loadErr != nil || stateAfter.ActiveStore != "local-store" {
+					t.Fatalf("local workspace state changed after refused restore: %#v, %v", stateAfter, loadErr)
+				}
+			} else if !os.IsNotExist(loadErr) {
+				t.Fatalf("workspace state was written after refused restore: %#v, %v", stateAfter, loadErr)
+			}
+		})
+	}
 }

@@ -23,9 +23,10 @@ import (
 )
 
 type realRemoteClient struct {
-	repoRoot  string
-	storeRepo *stores.FileStoreRepo
-	syncer    *sync.Syncer
+	repoRoot   string
+	storeRepo  *stores.FileStoreRepo
+	stateStore state.StateStore
+	syncer     *sync.Syncer
 }
 
 func runIntegrationGit(t *testing.T, dir string, args ...string) string {
@@ -59,19 +60,104 @@ func newRealRemoteClient(t *testing.T, baseDir, name, bareRemote string) *realRe
 		t.Fatalf("save remote config failed: %v", err)
 	}
 
+	stateStore := state.NewFileStateStore(fs, workspacesDir)
 	return &realRemoteClient{
-		repoRoot:  repoRoot,
-		storeRepo: storeRepo,
+		repoRoot:   repoRoot,
+		storeRepo:  storeRepo,
+		stateStore: stateStore,
 		syncer: sync.New(
 			remote.NewRealGitPersistence(),
 			storeRepo,
-			state.NewFileStateStore(fs, workspacesDir),
+			stateStore,
 			persist.NewSnapshotManager(fs),
 			configStore,
 			fs,
 			hash.NewSHA256Hasher(),
 			&clock.RealClock{},
 		),
+	}
+}
+
+func TestPushPull_WorkspaceReferenceRestoresAcrossCheckoutRoots(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "Monodev Integration Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "monodev-integration@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "Monodev Integration Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "monodev-integration@example.com")
+
+	baseDir := t.TempDir()
+	bareRemote := filepath.Join(baseDir, "remote.git")
+	if err := os.MkdirAll(bareRemote, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runIntegrationGit(t, bareRemote, "init", "--bare")
+	clientA := newRealRemoteClient(t, baseDir, "source-checkout", bareRemote)
+	clientB := newRealRemoteClient(t, baseDir, "target-checkout", bareRemote)
+	if clientA.repoRoot == clientB.repoRoot {
+		t.Fatal("clients must use distinct checkout roots")
+	}
+
+	for _, storeID := range []string{"stack-store", "active-store"} {
+		writeClientStoreVersion(t, clientA, storeID, storeID)
+	}
+	remoteWorkspaceID := "source-workspace"
+	if err := clientA.stateStore.SaveWorkspace(remoteWorkspaceID, &state.WorkspaceState{
+		Repo:             "source-local-fingerprint",
+		WorkspacePath:    ".",
+		AbsolutePath:     clientA.repoRoot,
+		Applied:          true,
+		Mode:             "copy",
+		Stack:            []string{"stack-store"},
+		AppliedStores:    []state.AppliedStore{{Store: "stack-store", Type: "copy"}, {Store: "active-store", Type: "copy"}},
+		ActiveStore:      "active-store",
+		ActiveStoreScope: "component",
+		Paths: map[string]state.PathOwnership{
+			"remote-only.txt": {Store: "active-store", Type: "copy"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := clientA.syncer.PushStore(context.Background(), &sync.PushRequest{
+		RepoRoot:           clientA.repoRoot,
+		StoreIDs:           []string{"stack-store", "active-store"},
+		WorkspaceID:        remoteWorkspaceID,
+		RepositoryIdentity: bareRemote,
+		WithWorkspace:      true,
+	}); err != nil {
+		t.Fatalf("client A push workspace reference: %v", err)
+	}
+
+	localWorkspaceID := "target-workspace"
+	result, err := clientB.syncer.PullStore(context.Background(), &sync.PullRequest{
+		RepoRoot:           clientB.repoRoot,
+		WorkspaceID:        remoteWorkspaceID,
+		LocalWorkspaceID:   localWorkspaceID,
+		RepoFingerprint:    "target-local-fingerprint",
+		RepositoryIdentity: bareRemote,
+		WorkspacePath:      ".",
+		WithStores:         true,
+	})
+	if err != nil {
+		t.Fatalf("client B pull workspace reference: %v", err)
+	}
+	if !result.WorkspaceReferenceFound || !result.WorkspaceReferenceValidated || !result.PulledWorkspace {
+		t.Fatalf("workspace result = %#v, want found, validated, and restored", result)
+	}
+	restored, err := clientB.stateStore.LoadWorkspace(localWorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.AbsolutePath != clientB.repoRoot {
+		t.Fatalf("restored AbsolutePath = %q, want local root %q", restored.AbsolutePath, clientB.repoRoot)
+	}
+	if restored.AbsolutePath == clientA.repoRoot {
+		t.Fatal("restored workspace retained the remote machine absolute path")
+	}
+	if restored.ActiveStore != "active-store" || len(restored.Stack) != 1 || restored.Stack[0] != "stack-store" {
+		t.Fatalf("restored workspace metadata = %#v", restored)
+	}
+	if restored.Applied || len(restored.Paths) != 0 || len(restored.AppliedStores) != 0 {
+		t.Fatalf("restored workspace claims unapplied files: %#v", restored)
 	}
 }
 
