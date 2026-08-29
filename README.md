@@ -7,7 +7,7 @@ Most codebases suffer from "local file drift." We generate debug scripts, AI scr
 The Monodev Way:
 - **Invisible**: Keeps "git status" clean.
 - **Persistent**: Your notes, scripts, and agent files survive branch switches.
-- **Portable**: Push/Pull your local state via hidden orphan branches.
+- **Portable**: Push/Pull your local state via separate orphan branches.
 
 ---
 
@@ -160,7 +160,7 @@ monodev store rm <store-id>
 monodev checkout <store-id>
 
 # this creates a new store and sets it as the active store
-monodev checkout -n <store-id> [--description "some details"] [--type "issue | plan | feature | task | other"] [--priority "low | medium | high | none"]
+monodev checkout -n <store-id> [--scope "global | component"] [--description "some details"] [--owner "name"] [--task-id "external-id"]
 
 # this tracks a path in the active store (.monodev/<store-id>/track.json is updated)
 monodev track <path>
@@ -169,7 +169,7 @@ monodev track <path>
 monodev untrack <path>
 
 # update the active store metadata
-monodev store update <store-id> [--status "todo | in_progress | done | blocked | cancelled | other"]
+monodev store update <store-id> [--scope "global | component"] [--description "some details"] [--owner "name"] [--task-id "external-id"]
 
 # persist the tracked paths in the active store (.monodev/<store-id>/overlay is updated)
 monodev commit <path>
@@ -231,6 +231,10 @@ monodev stack unapply [--force] [--dry-run]
 ### Remote persistence
 
 Share stores across machines and teams using Git-based remote persistence. Stores are pushed to a separate orphan branch (`monodev/persist` by default) to keep them isolated from your main repository history.
+
+The orphan branch is visible to anyone with access to the repository and is not
+encrypted. Treat it as organizational isolation, not secrecy: do not push
+secrets or other sensitive artifacts without a separate protection mechanism.
 
 ```bash
 monodev init # initialize the .monodev directory in the repository root
