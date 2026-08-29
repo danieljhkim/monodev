@@ -56,6 +56,18 @@ type FS interface {
 	ValidateIdentifier(id string) error
 }
 
+// RootFS is the mutation surface used for applying overlays. Implementations
+// operate relative to an opened workspace root so destination ancestors cannot
+// be redirected by symlinks between planning and execution.
+//
+// FS remains separate because lightweight test doubles and non-overlay callers
+// do not need to implement the root-confined mutation primitives.
+type RootFS interface {
+	CopyWithinRoot(root, relPath, src string) error
+	RemoveAllWithinRoot(root, relPath string) error
+	SymlinkWithinRoot(root, relPath, target string) error
+}
+
 // RealFS implements FS using actual OS operations.
 type RealFS struct{}
 

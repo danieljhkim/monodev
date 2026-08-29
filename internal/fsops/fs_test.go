@@ -453,6 +453,75 @@ func TestRealFS_Copy(t *testing.T) {
 	})
 }
 
+func TestRealFS_CopyWithinRoot_AllowsNestedDestinationAndReplacesFinalSymlink(t *testing.T) {
+	fs := NewRealFS()
+	root := t.TempDir()
+	sourceDir := t.TempDir()
+	source := filepath.Join(sourceDir, "source.txt")
+	if err := os.WriteFile(source, []byte("replacement"), 0640); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("preserve"), 0600); err != nil {
+		t.Fatalf("failed to write outside file: %v", err)
+	}
+	finalPath := filepath.Join(root, "nested", "path", "file.txt")
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0700); err != nil {
+		t.Fatalf("failed to create destination parent: %v", err)
+	}
+	requireSymlink(t, outside, finalPath)
+
+	if err := fs.CopyWithinRoot(root, "nested/path/file.txt", source); err != nil {
+		t.Fatalf("CopyWithinRoot failed: %v", err)
+	}
+	info, err := os.Lstat(finalPath)
+	if err != nil {
+		t.Fatalf("failed to inspect copied file: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("final-path symlink was not replaced")
+	}
+	content, err := os.ReadFile(finalPath)
+	if err != nil || string(content) != "replacement" {
+		t.Fatalf("copied content = %q, error = %v", content, err)
+	}
+	outsideContent, err := os.ReadFile(outside)
+	if err != nil || string(outsideContent) != "preserve" {
+		t.Fatalf("outside file content = %q, error = %v; want preserved", outsideContent, err)
+	}
+}
+
+func TestRealFS_RootConfinedFinalPathOperationsDoNotFollowSymlinks(t *testing.T) {
+	fs := NewRealFS()
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("preserve"), 0600); err != nil {
+		t.Fatalf("failed to write outside file: %v", err)
+	}
+	link := filepath.Join(root, "replace-me")
+	requireSymlink(t, outside, link)
+
+	if err := fs.RemoveAllWithinRoot(root, "replace-me"); err != nil {
+		t.Fatalf("RemoveAllWithinRoot failed: %v", err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("final symlink still exists, lstat error: %v", err)
+	}
+	content, err := os.ReadFile(outside)
+	if err != nil || string(content) != "preserve" {
+		t.Fatalf("outside target content = %q, error = %v; want preserved", content, err)
+	}
+
+	if err := fs.SymlinkWithinRoot(root, "nested/link", outside); err != nil {
+		t.Fatalf("SymlinkWithinRoot failed for nested destination: %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(root, "nested", "link"))
+	if err != nil || target != outside {
+		t.Fatalf("created symlink target = %q, error = %v; want %q", target, err, outside)
+	}
+}
+
 func requireSymlink(t *testing.T, oldname, newname string) {
 	t.Helper()
 

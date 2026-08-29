@@ -4,11 +4,31 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/planner"
 )
 
 // executeOperation executes a single operation.
-func (e *Engine) executeOperation(op planner.Operation) error {
+func (e *Engine) executeOperation(workspaceRoot string, op planner.Operation) error {
+	if err := e.validateOperationDestination(workspaceRoot, op); err != nil {
+		return err
+	}
+
+	if rootFS, ok := e.fs.(fsops.RootFS); ok {
+		switch op.Type {
+		case planner.OpRemove:
+			return rootFS.RemoveAllWithinRoot(workspaceRoot, op.RelPath)
+		case planner.OpCreateSymlink:
+			return rootFS.SymlinkWithinRoot(workspaceRoot, op.RelPath, op.SourcePath)
+		case planner.OpCopy:
+			return rootFS.CopyWithinRoot(workspaceRoot, op.RelPath, op.SourcePath)
+		default:
+			return fmt.Errorf("unknown operation type: %s", op.Type)
+		}
+	}
+
+	// Lightweight test doubles use the legacy absolute-path methods. All
+	// production construction uses RealFS and therefore the confined path above.
 	switch op.Type {
 	case planner.OpRemove:
 		return e.executeRemove(op)
@@ -19,6 +39,17 @@ func (e *Engine) executeOperation(op planner.Operation) error {
 	default:
 		return fmt.Errorf("unknown operation type: %s", op.Type)
 	}
+}
+
+func (e *Engine) validateOperationDestination(workspaceRoot string, op planner.Operation) error {
+	if err := e.fs.ValidateRelPath(op.RelPath); err != nil {
+		return fmt.Errorf("invalid operation path %q: %w", op.RelPath, err)
+	}
+	want := filepath.Join(workspaceRoot, filepath.Clean(op.RelPath))
+	if filepath.Clean(op.DestPath) != want {
+		return fmt.Errorf("operation destination %q does not match workspace-relative path %q", op.DestPath, op.RelPath)
+	}
+	return nil
 }
 
 // executeRemove removes a path.

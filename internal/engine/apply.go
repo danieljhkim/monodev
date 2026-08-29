@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
@@ -127,11 +128,12 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 
 	// Apply overlays
 	appliedOps := []planner.Operation{}
+	workspaceRoot := filepath.Join(root, workspacePath)
 	for _, op := range plan.Operations {
 		if err := checkContext(ctx); err != nil {
 			return nil, err
 		}
-		if err := e.executeOperation(op); err != nil {
+		if err := e.executeOperation(workspaceRoot, op); err != nil {
 			return nil, fmt.Errorf("failed to execute operation: %w", err)
 		}
 		appliedOps = append(appliedOps, op)
