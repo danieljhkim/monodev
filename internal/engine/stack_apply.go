@@ -3,9 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/planner"
@@ -103,27 +101,8 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 
 		// Update workspace state for non-remove operations
 		if op.Type != planner.OpRemove {
-			ownership := state.PathOwnership{
-				Store:     op.Store,
-				Type:      req.Mode,
-				Timestamp: e.clock.Now(),
-			}
-
-			// Compute checksum for copy mode (files only, not directories)
-			if req.Mode == "copy" {
-				info, err := e.fs.Lstat(op.DestPath)
-				if err == nil && !info.IsDir() {
-					checksum, err := e.hasher.HashFile(op.DestPath)
-					if err == nil {
-						ownership.Checksum = checksum
-					}
-				}
-			}
-
-			// Use relative path as key for workspace state
-			workspaceState.Paths[op.RelPath] = ownership
+			workspaceState.Paths[op.RelPath] = e.ownershipForAppliedPath(op, req.Mode)
 		} else {
-			// Remove operation - delete from workspace state
 			delete(workspaceState.Paths, op.RelPath)
 		}
 	}
@@ -190,45 +169,10 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		}, nil
 	}
 
-	// Remove stack paths in deepest-first order
-	sort.Slice(stackPaths, func(i, j int) bool {
-		depthI := countPathSeparators(stackPaths[i])
-		depthJ := countPathSeparators(stackPaths[j])
-		if depthI != depthJ {
-			return depthI > depthJ // Deeper paths first
-		}
-		return stackPaths[i] > stackPaths[j] // Alphabetically for same depth
-	})
-
 	workspaceRoot := filepath.Join(root, workspacePath)
-
-	removed := []string{}
-	for _, relPath := range stackPaths {
-		ownership := workspaceState.Paths[relPath]
-
-		// Validate relative path for safety
-		if err := e.fs.ValidateRelPath(relPath); err != nil {
-			return nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
-		}
-
-		// Convert workspace-relative path to absolute for filesystem operations
-		absPath := filepath.Join(workspaceRoot, relPath)
-
-		// Validate the path before removing (unless force)
-		if !req.Force {
-			if err := e.validateManagedPath(absPath, ownership); err != nil {
-				return nil, fmt.Errorf("validation failed for %s: %w", relPath, err)
-			}
-		}
-
-		// Remove the path
-		if err := e.fs.RemoveAll(absPath); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("failed to remove %s: %w", relPath, err)
-		}
-
-		// Remove from workspace state
-		delete(workspaceState.Paths, relPath)
-		removed = append(removed, relPath)
+	removed, err := e.removeManagedPaths(workspaceRoot, workspaceState, stackPaths, req.Force)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {

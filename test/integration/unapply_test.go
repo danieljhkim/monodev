@@ -7,8 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/danieljhkim/monodev/internal/clock"
+	"github.com/danieljhkim/monodev/internal/config"
 	"github.com/danieljhkim/monodev/internal/engine"
+	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/gitx"
+	"github.com/danieljhkim/monodev/internal/hash"
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
@@ -506,5 +512,171 @@ func TestUnapply_NestedDirectories(t *testing.T) {
 	}
 	if !foundDeepest {
 		t.Error("expected a/b/c/d.txt in removed list")
+	}
+}
+
+func writeIntegrationFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func newRealFSUnapplyEngine(t *testing.T, repoRoot string, stateStore *testStateStore) *engine.Engine {
+	t.Helper()
+	return engine.New(
+		gitx.NewFakeGitRepo(repoRoot, "repo-fingerprint-123"),
+		newTestStoreRepo(),
+		stateStore,
+		fsops.NewRealFS(),
+		hash.NewSHA256Hasher(),
+		clock.NewFakeClock(time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)),
+		config.Paths{
+			Root:       filepath.Join(repoRoot, ".monodev"),
+			Stores:     filepath.Join(repoRoot, "stores"),
+			Workspaces: filepath.Join(repoRoot, ".state"),
+		},
+	)
+}
+
+func TestUnapply_CopiedDirectoryProtectsUserChanges(t *testing.T) {
+	repoRoot := t.TempDir()
+	scriptsDir := filepath.Join(repoRoot, "scripts")
+	writeIntegrationFile(t, filepath.Join(scriptsDir, "init.sh"), "echo init\n")
+	writeIntegrationFile(t, filepath.Join(scriptsDir, "utils", "helper.sh"), "echo helper\n")
+
+	hasher := hash.NewSHA256Hasher()
+	initHash, err := hasher.HashFile(filepath.Join(scriptsDir, "init.sh"))
+	if err != nil {
+		t.Fatalf("hash init.sh: %v", err)
+	}
+	helperHash, err := hasher.HashFile(filepath.Join(scriptsDir, "utils", "helper.sh"))
+	if err != nil {
+		t.Fatalf("hash helper.sh: %v", err)
+	}
+
+	stateStore := newTestStateStore()
+	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", ".")
+	ws := state.NewWorkspaceState("repo-fingerprint-123", ".", "copy")
+	ws.Applied = true
+	ws.ActiveStore = "store1"
+	ws.Paths["scripts"] = state.PathOwnership{
+		Store: "store1",
+		Type:  "copy",
+		Contents: &state.DirContents{Files: map[string]string{
+			"init.sh":         initHash,
+			"utils/helper.sh": helperHash,
+		}},
+	}
+	_ = stateStore.SaveWorkspace(workspaceID, ws)
+	eng := newRealFSUnapplyEngine(t, repoRoot, stateStore)
+
+	writeIntegrationFile(t, filepath.Join(scriptsDir, "notes.txt"), "user work\n")
+	writeIntegrationFile(t, filepath.Join(scriptsDir, "init.sh"), "echo changed\n")
+	if err := os.Remove(filepath.Join(scriptsDir, "utils", "helper.sh")); err != nil {
+		t.Fatalf("remove helper.sh: %v", err)
+	}
+
+	result, err := eng.Unapply(context.Background(), &engine.UnapplyRequest{CWD: repoRoot})
+	if result != nil {
+		t.Fatalf("Unapply() result = %#v, want nil", result)
+	}
+	if !errors.Is(err, engine.ErrValidation) || !errors.Is(err, engine.ErrDrift) {
+		t.Fatalf("Unapply() error = %v, want ErrValidation and ErrDrift", err)
+	}
+	errText := err.Error()
+	for _, want := range []string{"scripts/notes.txt", "scripts/init.sh", "scripts/utils/helper.sh", "--force", "inspect"} {
+		if !strings.Contains(errText, want) {
+			t.Fatalf("Unapply() error = %q, want %q", errText, want)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(scriptsDir, "notes.txt")); statErr != nil {
+		t.Fatalf("expected user-added file to remain: %v", statErr)
+	}
+
+	forceResult, err := eng.Unapply(context.Background(), &engine.UnapplyRequest{CWD: repoRoot, Force: true})
+	if err != nil {
+		t.Fatalf("force Unapply() error = %v", err)
+	}
+	assertRemovedOrder(t, forceResult.Removed, []string{"scripts"})
+	if _, err := os.Stat(scriptsDir); !os.IsNotExist(err) {
+		t.Fatalf("expected force unapply to remove scripts, err=%v", err)
+	}
+	assertWorkspaceDeleted(t, stateStore, workspaceID)
+}
+
+func TestUnapply_UnchangedCopiedDirectoryCleansOwnershipState(t *testing.T) {
+	repoRoot := t.TempDir()
+	scriptsDir := filepath.Join(repoRoot, "scripts")
+	writeIntegrationFile(t, filepath.Join(scriptsDir, "init.sh"), "echo init\n")
+	writeIntegrationFile(t, filepath.Join(scriptsDir, "utils", "helper.sh"), "echo helper\n")
+
+	hasher := hash.NewSHA256Hasher()
+	initHash, err := hasher.HashFile(filepath.Join(scriptsDir, "init.sh"))
+	if err != nil {
+		t.Fatalf("hash init.sh: %v", err)
+	}
+	helperHash, err := hasher.HashFile(filepath.Join(scriptsDir, "utils", "helper.sh"))
+	if err != nil {
+		t.Fatalf("hash helper.sh: %v", err)
+	}
+
+	stateStore := newTestStateStore()
+	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", ".")
+	ws := state.NewWorkspaceState("repo-fingerprint-123", ".", "copy")
+	ws.Applied = true
+	ws.ActiveStore = "store1"
+	ws.Paths["scripts"] = state.PathOwnership{
+		Store: "store1",
+		Type:  "copy",
+		Contents: &state.DirContents{Files: map[string]string{
+			"init.sh":         initHash,
+			"utils/helper.sh": helperHash,
+		}},
+	}
+	_ = stateStore.SaveWorkspace(workspaceID, ws)
+	eng := newRealFSUnapplyEngine(t, repoRoot, stateStore)
+
+	result, err := eng.Unapply(context.Background(), &engine.UnapplyRequest{CWD: repoRoot})
+	if err != nil {
+		t.Fatalf("Unapply() error = %v", err)
+	}
+	assertRemovedOrder(t, result.Removed, []string{"scripts"})
+	if _, err := os.Stat(filepath.Join(repoRoot, "scripts")); !os.IsNotExist(err) {
+		t.Fatalf("expected scripts to be removed, err=%v", err)
+	}
+	assertWorkspaceDeleted(t, stateStore, workspaceID)
+}
+
+func TestUnapply_LegacyCopiedDirectoryWithoutManifestIsConservative(t *testing.T) {
+	repoRoot := t.TempDir()
+	scriptsDir := filepath.Join(repoRoot, "scripts")
+	writeIntegrationFile(t, filepath.Join(scriptsDir, "init.sh"), "echo init\n")
+	writeIntegrationFile(t, filepath.Join(scriptsDir, "notes.txt"), "user work\n")
+
+	stateStore := newTestStateStore()
+	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", ".")
+	ws := state.NewWorkspaceState("repo-fingerprint-123", ".", "copy")
+	ws.Applied = true
+	ws.ActiveStore = "store1"
+	ws.Paths["scripts"] = state.PathOwnership{Store: "store1", Type: "copy"}
+	_ = stateStore.SaveWorkspace(workspaceID, ws)
+	eng := newRealFSUnapplyEngine(t, repoRoot, stateStore)
+
+	result, err := eng.Unapply(context.Background(), &engine.UnapplyRequest{CWD: repoRoot})
+	if result != nil {
+		t.Fatalf("Unapply() result = %#v, want nil", result)
+	}
+	if !errors.Is(err, engine.ErrDrift) {
+		t.Fatalf("Unapply() error = %v, want ErrDrift", err)
+	}
+	if !strings.Contains(err.Error(), "ownership manifest") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("Unapply() error = %q, want legacy manifest guidance", err.Error())
+	}
+	if _, statErr := os.Stat(filepath.Join(scriptsDir, "notes.txt")); statErr != nil {
+		t.Fatalf("expected legacy directory to remain: %v", statErr)
 	}
 }

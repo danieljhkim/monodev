@@ -9,6 +9,7 @@ import (
 
 	"github.com/danieljhkim/monodev/internal/config"
 	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/hash"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -133,5 +134,117 @@ func TestStackApply_RejectsSymlinkedParentOutsideWorkspace(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("outside directory was mutated by stack apply: %v", entries)
+	}
+}
+
+func TestStackUnapply_CopiedDirectoryDriftFailsWithoutForce(t *testing.T) {
+	fx := setupCopiedDirectoryFixture(t, "stack-store", true)
+	writeCopiedDirFile(t, filepath.Join(fx.scriptsDir, "notes.txt"), "user work\n")
+	writeCopiedDirFile(t, filepath.Join(fx.scriptsDir, "init.sh"), "echo changed\n")
+	if err := os.Remove(filepath.Join(fx.scriptsDir, "utils", "helper.sh")); err != nil {
+		t.Fatalf("remove helper.sh: %v", err)
+	}
+
+	result, err := fx.eng.StackUnapply(context.Background(), &StackUnapplyRequest{CWD: fx.repoRoot})
+	if result != nil {
+		t.Fatalf("StackUnapply result = %#v, want nil", result)
+	}
+	assertCopiedDirDriftError(t, err, "scripts/notes.txt", "scripts/init.sh", "scripts/utils/helper.sh")
+	if _, err := os.Stat(filepath.Join(fx.scriptsDir, "notes.txt")); err != nil {
+		t.Fatalf("expected drifted stack directory to remain: %v", err)
+	}
+	updated, err := fx.stateStore.LoadWorkspace(fx.workspaceID)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if _, ok := updated.Paths["scripts"]; !ok {
+		t.Fatal("workspaceState.Paths removed stack-owned scripts; want entry intact")
+	}
+	if _, ok := updated.Paths["active.yml"]; !ok {
+		t.Fatal("workspaceState.Paths removed active.yml; want active-store path intact")
+	}
+}
+
+func TestStackUnapply_ForceRemovesDriftedCopiedDirectory(t *testing.T) {
+	fx := setupCopiedDirectoryFixture(t, "stack-store", true)
+	writeCopiedDirFile(t, filepath.Join(fx.scriptsDir, "notes.txt"), "user work\n")
+
+	result, err := fx.eng.StackUnapply(context.Background(), &StackUnapplyRequest{CWD: fx.repoRoot, Force: true})
+	if err != nil {
+		t.Fatalf("StackUnapply force: %v", err)
+	}
+	if len(result.Removed) != 1 || result.Removed[0] != "scripts" {
+		t.Fatalf("Removed = %v, want [scripts]", result.Removed)
+	}
+	if _, err := os.Stat(fx.scriptsDir); !os.IsNotExist(err) {
+		t.Fatalf("scripts still exists after force stack unapply, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(fx.repoRoot, "active.yml")); err != nil {
+		t.Fatalf("active-store file was removed: %v", err)
+	}
+	updated, err := fx.stateStore.LoadWorkspace(fx.workspaceID)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if _, ok := updated.Paths["scripts"]; ok {
+		t.Fatal("workspaceState.Paths still contains force-removed scripts")
+	}
+	if _, ok := updated.Paths["active.yml"]; !ok {
+		t.Fatal("workspaceState.Paths removed active.yml; want active-store path intact")
+	}
+}
+
+func TestStackApply_CopyModeDirectoryRecordsLeafChecksums(t *testing.T) {
+	repoRoot := t.TempDir()
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+	writeOverlayFile(t, overlayRoot, filepath.Join("scripts", "init.sh"))
+	writeOverlayFile(t, overlayRoot, filepath.Join("scripts", "utils", "helper.sh"))
+
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{{Path: "scripts", Kind: "dir"}}
+	storeRepo := &realOverlayStoreRepo{trackStoreRepo: newTrackStoreRepo(), overlayRoot: overlayRoot}
+	storeRepo.tracks["stack-store"] = track
+
+	stateStore := newMockStateStore()
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	ws := state.NewWorkspaceState("fp1", ".", "copy")
+	ws.Stack = []string{"stack-store"}
+	stateStore.workspaces[workspaceID] = ws
+
+	eng := New(
+		&trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "."},
+		storeRepo,
+		stateStore,
+		fsops.NewRealFS(),
+		hash.NewSHA256Hasher(),
+		&mockClock{},
+		config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: filepath.Dir(overlayRoot), Workspaces: filepath.Join(repoRoot, ".state")},
+	)
+
+	if _, err := eng.StackApply(context.Background(), &StackApplyRequest{CWD: repoRoot, Mode: "copy"}); err != nil {
+		t.Fatalf("StackApply: %v", err)
+	}
+
+	updated, err := stateStore.LoadWorkspace(workspaceID)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	ownership, ok := updated.Paths["scripts"]
+	if !ok {
+		t.Fatal("expected scripts ownership after stack apply")
+	}
+	if ownership.Contents == nil || len(ownership.Contents.Files) != 2 {
+		t.Fatalf("Contents = %#v, want two recorded files", ownership.Contents)
+	}
+
+	result, err := eng.StackUnapply(context.Background(), &StackUnapplyRequest{CWD: repoRoot})
+	if err != nil {
+		t.Fatalf("StackUnapply: %v", err)
+	}
+	if len(result.Removed) != 1 || result.Removed[0] != "scripts" {
+		t.Fatalf("Removed = %v, want [scripts]", result.Removed)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, "scripts")); !os.IsNotExist(err) {
+		t.Fatalf("scripts still exists after stack unapply, err=%v", err)
 	}
 }

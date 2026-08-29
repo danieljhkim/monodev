@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
@@ -85,50 +84,14 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		}, nil
 	}
 
-	// Step 5: Remove active store paths in deepest-first order
-	// Sort paths by depth (deepest first)
-	sort.Slice(activeStorePaths, func(i, j int) bool {
-		// Count path separators to determine depth
-		depthI := countPathSeparators(activeStorePaths[i])
-		depthJ := countPathSeparators(activeStorePaths[j])
-		if depthI != depthJ {
-			return depthI > depthJ // Deeper paths first
-		}
-		return activeStorePaths[i] > activeStorePaths[j] // Alphabetically for same depth
-	})
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
 
 	workspaceRoot := filepath.Join(root, workspacePath)
-
-	removed := []string{}
-	for _, relPath := range activeStorePaths {
-		if err := checkContext(ctx); err != nil {
-			return nil, err
-		}
-		ownership := workspaceState.Paths[relPath]
-
-		// Validate relative path for safety
-		if err := e.fs.ValidateRelPath(relPath); err != nil {
-			return nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
-		}
-
-		// Convert workspace-relative path to absolute for filesystem operations
-		absPath := filepath.Join(workspaceRoot, relPath)
-
-		// Validate the path before removing (unless force)
-		if !req.Force {
-			if err := e.validateManagedPath(absPath, ownership); err != nil {
-				return nil, fmt.Errorf("validation failed for %s: %w", relPath, err)
-			}
-		}
-
-		// Remove the path (use absolute path)
-		if err := e.fs.RemoveAll(absPath); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("failed to remove %s: %w", relPath, err)
-		}
-
-		// Remove from workspace state
-		delete(workspaceState.Paths, relPath)
-		removed = append(removed, relPath)
+	removed, err := e.removeManagedPaths(workspaceRoot, workspaceState, activeStorePaths, req.Force)
+	if err != nil {
+		return nil, err
 	}
 
 	// Step 6: Update workspace state. Unapply removes only active-store paths:
@@ -163,26 +126,39 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 }
 
 // validateManagedPath validates that a path is still managed by monodev.
-func (e *Engine) validateManagedPath(path string, ownership state.PathOwnership) error {
-	// Check if path exists
-	exists, err := e.fs.Exists(path)
+func (e *Engine) validateManagedPath(absPath, relPath string, ownership state.PathOwnership) error {
+	exists, err := e.fs.Exists(absPath)
 	if err != nil {
 		return fmt.Errorf("failed to check if path exists: %w", err)
 	}
 	if !exists {
-		// Path doesn't exist - nothing to validate
 		return nil
 	}
 
-	// For copies, check the checksum to detect drift.
-	if ownership.Type == "copy" && ownership.Checksum != "" {
-		currentHash, err := e.hasher.HashFile(path)
-		if err != nil {
-			return fmt.Errorf("%w: failed to verify copy checksum: %w", ErrValidation, err)
+	if ownership.Type != "copy" {
+		return nil
+	}
+
+	info, err := e.fs.Lstat(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat path: %w", err)
+	}
+	if info.IsDir() || ownership.Contents != nil {
+		if !info.IsDir() {
+			return fmt.Errorf("%w: %w: copied directory %s is no longer a directory; %s", ErrValidation, ErrDrift, relPath, forceUnapplyHint)
 		}
-		if currentHash != ownership.Checksum {
-			return fmt.Errorf("%w: %w: local modifications detected", ErrValidation, ErrDrift)
-		}
+		return e.validateCopiedDirectory(absPath, relPath, ownership)
+	}
+
+	if ownership.Checksum == "" {
+		return nil
+	}
+	currentHash, err := e.hasher.HashFile(absPath)
+	if err != nil {
+		return fmt.Errorf("%w: failed to verify copy checksum: %w", ErrValidation, err)
+	}
+	if currentHash != ownership.Checksum {
+		return fmt.Errorf("%w: %w: local modifications detected", ErrValidation, ErrDrift)
 	}
 
 	return nil
