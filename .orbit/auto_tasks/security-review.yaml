@@ -1,7 +1,7 @@
 schemaVersion: 1
 name: security-review
 description: Weekly evidence-backed review of application, dependency, secret-handling, and configuration risks
-enabled: false
+enabled: true
 schedule:
   cron: 0 8 * * 1
 template:

@@ -23,11 +23,11 @@ description: >
   `.orbit/auto_tasks` definition. Catch-up collapses and `skip_if_open`
   dedupe are enforced by the scheduler; each definition's own schedule
   governs its cadence.
-enabled: false
+enabled: true
 hosts:
   - Daniels-Mac-mini.local
 trigger:
-  cron: "* * * * *"
+  cron: "*/20 * * * *"
   missed_run: skip
 target: job:auto_task_scheduler_pipeline
 policy:

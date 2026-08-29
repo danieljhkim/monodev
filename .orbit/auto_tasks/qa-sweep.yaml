@@ -1,7 +1,7 @@
 schemaVersion: 1
 name: qa-sweep
 description: Hands-on validation of recent workspace changes
-enabled: false
+enabled: true
 schedule:
   cron: 50 * * * *
 template:
