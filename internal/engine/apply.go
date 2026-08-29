@@ -154,24 +154,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 
 		// Update workspace state for non-remove operations
 		if op.Type != planner.OpRemove {
-			ownership := state.PathOwnership{
-				Store:     op.Store,
-				Type:      req.Mode,
-				Timestamp: e.clock.Now(),
-			}
-
-			// Compute checksum for copy mode (files only, not directories)
-			if req.Mode == "copy" {
-				info, err := e.fs.Lstat(op.DestPath)
-				if err == nil && !info.IsDir() {
-					checksum, err := e.hasher.HashFile(op.DestPath)
-					if err == nil {
-						ownership.Checksum = checksum
-					}
-				}
-			}
-
-			workspaceState.Paths[op.RelPath] = ownership
+			workspaceState.Paths[op.RelPath] = e.ownershipForAppliedPath(op, req.Mode)
 		} else {
 			delete(workspaceState.Paths, op.RelPath)
 		}

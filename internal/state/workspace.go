@@ -55,8 +55,18 @@ type PathOwnership struct {
 	// Timestamp is when the path was applied
 	Timestamp time.Time `json:"timestamp"`
 
-	// Checksum is the hash of the file (only used in copy mode)
+	// Checksum is the hash of the file (only used in copy mode for files)
 	Checksum string `json:"checksum,omitempty"`
+
+	// Contents is the leaf ownership manifest for a copied directory.
+	// nil means the record predates directory ownership tracking.
+	Contents *DirContents `json:"contents,omitempty"`
+}
+
+// DirContents records the files Monodev copied into an owned directory.
+// Keys are slash-separated paths relative to the owned directory.
+type DirContents struct {
+	Files map[string]string `json:"files"`
 }
 
 // NewWorkspaceState creates a new empty WorkspaceState.

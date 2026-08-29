@@ -200,6 +200,18 @@ func TestPathOwnership_Serialization(t *testing.T) {
 				Checksum:  "",
 			},
 		},
+		{
+			name: "directory contents",
+			ownership: PathOwnership{
+				Store:     "store1",
+				Type:      "copy",
+				Timestamp: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+				Contents: &DirContents{Files: map[string]string{
+					"init.sh":         "abc123",
+					"utils/helper.sh": "def456",
+				}},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -229,7 +241,34 @@ func TestPathOwnership_Serialization(t *testing.T) {
 			if unmarshaled.Checksum != tt.ownership.Checksum {
 				t.Errorf("Checksum: got %q, want %q", unmarshaled.Checksum, tt.ownership.Checksum)
 			}
+			if tt.ownership.Contents == nil {
+				if unmarshaled.Contents != nil {
+					t.Errorf("Contents: got %#v, want nil", unmarshaled.Contents)
+				}
+				return
+			}
+			if unmarshaled.Contents == nil {
+				t.Fatal("Contents missing after unmarshal")
+			}
+			if len(unmarshaled.Contents.Files) != len(tt.ownership.Contents.Files) {
+				t.Errorf("Contents.Files length: got %d, want %d", len(unmarshaled.Contents.Files), len(tt.ownership.Contents.Files))
+			}
+			for path, checksum := range tt.ownership.Contents.Files {
+				if unmarshaled.Contents.Files[path] != checksum {
+					t.Errorf("Contents.Files[%q]: got %q, want %q", path, unmarshaled.Contents.Files[path], checksum)
+				}
+			}
 		})
+	}
+}
+
+func TestPathOwnership_LegacyDirectoryJSONOmitsContents(t *testing.T) {
+	var ownership PathOwnership
+	if err := json.Unmarshal([]byte(`{"store":"store1","type":"copy","timestamp":"2024-01-01T12:00:00Z"}`), &ownership); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if ownership.Contents != nil {
+		t.Fatalf("Contents = %#v, want nil for legacy records", ownership.Contents)
 	}
 }
 
