@@ -108,3 +108,17 @@ func (e *Engine) loadWorkspaceFromScopes(workspaceID string) (*state.WorkspaceSt
 
 	return nil, nil, os.ErrNotExist
 }
+
+func (e *Engine) workspaceStoreForID(workspaceID string) (state.StateStore, error) {
+	for _, store := range e.workspaceStateStores() {
+		_, err := store.LoadWorkspace(workspaceID)
+		if err == nil {
+			return store, nil
+		}
+		if os.IsNotExist(err) {
+			continue
+		}
+		return nil, err
+	}
+	return nil, os.ErrNotExist
+}

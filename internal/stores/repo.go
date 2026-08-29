@@ -12,13 +12,20 @@
 package stores
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/lockfile"
 )
+
+// ErrLockUnsupported lets composite repositories preserve optional locking
+// when an in-memory/test repository does not implement StoreLocker.
+var ErrLockUnsupported = errors.New("store repository does not support locking")
 
 // StoreRepo provides an interface for managing stores.
 type StoreRepo interface {
@@ -50,6 +57,13 @@ type StoreRepo interface {
 	Delete(id string) error
 }
 
+// StoreLocker is implemented by repositories that can coordinate a complete
+// store transaction across processes.
+type StoreLocker interface {
+	LockStore(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error)
+	StoreLockKey(id string) (string, error)
+}
+
 // FileStoreRepo implements StoreRepo using files on disk.
 type FileStoreRepo struct {
 	fs        fsops.FS
@@ -76,7 +90,7 @@ func (r *FileStoreRepo) List() ([]string, error) {
 
 	var stores []string
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() && entry.Name() != ".locks" {
 			stores = append(stores, entry.Name())
 		}
 	}
@@ -257,4 +271,27 @@ func (r *FileStoreRepo) Delete(id string) error {
 	}
 
 	return nil
+}
+
+// StoreLockKey returns the canonical name used to order multi-store locks.
+func (r *FileStoreRepo) StoreLockKey(id string) (string, error) {
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		return "", fmt.Errorf("invalid store ID: %w", err)
+	}
+	path, err := filepath.Abs(filepath.Join(r.storesDir, ".locks", id+".lock"))
+	if err != nil {
+		return "", fmt.Errorf("resolve store lock path: %w", err)
+	}
+	return filepath.Clean(path), nil
+}
+
+// LockStore acquires the process-wide lock for one store. Keeping lock files
+// outside the store directory preserves exclusion while the store is deleted
+// or atomically replaced.
+func (r *FileStoreRepo) LockStore(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error) {
+	path, err := r.StoreLockKey(id)
+	if err != nil {
+		return nil, err
+	}
+	return lockfile.Acquire(ctx, path, mode, lockfile.DefaultTimeout)
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -24,6 +25,11 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
 
 	// Load workspace state (may not exist)
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
@@ -69,6 +75,11 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 	if result.ActiveStore != "" {
 		repo, repoErr := e.storeResolver.activeStoreRepo(workspaceState)
 		if repoErr == nil {
+			unlockStore, lockErr := e.lockStores(ctx, storeLockRequest{repo: repo, id: result.ActiveStore, mode: lockfile.Shared})
+			if lockErr != nil {
+				return nil, lockErr
+			}
+			defer unlockStore()
 			track, err := repo.LoadTrack(result.ActiveStore)
 			if err == nil {
 				result.TrackedPaths = track.Paths()

@@ -1,12 +1,14 @@
 package stores
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/lockfile"
 )
 
 // setupStoresDir creates a temporary stores directory for testing.
@@ -25,6 +27,26 @@ func setupStoresDir(t *testing.T) (string, *FileStoreRepo) {
 }
 
 func TestFileStoreRepo_List(t *testing.T) {
+	t.Run("does not expose the lock directory as a store", func(t *testing.T) {
+		tmpDir, repo := setupStoresDir(t)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		lock, err := repo.LockStore(context.Background(), "store1", lockfile.Exclusive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lock.Close(); err != nil {
+			t.Fatal(err)
+		}
+		ids, err := repo.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ids) != 0 {
+			t.Fatalf("List() = %v, want no stores", ids)
+		}
+	})
+
 	t.Run("returns empty list when directory does not exist", func(t *testing.T) {
 		tmpDir, err := os.MkdirTemp("", "stores-test-*")
 		if err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
@@ -31,7 +32,14 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		return nil, err
 	}
 
-	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, req.Mode)
+	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockWorkspace()
+
+	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, req.Mode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
@@ -86,6 +94,12 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 			return nil, fmt.Errorf("failed to resolve store repo: %w", err)
 		}
 	}
+
+	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: applyRepo, id: storeToApply, mode: lockfile.Shared})
+	if err != nil {
+		return nil, err
+	}
+	defer unlockStore()
 
 	if err := checkContext(ctx); err != nil {
 		return nil, err

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
@@ -24,14 +25,12 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 		return nil, err
 	}
 
-	// Step 2: Find affected workspaces
-	affectedWorkspaces, err := e.findWorkspacesUsingStore(req.StoreID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find workspaces using store: %w", err)
-	}
-
-	// Step 3: Return early if dry-run
+	// Step 2: Dry-run is a read-only, atomic-per-workspace snapshot.
 	if req.DryRun {
+		affectedWorkspaces, err := e.findWorkspacesUsingStore(req.StoreID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find workspaces using store: %w", err)
+		}
 		return &DeleteStoreResult{
 			StoreID:            req.StoreID,
 			AffectedWorkspaces: affectedWorkspaces,
@@ -40,7 +39,66 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 		}, nil
 	}
 
-	// Step 4: If store is in use and not forced, return error
+	// Workspace locks always precede store locks. Re-scan after both are held;
+	// if a new workspace started referencing the store in between, release and
+	// retry with the expanded sorted workspace set.
+	var affectedWorkspaces []WorkspaceUsage
+	var unlockWorkspaces func()
+	var unlockStore func()
+	for attempt := 0; attempt < 8; attempt++ {
+		affectedWorkspaces, err = e.findWorkspacesUsingStore(req.StoreID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find workspaces using store: %w", err)
+		}
+		requests := make([]workspaceLockRequest, 0, len(affectedWorkspaces))
+		lockedIDs := make(map[string]bool, len(affectedWorkspaces))
+		for _, usage := range affectedWorkspaces {
+			workspaceStore, storeErr := e.workspaceStoreForID(usage.WorkspaceID)
+			if storeErr != nil {
+				continue
+			}
+			requests = append(requests, workspaceLockRequest{store: workspaceStore, id: usage.WorkspaceID, mode: lockfile.Exclusive})
+			lockedIDs[usage.WorkspaceID] = true
+		}
+		unlockWorkspaces, err = e.lockWorkspaces(ctx, requests...)
+		if err != nil {
+			return nil, err
+		}
+		unlockStore, err = e.lockStores(ctx, storeLockRequest{repo: repo, id: req.StoreID, mode: lockfile.Exclusive})
+		if err != nil {
+			unlockWorkspaces()
+			return nil, err
+		}
+
+		fresh, scanErr := e.findWorkspacesUsingStore(req.StoreID)
+		if scanErr != nil {
+			unlockStore()
+			unlockWorkspaces()
+			return nil, fmt.Errorf("failed to verify workspace references: %w", scanErr)
+		}
+		complete := true
+		for _, usage := range fresh {
+			if !lockedIDs[usage.WorkspaceID] {
+				complete = false
+				break
+			}
+		}
+		if complete {
+			affectedWorkspaces = fresh
+			break
+		}
+		unlockStore()
+		unlockWorkspaces()
+		unlockStore = nil
+		unlockWorkspaces = nil
+	}
+	if unlockStore == nil || unlockWorkspaces == nil {
+		return nil, fmt.Errorf("%w: workspace references changed repeatedly while deleting store %s", lockfile.ErrContended, req.StoreID)
+	}
+	defer unlockWorkspaces()
+	defer unlockStore()
+
+	// Step 3: If store is in use and not forced, return error
 	if len(affectedWorkspaces) > 0 && !req.Force {
 		return &DeleteStoreResult{
 			StoreID:            req.StoreID,
@@ -50,14 +108,14 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 		}, fmt.Errorf("store '%s' is in use by %d workspace(s)", req.StoreID, len(affectedWorkspaces))
 	}
 
-	// Step 5: Clean workspace references
+	// Step 4: Clean workspace references
 	if len(affectedWorkspaces) > 0 {
 		if err := e.cleanWorkspaceReferences(req.StoreID, affectedWorkspaces); err != nil {
 			return nil, fmt.Errorf("failed to clean workspace references: %w", err)
 		}
 	}
 
-	// Step 6: Delete store
+	// Step 5: Delete store
 	if err := repo.Delete(req.StoreID); err != nil {
 		return nil, fmt.Errorf("failed to delete store: %w", err)
 	}
