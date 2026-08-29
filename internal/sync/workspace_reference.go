@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/danieljhkim/monodev/internal/state"
@@ -82,7 +83,7 @@ func (s *Syncer) buildWorkspaceReference(req *PushRequest, workspaceState *state
 	return workspaceReference{
 		SchemaVersion: workspaceReferenceSchemaVersion,
 		WorkspaceID:   req.WorkspaceID,
-		Repo:          workspaceState.Repo,
+		Repo:          workspaceReferenceRepository(req, workspaceState),
 		WorkspacePath: workspaceState.WorkspacePath,
 		AbsolutePath:  absolutePath,
 		Applied:       workspaceState.Applied,
@@ -94,6 +95,130 @@ func (s *Syncer) buildWorkspaceReference(req *PushRequest, workspaceState *state
 		PathOwnership: summarizePathOwnership(workspaceState.Paths),
 		GeneratedAt:   s.clock.Now(),
 	}
+}
+
+func workspaceReferenceRepository(req *PushRequest, workspaceState *state.WorkspaceState) string {
+	if req.RepositoryIdentity != "" {
+		return req.RepositoryIdentity
+	}
+	return workspaceState.Repo
+}
+
+func (s *Syncer) loadWorkspaceReference(req *PullRequest) (*workspaceReference, bool, error) {
+	if req.WorkspaceID == "" {
+		return nil, false, nil
+	}
+	if err := s.fs.ValidateIdentifier(req.WorkspaceID); err != nil {
+		return nil, false, fmt.Errorf("invalid workspace ID: %w", err)
+	}
+
+	data, err := s.fs.ReadFile(workspaceReferencePath(req.RepoRoot, req.WorkspaceID))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, fmt.Errorf("workspace reference %q not found", req.WorkspaceID)
+		}
+		return nil, false, fmt.Errorf("failed to read workspace reference %q: %w", req.WorkspaceID, err)
+	}
+
+	var ref workspaceReference
+	if err := json.Unmarshal(data, &ref); err != nil {
+		return nil, true, fmt.Errorf("invalid workspace reference %q: %w", req.WorkspaceID, err)
+	}
+	if err := s.validateWorkspaceReference(req, &ref); err != nil {
+		return nil, true, err
+	}
+	return &ref, true, nil
+}
+
+func (s *Syncer) validateWorkspaceReference(req *PullRequest, ref *workspaceReference) error {
+	if ref.SchemaVersion != workspaceReferenceSchemaVersion {
+		return fmt.Errorf("unsupported workspace reference schema version %d", ref.SchemaVersion)
+	}
+	if ref.WorkspaceID != req.WorkspaceID {
+		return fmt.Errorf("workspace reference identity mismatch: requested %q, found %q", req.WorkspaceID, ref.WorkspaceID)
+	}
+	if req.LocalWorkspaceID == "" || req.RepoFingerprint == "" || req.RepositoryIdentity == "" || req.WorkspacePath == "" {
+		return fmt.Errorf("local workspace identity is required when restoring a workspace reference")
+	}
+	if err := s.fs.ValidateIdentifier(req.LocalWorkspaceID); err != nil {
+		return fmt.Errorf("invalid local workspace ID: %w", err)
+	}
+	if ref.Repo != req.RepositoryIdentity {
+		return fmt.Errorf("workspace reference repository mismatch")
+	}
+	remoteWorkspacePath := filepath.Clean(ref.WorkspacePath)
+	localWorkspacePath := filepath.Clean(req.WorkspacePath)
+	if filepath.IsAbs(remoteWorkspacePath) || filepath.IsAbs(localWorkspacePath) || remoteWorkspacePath != localWorkspacePath || strings.HasPrefix(remoteWorkspacePath, "..") || strings.HasPrefix(localWorkspacePath, "..") {
+		return fmt.Errorf("workspace reference path mismatch: remote %q, local %q", ref.WorkspacePath, req.WorkspacePath)
+	}
+	if ref.Mode != "copy" && ref.Mode != "symlink" {
+		return fmt.Errorf("workspace reference has invalid mode %q", ref.Mode)
+	}
+	if ref.PathOwnership.Count != len(ref.PathOwnership.Paths) {
+		return fmt.Errorf("workspace reference path ownership count mismatch")
+	}
+
+	stores := make(map[string]struct{}, len(ref.Stack)+1)
+	for _, storeID := range append(append([]string{}, ref.Stack...), ref.ActiveStore) {
+		if storeID == "" {
+			continue
+		}
+		if err := s.fs.ValidateIdentifier(storeID); err != nil {
+			return fmt.Errorf("invalid workspace reference store %q: %w", storeID, err)
+		}
+		stores[storeID] = struct{}{}
+	}
+	seenPaths := make(map[string]struct{}, len(ref.PathOwnership.Paths))
+	for _, ownership := range ref.PathOwnership.Paths {
+		if err := s.fs.ValidateRelPath(ownership.Path); err != nil {
+			return fmt.Errorf("invalid workspace reference path %q: %w", ownership.Path, err)
+		}
+		if _, exists := seenPaths[ownership.Path]; exists {
+			return fmt.Errorf("duplicate workspace reference path %q", ownership.Path)
+		}
+		seenPaths[ownership.Path] = struct{}{}
+		if _, exists := stores[ownership.Store]; !exists {
+			return fmt.Errorf("workspace reference path %q names unknown store %q", ownership.Path, ownership.Store)
+		}
+	}
+	return nil
+}
+
+func (s *Syncer) restoreWorkspaceReference(req *PullRequest, ref *workspaceReference) error {
+	if existing, err := s.stateStore.LoadWorkspace(req.LocalWorkspaceID); err == nil && existing != nil {
+		return fmt.Errorf("local workspace state %q already exists; refusing to overwrite it", req.LocalWorkspaceID)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to inspect local workspace state: %w", err)
+	}
+
+	for _, storeID := range append(append([]string{}, ref.Stack...), ref.ActiveStore) {
+		if storeID == "" {
+			continue
+		}
+		exists, err := s.storeRepo.Exists(storeID)
+		if err != nil {
+			return fmt.Errorf("failed to check workspace reference store %q: %w", storeID, err)
+		}
+		if !exists {
+			return fmt.Errorf("workspace reference store %q is unavailable locally", storeID)
+		}
+	}
+
+	// The reference describes a prior machine's applied files. Restoring it must
+	// never claim those files on this checkout: normal apply/stack apply will
+	// plan and validate local changes before writing them.
+	return s.stateStore.SaveWorkspace(req.LocalWorkspaceID, &state.WorkspaceState{
+		Repo:             req.RepoFingerprint,
+		WorkspacePath:    req.WorkspacePath,
+		AbsolutePath:     filepath.Join(req.RepoRoot, req.WorkspacePath),
+		Applied:          false,
+		Mode:             ref.Mode,
+		Stack:            append([]string{}, ref.Stack...),
+		AppliedStores:    []state.AppliedStore{},
+		ActiveStore:      ref.ActiveStore,
+		ActiveStoreScope: ref.ActiveScope,
+		Paths:            make(map[string]state.PathOwnership),
+	})
 }
 
 func summarizePathOwnership(paths map[string]state.PathOwnership) workspacePathOwnershipSummary {

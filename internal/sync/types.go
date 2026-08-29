@@ -11,6 +11,11 @@ type PushRequest struct {
 	// WorkspaceID is the ID of the workspace to push (optional)
 	WorkspaceID string
 
+	// RepositoryIdentity is a portable identity for the repository containing
+	// the workspace. It is distinct from the local workspace fingerprint,
+	// which can include an absolute checkout path.
+	RepositoryIdentity string
+
 	// WithWorkspace indicates whether to push workspace refs along with stores
 	WithWorkspace bool
 
@@ -62,6 +67,22 @@ type PullRequest struct {
 	// WorkspaceID is the ID of the workspace to pull (optional)
 	WorkspaceID string
 
+	// LocalWorkspaceID is the workspace state ID for this checkout. It may
+	// differ from WorkspaceID because a persisted reference can originate on
+	// another machine.
+	LocalWorkspaceID string
+
+	// RepoFingerprint is the local fingerprint persisted in restored workspace
+	// state. It is not used to authorize a remote workspace reference.
+	RepoFingerprint string
+
+	// RepositoryIdentity is the portable identity of the current repository,
+	// used to validate a persisted workspace reference before restoration.
+	RepositoryIdentity string
+
+	// WorkspacePath is the current workspace's path relative to RepoRoot.
+	WorkspacePath string
+
 	// WithStores indicates whether to recursively pull stores referenced by workspace
 	WithStores bool
 
@@ -80,6 +101,17 @@ type PullResult struct {
 
 	// PulledWorkspace indicates whether a workspace ref was pulled
 	PulledWorkspace bool
+
+	// WorkspaceReferenceFound reports whether the requested persisted workspace
+	// reference was present after fetching the persistence branch.
+	WorkspaceReferenceFound bool
+
+	// WorkspaceReferenceValidated reports whether the requested reference passed
+	// schema, repository, workspace, store, and local-state validation.
+	WorkspaceReferenceValidated bool
+
+	// WorkspaceID is the local workspace state ID restored from the reference.
+	WorkspaceID string
 
 	// Verified indicates whether checksums were verified
 	Verified bool

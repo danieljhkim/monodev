@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/danieljhkim/monodev/internal/gitx"
+	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -34,6 +36,9 @@ Examples:
   # Pull multiple stores
   monodev pull store1 store2
 
+  # Restore a workspace reference for this checkout and pull its stores
+  monodev pull --workspace <remote-workspace-id> --with-stores
+
   # Force pull (overwrite local changes)
   monodev pull my-store --force`,
 	Args: cobra.ArbitraryArgs,
@@ -41,13 +46,17 @@ Examples:
 }
 
 var (
-	pullRemote string
-	pullForce  bool
+	pullRemote      string
+	pullForce       bool
+	pullWorkspaceID string
+	pullWithStores  bool
 )
 
 func init() {
 	pullCmd.Flags().StringVar(&pullRemote, "remote", "", "Git remote to pull from (defaults to configured remote)")
 	pullCmd.Flags().BoolVar(&pullForce, "force", false, "Force pull, overwriting a local store whose content differs from what is being pulled")
+	pullCmd.Flags().StringVar(&pullWorkspaceID, "workspace", "", "Restore this persisted workspace reference into the current checkout")
+	pullCmd.Flags().BoolVar(&pullWithStores, "with-stores", false, "When restoring a workspace, also pull stores referenced by its stack and active store")
 }
 
 func runPull(cmd *cobra.Command, args []string) error {
@@ -68,10 +77,37 @@ func runPull(cmd *cobra.Command, args []string) error {
 
 	// Build request
 	req := &sync.PullRequest{
-		RepoRoot: repoRoot,
-		StoreIDs: args,
-		Remote:   pullRemote,
-		Force:    pullForce,
+		RepoRoot:    repoRoot,
+		StoreIDs:    args,
+		Remote:      pullRemote,
+		Force:       pullForce,
+		WorkspaceID: pullWorkspaceID,
+		WithStores:  pullWithStores,
+	}
+	if pullWorkspaceID != "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+		fingerprint, err := gitRepo.Fingerprint(repoRoot)
+		if err != nil {
+			return fmt.Errorf("failed to get local repository fingerprint: %w", err)
+		}
+		_, repositoryIdentity, err := gitRepo.GetFingerprintComponents(repoRoot)
+		if err != nil || repositoryIdentity == "" {
+			if err != nil {
+				return fmt.Errorf("failed to determine portable repository identity: %w", err)
+			}
+			return fmt.Errorf("failed to determine portable repository identity: no remote origin URL")
+		}
+		workspacePath, err := gitRepo.RelPath(repoRoot, cwd)
+		if err != nil {
+			return fmt.Errorf("failed to compute workspace path: %w", err)
+		}
+		req.LocalWorkspaceID = state.ComputeWorkspaceID(fingerprint, workspacePath)
+		req.RepoFingerprint = fingerprint
+		req.RepositoryIdentity = repositoryIdentity
+		req.WorkspacePath = workspacePath
 	}
 
 	// Execute pull
@@ -101,6 +137,16 @@ func runPull(cmd *cobra.Command, args []string) error {
 
 	if result.Verified {
 		PrintSuccess("All stores verified successfully")
+		PrintInfo("")
+	}
+
+	if pullWorkspaceID != "" {
+		if result.PulledWorkspace {
+			PrintSuccess("Workspace reference found, validated, and restored")
+			PrintLabelValue("Workspace ID", result.WorkspaceID)
+		} else {
+			PrintInfo("Workspace reference was not restored")
+		}
 		PrintInfo("")
 	}
 

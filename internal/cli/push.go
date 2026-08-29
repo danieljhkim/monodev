@@ -93,6 +93,13 @@ func runPush(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get workspace fingerprint: %w", err)
 		}
+		_, repositoryIdentity, err := gitRepo.GetFingerprintComponents(repoRoot)
+		if err != nil || repositoryIdentity == "" {
+			if err != nil {
+				return fmt.Errorf("failed to determine portable repository identity: %w", err)
+			}
+			return fmt.Errorf("failed to determine portable repository identity: no remote origin URL")
+		}
 
 		workspacePath, err := gitRepo.RelPath(repoRoot, cwd)
 		if err != nil {
@@ -100,6 +107,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 
 		req.WorkspaceID = state.ComputeWorkspaceID(fingerprint, workspacePath)
+		req.RepositoryIdentity = repositoryIdentity
 	}
 
 	// Execute push
