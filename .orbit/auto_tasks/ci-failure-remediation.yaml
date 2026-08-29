@@ -13,7 +13,7 @@ description: |
   GitHub CLI configuration, or a forwarded GitHub token in the execution
   environment. Where neither holds, the definition still runs and reports an
   explicit capability-unavailable outcome rather than a clean result.
-enabled: false
+enabled: true
 schedule:
   cron: 15 * * * *
 template:
