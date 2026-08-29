@@ -183,8 +183,8 @@ func TestSyncer_PullStore(t *testing.T) {
 			t.Error("Fetch should have been called")
 		}
 
-		if len(git.CheckoutCalls) == 0 {
-			t.Error("Checkout should have been called")
+		if len(git.CheckoutFetchedCalls) == 0 {
+			t.Error("CheckoutFetched should have been called")
 		}
 
 		// Verify store was dematerialized back to stores dir
@@ -491,7 +491,7 @@ func TestSyncer_PullStore(t *testing.T) {
 	})
 }
 
-func TestSyncer_PullStoreCancellationStopsBeforeCheckout(t *testing.T) {
+func TestSyncer_PullStoreCancellationStopsBeforeCheckoutFetched(t *testing.T) {
 	repoRoot, _, syncer, git, _, configStore, cleanup := setupSyncerTest(t)
 	defer cleanup()
 
@@ -517,7 +517,7 @@ func TestSyncer_PullStoreCancellationStopsBeforeCheckout(t *testing.T) {
 	if len(git.FetchCalls) != 1 {
 		t.Fatalf("Fetch calls = %d, want 1", len(git.FetchCalls))
 	}
-	if len(git.CheckoutCalls) != 0 {
-		t.Fatalf("Checkout calls = %d, want 0 after cancellation", len(git.CheckoutCalls))
+	if len(git.CheckoutFetchedCalls) != 0 {
+		t.Fatalf("CheckoutFetched calls = %d, want 0 after cancellation", len(git.CheckoutFetchedCalls))
 	}
 }

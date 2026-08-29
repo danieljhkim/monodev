@@ -5,8 +5,11 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/danieljhkim/monodev/internal/clock"
@@ -18,6 +21,85 @@ import (
 	"github.com/danieljhkim/monodev/internal/stores"
 	"github.com/danieljhkim/monodev/internal/sync"
 )
+
+type realRemoteClient struct {
+	repoRoot  string
+	storeRepo *stores.FileStoreRepo
+	syncer    *sync.Syncer
+}
+
+func runIntegrationGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func newRealRemoteClient(t *testing.T, baseDir, name, bareRemote string) *realRemoteClient {
+	t.Helper()
+	repoRoot := filepath.Join(baseDir, name)
+	storesDir := filepath.Join(baseDir, name+"-stores")
+	workspacesDir := filepath.Join(baseDir, name+"-workspaces")
+	for _, dir := range []string{repoRoot, storesDir, workspacesDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runIntegrationGit(t, repoRoot, "init")
+	runIntegrationGit(t, repoRoot, "remote", "add", "origin", bareRemote)
+
+	fs := fsops.NewRealFS()
+	storeRepo := stores.NewFileStoreRepo(fs, storesDir)
+	configStore := remote.NewFileRemoteConfigStore(fs)
+	if err := configStore.Save(repoRoot, remote.DefaultRemoteConfig()); err != nil {
+		t.Fatalf("save remote config failed: %v", err)
+	}
+
+	return &realRemoteClient{
+		repoRoot:  repoRoot,
+		storeRepo: storeRepo,
+		syncer: sync.New(
+			remote.NewRealGitPersistence(),
+			storeRepo,
+			state.NewFileStateStore(fs, workspacesDir),
+			persist.NewSnapshotManager(fs),
+			configStore,
+			fs,
+			hash.NewSHA256Hasher(),
+			&clock.RealClock{},
+		),
+	}
+}
+
+func writeClientStoreVersion(t *testing.T, client *realRemoteClient, storeID, version string) {
+	t.Helper()
+	exists, err := client.storeRepo.Exists(storeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		meta := &stores.StoreMeta{Name: "Remote Store", Description: "transport test", Scope: "local"}
+		if err := client.storeRepo.Create(storeID, meta); err != nil {
+			t.Fatalf("create store failed: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(client.storeRepo.OverlayRoot(storeID), "version.txt"), []byte(version), 0644); err != nil {
+		t.Fatalf("write store version failed: %v", err)
+	}
+}
+
+func readClientStoreVersion(t *testing.T, client *realRemoteClient, storeID string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(client.storeRepo.OverlayRoot(storeID), "version.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
 
 func TestPushPull_RoundTrip(t *testing.T) {
 	// Create a temporary directory for testing
@@ -192,8 +274,8 @@ func TestPushPull_RoundTrip(t *testing.T) {
 	}
 
 	// Verify that Checkout was called
-	if len(gitPersist.CheckoutCalls) != 1 {
-		t.Errorf("expected 1 Checkout call, got %d", len(gitPersist.CheckoutCalls))
+	if len(gitPersist.CheckoutFetchedCalls) != 1 {
+		t.Errorf("expected 1 CheckoutFetched call, got %d", len(gitPersist.CheckoutFetchedCalls))
 	}
 
 	// Verify store was restored
@@ -213,6 +295,118 @@ func TestPushPull_RoundTrip(t *testing.T) {
 	}
 	if string(restoredContent) != "test content" {
 		t.Errorf("expected content %q, got %q", "test content", string(restoredContent))
+	}
+}
+
+func TestPushPull_MaterializesLatestFetchedCommitAcrossClients(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "Monodev Integration Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "monodev-integration@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "Monodev Integration Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "monodev-integration@example.com")
+
+	baseDir := t.TempDir()
+	bareRemote := filepath.Join(baseDir, "remote.git")
+	if err := os.MkdirAll(bareRemote, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runIntegrationGit(t, bareRemote, "init", "--bare")
+
+	clientA := newRealRemoteClient(t, baseDir, "client-a", bareRemote)
+	clientB := newRealRemoteClient(t, baseDir, "client-b", bareRemote)
+	ctx := context.Background()
+	storeID := "portable-store"
+
+	writeClientStoreVersion(t, clientA, storeID, "v1")
+	if _, err := clientA.syncer.PushStore(ctx, &sync.PushRequest{
+		RepoRoot: clientA.repoRoot,
+		StoreIDs: []string{storeID},
+	}); err != nil {
+		t.Fatalf("client A push v1 failed: %v", err)
+	}
+
+	if _, err := clientB.syncer.PullStore(ctx, &sync.PullRequest{
+		RepoRoot: clientB.repoRoot,
+		StoreIDs: []string{storeID},
+	}); err != nil {
+		t.Fatalf("client B pull v1 failed: %v", err)
+	}
+	if got := readClientStoreVersion(t, clientB, storeID); got != "v1" {
+		t.Fatalf("client B pulled %q, want v1", got)
+	}
+
+	writeClientStoreVersion(t, clientB, storeID, "v2")
+	if _, err := clientB.syncer.PushStore(ctx, &sync.PushRequest{
+		RepoRoot: clientB.repoRoot,
+		StoreIDs: []string{storeID},
+	}); err != nil {
+		t.Fatalf("client B push v2 failed: %v", err)
+	}
+
+	// Remove A's local copy so this pull exercises transport and checksum
+	// verification without invoking the separate local-content force gate.
+	if err := clientA.storeRepo.Delete(storeID); err != nil {
+		t.Fatalf("delete client A local store failed: %v", err)
+	}
+	pullResult, err := clientA.syncer.PullStore(ctx, &sync.PullRequest{
+		RepoRoot: clientA.repoRoot,
+		StoreIDs: []string{storeID},
+	})
+	if err != nil {
+		t.Fatalf("client A pull v2 failed: %v", err)
+	}
+	if !pullResult.Verified {
+		t.Fatal("client A v2 pull was not checksum verified")
+	}
+	if got := readClientStoreVersion(t, clientA, storeID); got != "v2" {
+		t.Fatalf("client A pulled %q, want v2", got)
+	}
+
+	clientAHead := runIntegrationGit(t, clientA.repoRoot,
+		"--git-dir", filepath.Join(clientA.repoRoot, ".monodev", ".git"),
+		"--work-tree", filepath.Join(clientA.repoRoot, ".monodev"),
+		"rev-parse", "HEAD",
+	)
+	remoteHead := runIntegrationGit(t, bareRemote, "rev-parse", "refs/heads/monodev/persist")
+	if clientAHead != remoteHead {
+		t.Fatalf("client A persistence HEAD = %s, remote fetched commit = %s", clientAHead, remoteHead)
+	}
+
+	// A later remote content change must be compared against A's existing v2
+	// local store only after the fetched v3 commit is materialized.
+	writeClientStoreVersion(t, clientB, storeID, "v3")
+	if _, err := clientB.syncer.PushStore(ctx, &sync.PushRequest{
+		RepoRoot: clientB.repoRoot,
+		StoreIDs: []string{storeID},
+	}); err != nil {
+		t.Fatalf("client B push v3 failed: %v", err)
+	}
+	_, err = clientA.syncer.PullStore(ctx, &sync.PullRequest{
+		RepoRoot: clientA.repoRoot,
+		StoreIDs: []string{storeID},
+	})
+	if !errors.Is(err, sync.ErrPulledContentChanged) {
+		t.Fatalf("client A pull v3 error = %v, want ErrPulledContentChanged", err)
+	}
+	if got := readClientStoreVersion(t, clientA, storeID); got != "v2" {
+		t.Fatalf("refused pull overwrote client A local store with %q", got)
+	}
+	persistedV3, err := os.ReadFile(filepath.Join(clientA.repoRoot, ".monodev", "persist", "stores", storeID, "overlay", "version.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(persistedV3) != "v3" {
+		t.Fatalf("client A persistence work tree = %q after fetch, want v3", persistedV3)
+	}
+
+	if _, err := clientA.syncer.PullStore(ctx, &sync.PullRequest{
+		RepoRoot: clientA.repoRoot,
+		StoreIDs: []string{storeID},
+		Force:    true,
+	}); err != nil {
+		t.Fatalf("client A explicit forced content pull failed: %v", err)
+	}
+	if got := readClientStoreVersion(t, clientA, storeID); got != "v3" {
+		t.Fatalf("client A forced pull materialized %q, want v3", got)
 	}
 }
 
