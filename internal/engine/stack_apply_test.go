@@ -2,10 +2,15 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/danieljhkim/monodev/internal/config"
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/state"
+	"github.com/danieljhkim/monodev/internal/stores"
 )
 
 type removeCapturingFS struct {
@@ -88,5 +93,45 @@ func TestStackUnapply_RemovesWorkspaceRelativePathForSubdirectoryWorkspace(t *te
 	}
 	if _, ok := updated.Paths["active.yml"]; !ok {
 		t.Fatal("workspaceState.Paths removed active-store path; want only stack path removed")
+	}
+}
+
+func TestStackApply_RejectsSymlinkedParentOutsideWorkspace(t *testing.T) {
+	repoRoot := t.TempDir()
+	outside := t.TempDir()
+	requireEngineSymlink(t, outside, filepath.Join(repoRoot, "escape"))
+
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+	writeOverlayFile(t, overlayRoot, filepath.Join("escape", "payload.txt"))
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{{Path: "escape/payload.txt", Kind: "file"}}
+	storeRepo := &realOverlayStoreRepo{trackStoreRepo: newTrackStoreRepo(), overlayRoot: overlayRoot}
+	storeRepo.tracks["untrusted-store"] = track
+
+	stateStore := newMockStateStore()
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	ws := state.NewWorkspaceState("fp1", ".", "copy")
+	ws.Stack = []string{"untrusted-store"}
+	stateStore.workspaces[workspaceID] = ws
+	eng := New(
+		&trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "."},
+		storeRepo,
+		stateStore,
+		fsops.NewRealFS(),
+		&mockHasher{},
+		&mockClock{},
+		config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: filepath.Dir(overlayRoot), Workspaces: filepath.Join(repoRoot, ".state")},
+	)
+
+	_, err := eng.StackApply(context.Background(), &StackApplyRequest{CWD: repoRoot, Mode: "copy"})
+	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
+		t.Fatalf("StackApply error = %v, want symlinked destination ancestor rejection", err)
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatalf("failed to inspect outside directory: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory was mutated by stack apply: %v", entries)
 	}
 }

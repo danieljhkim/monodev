@@ -3,10 +3,13 @@ package engine
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/danieljhkim/monodev/internal/config"
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -28,6 +31,45 @@ func (r *cancelOnLoadTrackStoreRepo) LoadTrack(id string) (*stores.TrackFile, er
 type saveCountingStateStore struct {
 	*mockStateStore
 	saveCalls int
+}
+
+type realOverlayStoreRepo struct {
+	*trackStoreRepo
+	overlayRoot string
+}
+
+func (r *realOverlayStoreRepo) OverlayRoot(string) string { return r.overlayRoot }
+
+func newRealOverlayEngine(repoRoot, overlayRoot string, track *stores.TrackFile, stateStore *mockStateStore) *Engine {
+	storeRepo := &realOverlayStoreRepo{trackStoreRepo: newTrackStoreRepo(), overlayRoot: overlayRoot}
+	storeRepo.tracks["untrusted-store"] = track
+	return New(
+		&trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "."},
+		storeRepo,
+		stateStore,
+		fsops.NewRealFS(),
+		&mockHasher{},
+		&mockClock{},
+		config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: filepath.Dir(overlayRoot), Workspaces: filepath.Join(repoRoot, ".state")},
+	)
+}
+
+func writeOverlayFile(t *testing.T, overlayRoot, relPath string) {
+	t.Helper()
+	path := filepath.Join(overlayRoot, relPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatalf("failed to create overlay parent: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("overlay content"), 0600); err != nil {
+		t.Fatalf("failed to create overlay file: %v", err)
+	}
+}
+
+func requireEngineSymlink(t *testing.T, oldname, newname string) {
+	t.Helper()
+	if err := os.Symlink(oldname, newname); err != nil {
+		t.Skipf("symlink creation is not supported in this environment: %v", err)
+	}
 }
 
 func (s *saveCountingStateStore) SaveWorkspace(id string, ws *state.WorkspaceState) error {
@@ -126,6 +168,105 @@ func TestApply_RejectsPulledGitHookWithoutWriting(t *testing.T) {
 	}
 	if len(fs.copiedPaths) != 0 {
 		t.Errorf("Apply copied paths = %v, want no writes to .git/hooks/pre-commit", fs.copiedPaths)
+	}
+}
+
+func TestApply_RejectsSymlinkedParentIntoGitHooksBeforeWriting(t *testing.T) {
+	repoRoot := t.TempDir()
+	hooksDir := filepath.Join(repoRoot, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0700); err != nil {
+		t.Fatalf("failed to create hooks directory: %v", err)
+	}
+	requireEngineSymlink(t, filepath.Join(".git", "hooks"), filepath.Join(repoRoot, "hooks-link"))
+
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+	writeOverlayFile(t, overlayRoot, filepath.Join("hooks-link", "pre-commit"))
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{{Path: "hooks-link/pre-commit", Kind: "file"}}
+	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, newMockStateStore())
+
+	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreID: "untrusted-store", Mode: "copy"})
+	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
+		t.Fatalf("Apply error = %v, want symlinked destination ancestor rejection", err)
+	}
+	if _, err := os.Lstat(filepath.Join(hooksDir, "pre-commit")); !os.IsNotExist(err) {
+		t.Fatalf("Git hook was created through parent symlink, lstat error: %v", err)
+	}
+}
+
+func TestApply_RejectsSymlinkedParentOutsideWorkspaceWithoutMutation(t *testing.T) {
+	repoRoot := t.TempDir()
+	outside := t.TempDir()
+	requireEngineSymlink(t, outside, filepath.Join(repoRoot, "escape"))
+
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+	writeOverlayFile(t, overlayRoot, filepath.Join("escape", "created", "payload.txt"))
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{{Path: "escape/created/payload.txt", Kind: "file"}}
+	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, newMockStateStore())
+
+	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreID: "untrusted-store", Mode: "copy"})
+	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
+		t.Fatalf("Apply error = %v, want symlinked destination ancestor rejection", err)
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatalf("failed to inspect outside directory: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory was mutated: %v", entries)
+	}
+}
+
+func TestApply_ForceRejectsSymlinkedParentBeforeRemovingTarget(t *testing.T) {
+	repoRoot := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "payload.txt")
+	if err := os.WriteFile(target, []byte("preserve me"), 0600); err != nil {
+		t.Fatalf("failed to create outside target: %v", err)
+	}
+	requireEngineSymlink(t, outside, filepath.Join(repoRoot, "escape"))
+
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+	writeOverlayFile(t, overlayRoot, filepath.Join("escape", "payload.txt"))
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{{Path: "escape/payload.txt", Kind: "file"}}
+	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, newMockStateStore())
+
+	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreID: "untrusted-store", Mode: "copy", Force: true})
+	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
+		t.Fatalf("Apply --force error = %v, want symlinked destination ancestor rejection", err)
+	}
+	content, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("outside target was removed: %v", readErr)
+	}
+	if string(content) != "preserve me" {
+		t.Fatalf("outside target content = %q, want preserved content", content)
+	}
+}
+
+func TestApply_SymlinkModeRejectsSymlinkedParentOutsideWorkspace(t *testing.T) {
+	repoRoot := t.TempDir()
+	outside := t.TempDir()
+	requireEngineSymlink(t, outside, filepath.Join(repoRoot, "escape"))
+
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+	writeOverlayFile(t, overlayRoot, filepath.Join("escape", "payload.txt"))
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{{Path: "escape/payload.txt", Kind: "file"}}
+	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, newMockStateStore())
+
+	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreID: "untrusted-store", Mode: "symlink"})
+	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
+		t.Fatalf("symlink-mode Apply error = %v, want symlinked destination ancestor rejection", err)
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatalf("failed to inspect outside directory: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory was mutated in symlink mode: %v", entries)
 	}
 }
 

@@ -78,8 +78,9 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 
 	// Apply overlays
 	appliedOps := []planner.Operation{}
+	workspaceRoot := filepath.Join(root, workspacePath)
 	for _, op := range plan.Operations {
-		if err := e.executeOperation(op); err != nil {
+		if err := e.executeOperation(workspaceRoot, op); err != nil {
 			return nil, fmt.Errorf("failed to execute operation: %w", err)
 		}
 		appliedOps = append(appliedOps, op)
