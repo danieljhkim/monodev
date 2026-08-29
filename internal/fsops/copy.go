@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -16,6 +17,10 @@ import (
 // Monodev-managed copies reject symlinks instead of following or preserving
 // them. Store snapshots cross a trust boundary, so link targets must never be
 // read implicitly while copying store content.
+//
+// File and directory replacements are staged beside the destination and then
+// swapped into place, so a failed copy never truncates or partially overwrites
+// the live destination.
 func (fs *RealFS) Copy(src, dst string) error {
 	if err := ValidateCopySource(src); err != nil {
 		return err
@@ -24,21 +29,6 @@ func (fs *RealFS) Copy(src, dst string) error {
 	srcInfo, err := os.Lstat(src)
 	if err != nil {
 		return fmt.Errorf("failed to stat source: %w", err)
-	}
-
-	// Check if destination exists and remove it if type mismatch
-	dstInfo, err := os.Lstat(dst)
-	if err == nil {
-		// Destination exists - check for type mismatch
-		if srcInfo.IsDir() != dstInfo.IsDir() {
-			// Source and destination types don't match, remove destination
-			if err := os.RemoveAll(dst); err != nil {
-				return fmt.Errorf("failed to remove existing destination: %w", err)
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		// Error other than "not exists"
-		return fmt.Errorf("failed to stat destination: %w", err)
 	}
 
 	if srcInfo.IsDir() {
@@ -72,34 +62,48 @@ func (fs *RealFS) copyFile(src, dst string, mode os.FileMode, relPath string) er
 		_ = srcFile.Close()
 	}()
 
-	// Create parent directory if needed
+	return writeFileAtomically(dst, srcFile, privateFileMode(mode))
+}
+
+// writeFileAtomically writes r to dst via a sibling temp file + rename so a
+// failed copy cannot leave dst truncated. Existing destinations stay intact
+// until the staged file is complete.
+func writeFileAtomically(dst string, r io.Reader, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 		return fmt.Errorf("failed to create parent directory: %w", err)
 	}
 
-	if dstInfo, err := os.Lstat(dst); err == nil {
-		if dstInfo.Mode()&os.ModeSymlink != 0 || dstInfo.IsDir() {
-			if err := os.RemoveAll(dst); err != nil {
-				return fmt.Errorf("failed to remove existing destination: %w", err)
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to stat destination: %w", err)
-	}
-
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, privateFileMode(mode))
+	tmpFile, err := os.CreateTemp(filepath.Dir(dst), ".monodev-copy-*")
 	if err != nil {
-		return fmt.Errorf("failed to create destination: %w", err)
+		return fmt.Errorf("failed to create staged copy: %w", err)
 	}
+	tmpPath := tmpFile.Name()
+	success := false
 	defer func() {
-		_ = dstFile.Close()
+		_ = tmpFile.Close()
+		if !success {
+			_ = os.Remove(tmpPath)
+		}
 	}()
 
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
+	if _, err := io.Copy(tmpFile, r); err != nil {
 		return fmt.Errorf("failed to copy file contents: %w", err)
 	}
+	if err := tmpFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync staged copy: %w", err)
+	}
+	if err := tmpFile.Chmod(mode); err != nil {
+		return fmt.Errorf("failed to set destination permissions: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close staged copy: %w", err)
+	}
 
-	return dstFile.Sync()
+	if err := replacePath(dst, tmpPath); err != nil {
+		return err
+	}
+	success = true
+	return nil
 }
 
 // copyDir recursively copies a directory from src to dst.
@@ -116,20 +120,32 @@ func (fs *RealFS) copyDir(src, dst, root string) error {
 		return unsafeSymlinkError(relPath)
 	}
 
-	if dstInfo, err := os.Lstat(dst); err == nil {
-		if dstInfo.Mode()&os.ModeSymlink != 0 || !dstInfo.IsDir() {
-			if err := os.RemoveAll(dst); err != nil {
-				return fmt.Errorf("failed to remove existing destination: %w", err)
-			}
+	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+		return fmt.Errorf("failed to create parent directory: %w", err)
+	}
+
+	staged, err := os.MkdirTemp(filepath.Dir(dst), ".monodev-copy-*")
+	if err != nil {
+		return fmt.Errorf("failed to create staged copy: %w", err)
+	}
+	stagedReady := true
+	defer func() {
+		if stagedReady {
+			_ = os.RemoveAll(staged)
 		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to stat destination: %w", err)
-	}
+	}()
 
-	if err := os.MkdirAll(dst, 0700); err != nil {
-		return fmt.Errorf("failed to create destination directory: %w", err)
+	if err := fs.copyDirContents(src, staged, root); err != nil {
+		return err
 	}
+	if err := replacePath(dst, staged); err != nil {
+		return err
+	}
+	stagedReady = false
+	return nil
+}
 
+func (fs *RealFS) copyDirContents(src, dst, root string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return fmt.Errorf("failed to read source directory: %w", err)
@@ -152,7 +168,10 @@ func (fs *RealFS) copyDir(src, dst, root string) error {
 		}
 
 		if info.IsDir() {
-			if err := fs.copyDir(srcPath, dstPath, root); err != nil {
+			if err := os.MkdirAll(dstPath, 0700); err != nil {
+				return fmt.Errorf("failed to create destination directory: %w", err)
+			}
+			if err := fs.copyDirContents(srcPath, dstPath, root); err != nil {
 				return err
 			}
 		} else {
@@ -163,6 +182,50 @@ func (fs *RealFS) copyDir(src, dst, root string) error {
 	}
 
 	return nil
+}
+
+// replacePath swaps staged onto dst. The live destination is moved aside only
+// after staged is complete, and restored if the final rename fails.
+func replacePath(dst, staged string) error {
+	_, err := os.Lstat(dst)
+	if os.IsNotExist(err) {
+		if err := os.Rename(staged, dst); err != nil {
+			return fmt.Errorf("failed to move staged copy into place: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to stat destination: %w", err)
+	}
+
+	aside, err := reserveSiblingPath(dst, ".monodev-aside-")
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(dst, aside); err != nil {
+		return fmt.Errorf("failed to move existing destination aside: %w", err)
+	}
+	if err := os.Rename(staged, dst); err != nil {
+		if restoreErr := os.Rename(aside, dst); restoreErr != nil {
+			return fmt.Errorf("failed to move staged copy into place: %w; additionally failed to restore existing destination from %s: %v", err, aside, restoreErr)
+		}
+		return fmt.Errorf("failed to move staged copy into place; existing destination was restored: %w", err)
+	}
+	if err := os.RemoveAll(aside); err != nil {
+		return fmt.Errorf("failed to remove replaced destination backup: %w", err)
+	}
+	return nil
+}
+
+func reserveSiblingPath(path, prefix string) (string, error) {
+	reserved, err := os.MkdirTemp(filepath.Dir(path), prefix)
+	if err != nil {
+		return "", fmt.Errorf("failed to reserve replacement path: %w", err)
+	}
+	if err := os.Remove(reserved); err != nil {
+		return "", fmt.Errorf("failed to reserve replacement path: %w", err)
+	}
+	return reserved, nil
 }
 
 // privateFileMode preserves owner read/write and execute intent while
@@ -342,61 +405,61 @@ func copyFileAt(src string, parentFD int, name string, mode os.FileMode) error {
 	}
 	defer func() { _ = srcFile.Close() }()
 
-	dstInfo, exists, err := lstatAt(parentFD, name)
+	tmpName, tmpFD, err := createExclusiveAt(parentFD, ".monodev-copy-", unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, uint32(privateFileMode(mode)))
 	if err != nil {
 		return err
 	}
-	if exists && (isSymlinkMode(uint32(dstInfo.Mode)) || isDirectoryMode(uint32(dstInfo.Mode))) {
-		if err := removeAllAt(parentFD, name); err != nil {
-			return fmt.Errorf("failed to replace existing destination: %w", err)
-		}
-		exists = false
-	}
-
-	dstFD, err := unix.Openat(parentFD, name, unix.O_CREAT|unix.O_WRONLY|unix.O_TRUNC|unix.O_CLOEXEC|unix.O_NOFOLLOW, uint32(privateFileMode(mode)))
-	if err != nil {
-		return fmt.Errorf("failed to create destination: %w", err)
-	}
-	dstFile := os.NewFile(uintptr(dstFD), name)
+	dstFile := os.NewFile(uintptr(tmpFD), tmpName)
 	if dstFile == nil {
-		_ = unix.Close(dstFD)
+		_ = unix.Close(tmpFD)
+		_ = unix.Unlinkat(parentFD, tmpName, 0)
 		return fmt.Errorf("failed to create destination file handle")
 	}
-	defer func() { _ = dstFile.Close() }()
+	success := false
+	defer func() {
+		_ = dstFile.Close()
+		if !success {
+			_ = unix.Unlinkat(parentFD, tmpName, 0)
+		}
+	}()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("failed to copy file contents: %w", err)
 	}
-	if !exists {
-		if err := dstFile.Chmod(privateFileMode(mode)); err != nil {
-			return fmt.Errorf("failed to set destination permissions: %w", err)
-		}
+	if err := dstFile.Chmod(privateFileMode(mode)); err != nil {
+		return fmt.Errorf("failed to set destination permissions: %w", err)
 	}
-	return dstFile.Sync()
+	if err := dstFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync staged copy: %w", err)
+	}
+	if err := dstFile.Close(); err != nil {
+		return fmt.Errorf("failed to close staged copy: %w", err)
+	}
+
+	if err := replaceAt(parentFD, name, tmpName); err != nil {
+		return err
+	}
+	success = true
+	return nil
 }
 
 func (fs *RealFS) copyDirAt(src string, parentFD int, name, relPath string) error {
-	dstInfo, exists, err := lstatAt(parentFD, name)
+	tmpName, err := mkdirExclusiveAt(parentFD, ".monodev-copy-")
 	if err != nil {
 		return err
 	}
-	if exists && (isSymlinkMode(uint32(dstInfo.Mode)) || !isDirectoryMode(uint32(dstInfo.Mode))) {
-		if err := removeAllAt(parentFD, name); err != nil {
-			return fmt.Errorf("failed to replace existing destination: %w", err)
+	success := false
+	defer func() {
+		if !success {
+			_ = removeAllAt(parentFD, tmpName)
 		}
-		exists = false
-	}
-	if !exists {
-		if err := unix.Mkdirat(parentFD, name, 0700); err != nil {
-			return fmt.Errorf("failed to create destination directory: %w", err)
-		}
-	}
+	}()
 
-	dstFD, err := unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	tmpFD, err := unix.Openat(parentFD, tmpName, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return fmt.Errorf("failed to open destination directory: %w", err)
+		return fmt.Errorf("failed to open staged destination directory: %w", err)
 	}
-	defer func() { _ = unix.Close(dstFD) }()
+	defer func() { _ = unix.Close(tmpFD) }()
 
 	entries, err := os.ReadDir(src)
 	if err != nil {
@@ -404,11 +467,85 @@ func (fs *RealFS) copyDirAt(src string, parentFD int, name, relPath string) erro
 	}
 	for _, entry := range entries {
 		childRel := filepath.Join(relPath, entry.Name())
-		if err := fs.copyAt(filepath.Join(src, entry.Name()), dstFD, entry.Name(), childRel); err != nil {
+		if err := fs.copyAt(filepath.Join(src, entry.Name()), tmpFD, entry.Name(), childRel); err != nil {
 			return err
 		}
 	}
+	if err := replaceAt(parentFD, name, tmpName); err != nil {
+		return err
+	}
+	success = true
 	return nil
+}
+
+func replaceAt(parentFD int, name, stagedName string) error {
+	_, exists, err := lstatAt(parentFD, name)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if err := unix.Renameat(parentFD, stagedName, parentFD, name); err != nil {
+			return fmt.Errorf("failed to move staged copy into place: %w", err)
+		}
+		return nil
+	}
+
+	asideName, err := reserveNameAt(parentFD, ".monodev-aside-")
+	if err != nil {
+		return err
+	}
+	if err := unix.Renameat(parentFD, name, parentFD, asideName); err != nil {
+		return fmt.Errorf("failed to move existing destination aside: %w", err)
+	}
+	if err := unix.Renameat(parentFD, stagedName, parentFD, name); err != nil {
+		if restoreErr := unix.Renameat(parentFD, asideName, parentFD, name); restoreErr != nil {
+			return fmt.Errorf("failed to move staged copy into place: %w; additionally failed to restore existing destination: %v", err, restoreErr)
+		}
+		return fmt.Errorf("failed to move staged copy into place; existing destination was restored: %w", err)
+	}
+	if err := removeAllAt(parentFD, asideName); err != nil {
+		return fmt.Errorf("failed to remove replaced destination backup: %w", err)
+	}
+	return nil
+}
+
+func createExclusiveAt(parentFD int, prefix string, flags int, perm uint32) (string, int, error) {
+	for i := 0; i < 10000; i++ {
+		name := fmt.Sprintf("%s%d-%d", prefix, os.Getpid(), time.Now().UnixNano()+int64(i))
+		fd, err := unix.Openat(parentFD, name, flags, perm)
+		if err == nil {
+			return name, fd, nil
+		}
+		if !errors.Is(err, unix.EEXIST) {
+			return "", -1, fmt.Errorf("failed to create staged copy: %w", err)
+		}
+	}
+	return "", -1, fmt.Errorf("failed to allocate staged copy name")
+}
+
+func mkdirExclusiveAt(parentFD int, prefix string) (string, error) {
+	for i := 0; i < 10000; i++ {
+		name := fmt.Sprintf("%s%d-%d", prefix, os.Getpid(), time.Now().UnixNano()+int64(i))
+		err := unix.Mkdirat(parentFD, name, 0700)
+		if err == nil {
+			return name, nil
+		}
+		if !errors.Is(err, unix.EEXIST) {
+			return "", fmt.Errorf("failed to create staged copy: %w", err)
+		}
+	}
+	return "", fmt.Errorf("failed to allocate staged copy name")
+}
+
+func reserveNameAt(parentFD int, prefix string) (string, error) {
+	name, err := mkdirExclusiveAt(parentFD, prefix)
+	if err != nil {
+		return "", err
+	}
+	if err := unix.Unlinkat(parentFD, name, unix.AT_REMOVEDIR); err != nil {
+		return "", fmt.Errorf("failed to reserve replacement path: %w", err)
+	}
+	return name, nil
 }
 
 func lstatAt(parentFD int, name string) (*unix.Stat_t, bool, error) {

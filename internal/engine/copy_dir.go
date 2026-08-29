@@ -94,34 +94,35 @@ func sortDeepestFirst(paths []string) {
 	})
 }
 
-func (e *Engine) removeManagedPaths(workspaceRoot string, workspaceState *state.WorkspaceState, relPaths []string, force bool) ([]string, error) {
+func (e *Engine) planManagedPathRemoval(workspaceRoot string, workspaceState *state.WorkspaceState, relPaths []string, force bool) ([]planner.Operation, []string, error) {
 	sortDeepestFirst(relPaths)
 
 	if !force {
 		for _, relPath := range relPaths {
 			if err := e.fs.ValidateRelPath(relPath); err != nil {
-				return nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
+				return nil, nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
 			}
 			absPath := filepath.Join(workspaceRoot, relPath)
 			if err := e.validateManagedPath(absPath, relPath, workspaceState.Paths[relPath]); err != nil {
-				return nil, fmt.Errorf("validation failed for %s: %w", relPath, err)
+				return nil, nil, fmt.Errorf("validation failed for %s: %w", relPath, err)
 			}
 		}
 	}
 
+	ops := make([]planner.Operation, 0, len(relPaths))
 	removed := make([]string, 0, len(relPaths))
 	for _, relPath := range relPaths {
 		if err := e.fs.ValidateRelPath(relPath); err != nil {
-			return nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
+			return nil, nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
 		}
-		absPath := filepath.Join(workspaceRoot, relPath)
-		if err := e.fs.RemoveAll(absPath); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("failed to remove %s: %w", relPath, err)
-		}
-		delete(workspaceState.Paths, relPath)
+		ops = append(ops, planner.Operation{
+			Type:     planner.OpRemove,
+			DestPath: filepath.Join(workspaceRoot, relPath),
+			RelPath:  relPath,
+		})
 		removed = append(removed, relPath)
 	}
-	return removed, nil
+	return ops, removed, nil
 }
 
 func (e *Engine) validateCopiedDirectory(absPath, relPath string, ownership state.PathOwnership) error {
