@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // setupTestEnv creates a temporary directory structure for testing
@@ -124,9 +128,8 @@ func TestStatusCommand_NoWorkspaceState(t *testing.T) {
 	rootCmd.SetOut(&buf)
 
 	err := rootCmd.Execute()
-	// Status should work even without workspace state
 	if err != nil {
-		t.Logf("Status command error (may be expected): %v", err)
+		t.Fatalf("Status command error = %v", err)
 	}
 }
 
@@ -146,8 +149,7 @@ func TestStatusCommand_JSONOutput(t *testing.T) {
 
 	err := rootCmd.Execute()
 	if err != nil {
-		t.Logf("Status command error (may be expected): %v", err)
-		return
+		t.Fatalf("Status command error = %v", err)
 	}
 
 	output := buf.String()
@@ -219,11 +221,8 @@ func TestApplyCommand_InvalidStore(t *testing.T) {
 	rootCmd.SetErr(&bufErr)
 
 	err := rootCmd.Execute()
-	// Apply may succeed with 0 operations if store doesn't exist but no conflicts
-	// Check if there's an error or if output indicates no operations
-	output := bufOut.String() + bufErr.String()
-	if err == nil && !contains(output, "0 operations") && !contains(output, "error") {
-		t.Logf("Apply with non-existent store succeeded (may be valid behavior)")
+	if err == nil || !strings.Contains(err.Error(), "store 'nonexistent-store' not found") {
+		t.Fatalf("Apply error = %v, want missing-store error", err)
 	}
 }
 
@@ -265,74 +264,181 @@ func TestUnapplyCommand_DryRun(t *testing.T) {
 	rootCmd.SetOut(&buf)
 
 	err := rootCmd.Execute()
-	// Dry run might succeed even if nothing is applied
-	_ = err
-	_ = buf.String()
+	if err == nil || !strings.Contains(err.Error(), "workspace has no managed paths") {
+		t.Fatalf("Unapply --dry-run error = %v, want missing-workspace error", err)
+	}
 }
 
 func TestApplyCommand_Flags(t *testing.T) {
-	workspaceDir, cleanup := setupTestEnv(t)
-	defer cleanup()
-
-	oldDir, _ := os.Getwd()
-	_ = os.Chdir(workspaceDir)
-	defer func() {
-		_ = os.Chdir(oldDir)
-	}()
-
 	tests := []struct {
-		name string
-		args []string
+		name      string
+		args      []string
+		wantError string
 	}{
-		{"mode flag", []string{"apply", "--mode", "copy"}},
-		{"force flag", []string{"apply", "--force"}},
-		{"dry-run flag", []string{"apply", "--dry-run"}},
-		{"all flags", []string{"apply", "--mode", "copy", "--force", "--dry-run"}},
+		{"unsupported mode flag", []string{"apply", "--mode", "copy"}, "unknown flag: --mode"},
+		{"force flag", []string{"apply", "--force"}, "no active store set"},
+		{"dry-run flag", []string{"apply", "--dry-run"}, "no active store set"},
+		{"all supported flags", []string{"apply", "--force", "--dry-run"}, "no active store set"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rootCmd.SetArgs(tt.args)
-			var buf bytes.Buffer
-			rootCmd.SetErr(&buf)
+			workspaceDir, cleanup := setupTestEnv(t)
+			defer cleanup()
+			oldDir, _ := os.Getwd()
+			if err := os.Chdir(workspaceDir); err != nil {
+				t.Fatalf("Chdir() error = %v", err)
+			}
+			defer func() { _ = os.Chdir(oldDir) }()
 
-			// These will likely error due to missing store, but flags should be parsed
+			rootCmd.SetArgs(tt.args)
 			err := rootCmd.Execute()
-			_ = err // We're just testing flag parsing
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Execute() error = %v, want %q", err, tt.wantError)
+			}
 		})
 	}
 }
 
 func TestCheckoutCommand_Flags(t *testing.T) {
-	workspaceDir, cleanup := setupTestEnv(t)
-	defer cleanup()
-
-	oldDir, _ := os.Getwd()
-	_ = os.Chdir(workspaceDir)
-	defer func() {
-		_ = os.Chdir(oldDir)
-	}()
-
 	tests := []struct {
-		name string
-		args []string
+		name      string
+		args      []string
+		wantError string
 	}{
-		{"new flag", []string{"checkout", "test-store", "--new"}},
-		{"scope flag", []string{"checkout", "test-store", "--scope", "global"}},
-		{"description flag", []string{"checkout", "test-store", "--description", "test desc"}},
-		{"all flags", []string{"checkout", "test-store", "--new", "--scope", "component", "--description", "test"}},
+		{"new flag", []string{"checkout", "test-store", "--new"}, ""},
+		{"scope flag", []string{"checkout", "test-store", "--new", "--scope", "global"}, ""},
+		{"description flag", []string{"checkout", "test-store", "--new", "--description", "test desc"}, ""},
+		{"owner flag", []string{"checkout", "test-store", "--new", "--owner", "test-owner"}, ""},
+		{"task-id flag", []string{"checkout", "test-store", "--new", "--task-id", "DANI-1"}, ""},
+		{"all supported flags", []string{"checkout", "test-store", "--new", "--scope", "global", "--description", "test", "--owner", "owner", "--task-id", "DANI-1"}, ""},
+		{"retired type flag", []string{"checkout", "test-store", "--new", "--type", "issue"}, "unknown flag: --type"},
+		{"retired priority flag", []string{"checkout", "test-store", "--new", "--priority", "high"}, "unknown flag: --priority"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rootCmd.SetArgs(tt.args)
-			var buf bytes.Buffer
-			rootCmd.SetOut(&buf)
+			workspaceDir, cleanup := setupTestEnv(t)
+			defer cleanup()
+			oldDir, _ := os.Getwd()
+			if err := os.Chdir(workspaceDir); err != nil {
+				t.Fatalf("Chdir() error = %v", err)
+			}
+			defer func() { _ = os.Chdir(oldDir) }()
 
-			// These may succeed or fail, but flags should be parsed
+			rootCmd.SetArgs(tt.args)
 			err := rootCmd.Execute()
-			_ = err // We're just testing flag parsing
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("Execute() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Execute() error = %v, want %q", err, tt.wantError)
+			}
 		})
+	}
+}
+
+func TestStoreUpdateCommand_Flags(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantError string
+	}{
+		{"scope flag", []string{"store", "update", "test-store", "--scope", "global"}, ""},
+		{"description flag", []string{"store", "update", "test-store", "--description", "test desc"}, ""},
+		{"owner flag", []string{"store", "update", "test-store", "--owner", "test-owner"}, ""},
+		{"task-id flag", []string{"store", "update", "test-store", "--task-id", "DANI-1"}, ""},
+		{"retired status flag", []string{"store", "update", "test-store", "--status", "done"}, "unknown flag: --status"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspaceDir, cleanup := setupTestEnv(t)
+			defer cleanup()
+			oldDir, _ := os.Getwd()
+			if err := os.Chdir(workspaceDir); err != nil {
+				t.Fatalf("Chdir() error = %v", err)
+			}
+			defer func() { _ = os.Chdir(oldDir) }()
+
+			rootCmd.SetArgs([]string{"checkout", "test-store", "--new", "--scope", "global"})
+			if err := rootCmd.Execute(); err != nil {
+				t.Fatalf("setup checkout error = %v", err)
+			}
+
+			rootCmd.SetArgs(tt.args)
+			err := rootCmd.Execute()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("Execute() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Execute() error = %v, want %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestREADMECommandExamplesUseRegisteredSurface(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("ReadFile(README.md) error = %v", err)
+	}
+
+	flagPattern := regexp.MustCompile(`(?:^|\s)(--?[[:alpha:]][[:alnum:]-]*)`)
+	for lineNumber, line := range strings.Split(string(readme), "\n") {
+		line = strings.TrimSpace(strings.SplitN(line, " #", 2)[0])
+		if !strings.HasPrefix(line, "monodev ") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		var commandPath []string
+		current := rootCmd
+		for _, field := range fields[1:] {
+			if strings.HasPrefix(field, "-") || strings.HasPrefix(field, "<") || strings.HasPrefix(field, "[") {
+				break
+			}
+			var child *cobra.Command
+			for _, candidate := range current.Commands() {
+				if candidate.Name() == field {
+					child = candidate
+					break
+				}
+			}
+			if child == nil {
+				break
+			}
+			commandPath = append(commandPath, field)
+			current = child
+		}
+		if len(commandPath) == 0 {
+			t.Errorf("README:%d: command path missing in %q", lineNumber+1, line)
+			continue
+		}
+
+		cmd, _, findErr := rootCmd.Find(commandPath)
+		if findErr != nil || cmd == nil || cmd.Name() != commandPath[len(commandPath)-1] {
+			t.Errorf("README:%d: command %q is not registered (error: %v)", lineNumber+1, strings.Join(commandPath, " "), findErr)
+			continue
+		}
+
+		for _, match := range flagPattern.FindAllStringSubmatch(line, -1) {
+			flagName := match[1]
+			normalizedFlagName := strings.TrimLeft(flagName, "-")
+			registered := cmd.Flags().Lookup(normalizedFlagName)
+			if registered == nil && strings.HasPrefix(flagName, "-") && !strings.HasPrefix(flagName, "--") {
+				registered = cmd.Flags().ShorthandLookup(normalizedFlagName)
+			}
+			if registered == nil {
+				t.Errorf("README:%d: flag %s is not registered for %q", lineNumber+1, flagName, strings.Join(commandPath, " "))
+			}
+		}
 	}
 }
 
@@ -353,8 +459,7 @@ func TestGlobalJSONFlag(t *testing.T) {
 
 	err := rootCmd.Execute()
 	if err != nil {
-		t.Logf("Command error (may be expected): %v", err)
-		return
+		t.Fatalf("Command error = %v", err)
 	}
 
 	output := buf.String()

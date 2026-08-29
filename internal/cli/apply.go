@@ -11,7 +11,6 @@ import (
 )
 
 var (
-	applyMode   string = "copy"
 	applyForce  bool
 	applyDryRun bool
 )
@@ -38,7 +37,7 @@ This command applies only a single store - use 'stack apply' to apply the stack.
 
 		req := &engine.ApplyRequest{
 			CWD:    cwd,
-			Mode:   applyMode,
+			Mode:   "copy",
 			Force:  applyForce,
 			DryRun: applyDryRun,
 		}
