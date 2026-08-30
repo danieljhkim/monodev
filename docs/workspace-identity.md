@@ -39,7 +39,21 @@ Equivalent remotes hash to the same value. Normalization:
 - treats `git@host:org/repo` and `https://host/org/repo.git` as identical
 
 Local paths and `file://` URLs are cleaned and have `.git` / trailing slashes
-removed. Path case is preserved.
+removed. Path case is preserved. Normalization never touches the filesystem,
+so it stays reproducible on machines where the remote is not present.
+
+### Comparing two identities
+
+Fingerprints hash one remote at a time, but restoring a workspace reference
+compares the producer's remote against the consumer's. That comparison applies
+the rules above and then, when both sides are absolute local paths, resolves
+filesystem aliases before comparing — so macOS `/tmp/persist.git` and
+`/private/tmp/persist.git`, or a symlinked parent directory, name the same
+repository. When the bare repository is absent locally, the deepest ancestor
+that does exist is resolved and the missing components are re-appended.
+Relative paths are never resolved this way, because their meaning depends on
+the working directory, and an unknown (empty) identity is never equivalent to
+anything. Unrelated repositories still fail closed.
 
 Examples that share a fingerprint:
 

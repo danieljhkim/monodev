@@ -74,21 +74,90 @@ func isLocalRemote(raw string) bool {
 }
 
 func normalizeLocalRemote(raw string) string {
-	trimmed := raw
-	if strings.HasPrefix(strings.ToLower(trimmed), "file://") {
-		u, err := url.Parse(trimmed)
-		if err == nil {
-			if u.Path != "" {
-				trimmed = u.Path
-			} else {
-				trimmed = strings.TrimPrefix(trimmed, "file://")
-				trimmed = strings.TrimPrefix(trimmed, "file:")
-			}
-		}
-	}
-	cleaned := filepath.Clean(trimmed)
+	cleaned := filepath.Clean(localRemotePath(raw))
 	cleaned = strings.ReplaceAll(cleaned, `\`, "/")
 	return stripGitSuffix(strings.TrimRight(cleaned, "/"))
+}
+
+// localRemotePath returns the filesystem path a local remote refers to,
+// unwrapping a "file://" prefix. It performs no cleaning, so the result can
+// still be resolved against the filesystem.
+func localRemotePath(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "file://") {
+		return trimmed
+	}
+	if u, err := url.Parse(trimmed); err == nil && u.Path != "" {
+		return u.Path
+	}
+	trimmed = strings.TrimPrefix(trimmed, "file://")
+	return strings.TrimPrefix(trimmed, "file:")
+}
+
+// SameRemoteIdentity reports whether two raw git remote URLs name the same
+// repository.
+//
+// It is the comparison counterpart of NormalizeRemoteURL: two remotes match
+// when they normalize identically, and additionally when both are absolute
+// local paths that resolve to the same location on this filesystem. The
+// second rule covers aliases such as macOS `/tmp` -> `/private/tmp`, or a
+// symlinked checkout parent, which normalization alone cannot collapse
+// because it never touches the filesystem.
+//
+// Filesystem resolution is deliberately kept out of NormalizeRemoteURL: that
+// function feeds repository fingerprints, which must stay stable and
+// reproducible without disk access. An empty identity is never equivalent to
+// anything, so unknown remotes fail closed.
+func SameRemoteIdentity(a, b string) bool {
+	normalizedA, normalizedB := NormalizeRemoteURL(a), NormalizeRemoteURL(b)
+	if normalizedA == "" || normalizedB == "" {
+		return false
+	}
+	if normalizedA == normalizedB {
+		return true
+	}
+
+	resolvedA, okA := resolveLocalRemoteIdentity(a)
+	resolvedB, okB := resolveLocalRemoteIdentity(b)
+	return okA && okB && resolvedA == resolvedB
+}
+
+// resolveLocalRemoteIdentity normalizes a local remote after resolving
+// filesystem aliases. It reports false for anything that is not an absolute
+// local path, including relative paths (whose meaning depends on the working
+// directory) and every network remote.
+func resolveLocalRemoteIdentity(raw string) (string, bool) {
+	if !isLocalRemote(strings.TrimSpace(raw)) {
+		return "", false
+	}
+	localPath := localRemotePath(raw)
+	if !filepath.IsAbs(localPath) {
+		return "", false
+	}
+	resolved, ok := evalSymlinksBestEffort(localPath)
+	if !ok {
+		return "", false
+	}
+	return NormalizeRemoteURL(resolved), true
+}
+
+// evalSymlinksBestEffort resolves symlinks in path, falling back to the
+// deepest ancestor that exists and re-appending the missing components. A
+// bare repository that is absent from this machine still benefits from an
+// aliased parent such as `/tmp` being resolved.
+func evalSymlinksBestEffort(localPath string) (string, bool) {
+	dir, missing := filepath.Clean(localPath), ""
+	for {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(resolved, missing), true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		missing = filepath.Join(filepath.Base(dir), missing)
+		dir = parent
+	}
 }
 
 func joinHostPath(host, rawPath string) string {

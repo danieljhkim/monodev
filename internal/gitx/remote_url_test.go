@@ -1,6 +1,10 @@
 package gitx
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestNormalizeRemoteURL(t *testing.T) {
 	tests := []struct {
@@ -159,5 +163,94 @@ func TestNormalizeRemoteURL_SSHAndHTTPSEquivalent(t *testing.T) {
 		if got != want {
 			t.Errorf("NormalizeRemoteURL(%q) = %q, want %q", form, got, want)
 		}
+	}
+}
+
+func TestSameRemoteIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		a    string
+		b    string
+		want bool
+	}{
+		{name: "identical", a: "git@github.com:org/repo.git", b: "git@github.com:org/repo.git", want: true},
+		{name: "ssh and https", a: "git@github.com:org/repo.git", b: "https://github.com/org/repo", want: true},
+		{name: "credentials and case", a: "https://user:token@GitHub.com/org/repo.git/", b: "ssh://github.com/org/repo", want: true},
+		{name: "different repos", a: "git@github.com:org/repo.git", b: "git@github.com:org/other.git", want: false},
+		{name: "different hosts", a: "git@github.com:org/repo.git", b: "git@gitlab.com/org/repo.git", want: false},
+		{name: "empty left", a: "", b: "git@github.com:org/repo.git", want: false},
+		{name: "empty right", a: "git@github.com:org/repo.git", b: "", want: false},
+		{name: "both empty", a: "", b: "", want: false},
+		{name: "unrelated absolute local paths", a: "/srv/git/one.git", b: "/srv/git/two.git", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SameRemoteIdentity(tt.a, tt.b); got != tt.want {
+				t.Errorf("SameRemoteIdentity(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSameRemoteIdentity_ResolvesLocalFilesystemAliases(t *testing.T) {
+	base := t.TempDir()
+	realDir := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(realDir, "remote.git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	aliasDir := filepath.Join(base, "alias")
+	if err := os.Symlink(realDir, aliasDir); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	canonical := filepath.Join(realDir, "remote.git")
+	for _, alias := range []string{
+		filepath.Join(aliasDir, "remote.git"),
+		filepath.Join(aliasDir, "remote"),
+		"file://" + filepath.Join(aliasDir, "remote.git"),
+	} {
+		if NormalizeRemoteURL(canonical) == NormalizeRemoteURL(alias) {
+			t.Fatalf("alias %q already normalizes identically; the test no longer exercises alias resolution", alias)
+		}
+		if !SameRemoteIdentity(canonical, alias) {
+			t.Errorf("SameRemoteIdentity(%q, %q) = false, want true", canonical, alias)
+		}
+	}
+
+	// A sibling under the same aliased parent is a different repository.
+	if SameRemoteIdentity(canonical, filepath.Join(aliasDir, "other.git")) {
+		t.Error("distinct repositories under an aliased parent must not match")
+	}
+}
+
+func TestSameRemoteIdentity_ResolvesAliasedParentOfMissingRepository(t *testing.T) {
+	base := t.TempDir()
+	realDir := filepath.Join(base, "real")
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	aliasDir := filepath.Join(base, "alias")
+	if err := os.Symlink(realDir, aliasDir); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// Neither leaf exists on disk, matching a remote that lives on another
+	// machine; the aliased parent still resolves.
+	if !SameRemoteIdentity(filepath.Join(realDir, "gone.git"), filepath.Join(aliasDir, "gone.git")) {
+		t.Error("aliased parent of a missing repository should still match")
+	}
+	if SameRemoteIdentity(filepath.Join(realDir, "gone.git"), filepath.Join(aliasDir, "other.git")) {
+		t.Error("different missing repositories must not match")
+	}
+}
+
+func TestSameRemoteIdentity_IgnoresRelativeLocalRemotes(t *testing.T) {
+	// Relative remotes depend on the working directory, so they are only
+	// equivalent when they normalize identically.
+	if !SameRemoteIdentity("./remote.git", "./remote") {
+		t.Error("identical relative remotes should match")
+	}
+	if SameRemoteIdentity("./remote.git", "../remote.git") {
+		t.Error("differently spelled relative remotes must not be resolved against the working directory")
 	}
 }
