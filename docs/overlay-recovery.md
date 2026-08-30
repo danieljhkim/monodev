@@ -1,8 +1,9 @@
 # Overlay transaction recovery
 
-Apply, unapply, stack apply, and stack unapply share one recoverable
-transaction. Filesystem changes and the workspace ownership ledger are kept
-aligned across operation failure, cancellation, and process restart.
+Apply and unapply share one recoverable transaction. Filesystem changes and
+the workspace ownership ledger are kept aligned across operation failure,
+cancellation, and process restart. Journals written by the retired
+`stack apply` / `stack unapply` commands still recover through this path.
 
 ## Journal
 
@@ -33,8 +34,8 @@ committed journal and workspace state save have succeeded.
 
 ## Restart path
 
-The next mutating apply, unapply, stack apply, or stack unapply acquires the
-workspace lock, then recovers any journal before planning:
+The next mutating apply or unapply acquires the workspace lock, then recovers
+any journal before planning:
 
 | Phase | Recovery |
 | --- | --- |

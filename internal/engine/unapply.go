@@ -10,24 +10,19 @@ import (
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
-// Unapply removes paths owned by the active store from the workspace.
-//
-// Only removes paths that were applied via 'monodev apply' (the active store).
-// Paths applied by the stack (via 'stack apply') are not affected.
-// Use 'stack unapply' to remove stack-applied paths.
+// Unapply removes paths owned by the requested stores from the workspace.
+// With no StoreIDs, it removes paths owned by the active store.
 //
 // Algorithm:
 //  1. Discover repo and load workspace state (must exist)
-//  2. Collect paths owned by the active store
+//  2. Collect paths owned by the requested stores
 //  3. Remove paths in deepest-first order
-//  4. Delete workspace state when no managed paths remain; otherwise retain
-//     any stack-owned paths in state.
+//  4. Delete workspace state when no managed paths remain
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
 
-	// Step 1: Discover repository
 	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(req.CWD)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
@@ -36,7 +31,6 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return nil, err
 	}
 
-	// Step 2: Compute workspace ID
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
 	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
 	if err != nil {
@@ -44,7 +38,6 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	}
 	defer unlockWorkspace()
 
-	// Step 3: Load workspace state
 	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -53,6 +46,7 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
 	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
+	workspaceState.MigrateDeprecatedStack()
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
@@ -74,19 +68,34 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		}
 		workspaceState = reloaded
 		workspaceState.AbsolutePath = workspaceRoot
+		workspaceState.MigrateDeprecatedStack()
 	}
 
-	// Step 4: Collect only paths owned by the active store (not stack stores)
-	activeStore := workspaceState.ActiveStore
-	activeStorePaths := []string{}
+	storesToRemove := req.StoreIDs
+	if len(storesToRemove) == 0 {
+		if workspaceState.ActiveStore == "" {
+			return &UnapplyResult{
+				Removed:     []string{},
+				WorkspaceID: workspaceID,
+				Warnings:    warnings,
+				message:     "nothing to remove",
+			}, nil
+		}
+		storesToRemove = []string{workspaceState.ActiveStore}
+	}
+	storeSet := make(map[string]bool, len(storesToRemove))
+	for _, storeID := range storesToRemove {
+		storeSet[storeID] = true
+	}
+
+	ownedPaths := []string{}
 	for relPath, ownership := range workspaceState.Paths {
-		if ownership.Store == activeStore {
-			activeStorePaths = append(activeStorePaths, relPath)
+		if storeSet[ownership.Store] {
+			ownedPaths = append(ownedPaths, relPath)
 		}
 	}
 
-	// Check if there are any active store paths to remove
-	if len(activeStorePaths) == 0 {
+	if len(ownedPaths) == 0 {
 		return &UnapplyResult{
 			Removed:     []string{},
 			WorkspaceID: workspaceID,
@@ -95,10 +104,9 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		}, nil
 	}
 
-	// If dry run, just return the list of paths that would be removed
 	if req.DryRun {
 		return &UnapplyResult{
-			Removed:     activeStorePaths,
+			Removed:     ownedPaths,
 			WorkspaceID: workspaceID,
 			Warnings:    warnings,
 			message:     "dry run",
@@ -109,7 +117,7 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return nil, err
 	}
 
-	ops, removed, err := e.planManagedPathRemoval(workspaceRoot, workspaceState, activeStorePaths, req.Force)
+	ops, removed, err := e.planManagedPathRemoval(workspaceRoot, workspaceState, ownedPaths, req.Force)
 	if err != nil {
 		return nil, err
 	}

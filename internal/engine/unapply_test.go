@@ -114,25 +114,26 @@ func TestStackUnapply_CopyModeChecksumDriftFailsWithoutForce(t *testing.T) {
 	hasher.SetHash("/repo/stack/config.yml", "modified-checksum")
 	eng := newUnapplyDriftEngine(gitRepo, stateStore, fs, hasher)
 
-	result, err := eng.StackUnapply(context.Background(), &StackUnapplyRequest{
-		CWD: "/repo",
+	result, err := eng.Unapply(context.Background(), &UnapplyRequest{
+		CWD:      "/repo",
+		StoreIDs: []string{"stack-store"},
 	})
 
 	if result != nil {
-		t.Fatalf("StackUnapply result = %#v, want nil", result)
+		t.Fatalf("Unapply result = %#v, want nil", result)
 	}
 	if !errors.Is(err, ErrValidation) {
-		t.Fatalf("StackUnapply error = %v, want ErrValidation", err)
+		t.Fatalf("Unapply error = %v, want ErrValidation", err)
 	}
 	if !errors.Is(err, ErrDrift) {
-		t.Fatalf("StackUnapply error = %v, want ErrDrift", err)
+		t.Fatalf("Unapply error = %v, want ErrDrift", err)
 	}
 	errText := err.Error()
 	if !strings.Contains(errText, "stack/config.yml") {
-		t.Fatalf("StackUnapply error = %q, want workspace-relative path", errText)
+		t.Fatalf("Unapply error = %q, want workspace-relative path", errText)
 	}
 	if !strings.Contains(errText, "local modifications detected") {
-		t.Fatalf("StackUnapply error = %q, want local modifications message", errText)
+		t.Fatalf("Unapply error = %q, want local modifications message", errText)
 	}
 	if len(fs.removed) != 0 {
 		t.Fatalf("RemoveAll calls = %v, want none", fs.removed)
@@ -471,7 +472,7 @@ func TestUnapply_UnchangedCopiedDirectoryRemovesCompletely(t *testing.T) {
 		config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: filepath.Dir(overlayRoot), Workspaces: filepath.Join(repoRoot, ".state")},
 	)
 
-	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreID: "active-store", Mode: "copy"}); err != nil {
+	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreIDs: []string{"active-store"}, Mode: "copy"}); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 

@@ -70,7 +70,7 @@ Deleting a store will:
 					details = append(details, "Active store")
 				}
 				if usage.InStack {
-					details = append(details, "In stack")
+					details = append(details, "Applied store")
 				}
 				if usage.AppliedPathCount > 0 {
 					details = append(details, fmt.Sprintf("%d applied paths", usage.AppliedPathCount))
@@ -118,7 +118,7 @@ Deleting a store will:
 						details = append(details, "active store")
 					}
 					if usage.InStack {
-						details = append(details, "in stack")
+						details = append(details, "applied store")
 					}
 					if usage.AppliedPathCount > 0 {
 						details = append(details, fmt.Sprintf("%d applied paths", usage.AppliedPathCount))

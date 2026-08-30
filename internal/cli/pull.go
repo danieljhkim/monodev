@@ -56,7 +56,7 @@ func init() {
 	pullCmd.Flags().StringVar(&pullRemote, "remote", "", "Git remote to pull from (defaults to configured remote)")
 	pullCmd.Flags().BoolVar(&pullForce, "force", false, "Force pull, overwriting a local store whose content differs from what is being pulled")
 	pullCmd.Flags().StringVar(&pullWorkspaceID, "workspace", "", "Restore this persisted workspace reference into the current checkout")
-	pullCmd.Flags().BoolVar(&pullWithStores, "with-stores", false, "When restoring a workspace, also pull stores referenced by its stack and active store")
+	pullCmd.Flags().BoolVar(&pullWithStores, "with-stores", false, "When restoring a workspace, also pull stores referenced by its applied stores and active store")
 }
 
 func runPull(cmd *cobra.Command, args []string) error {

@@ -395,8 +395,9 @@ func TestApply_MultipleStores(t *testing.T) {
 
 	// Apply
 	req := &engine.ApplyRequest{
-		CWD:  "/repo/workspace",
-		Mode: "symlink",
+		CWD:      "/repo/workspace",
+		Mode:     "symlink",
+		StoreIDs: []string{store1, store2},
 	}
 
 	result, err := eng.Apply(ctx, req)

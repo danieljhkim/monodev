@@ -17,6 +17,7 @@ func (e *Engine) ListWorkspaces(ctx context.Context) (*ListWorkspacesResult, err
 	var workspaces []WorkspaceInfo
 
 	if err := e.forEachWorkspaceState(func(workspaceID string, ws *state.WorkspaceState) error {
+		ws.MigrateDeprecatedStack()
 		workspaces = append(workspaces, WorkspaceInfo{
 			WorkspaceID:      workspaceID,
 			WorkspacePath:    ws.WorkspacePath,
@@ -25,7 +26,7 @@ func (e *Engine) ListWorkspaces(ctx context.Context) (*ListWorkspacesResult, err
 			Applied:          ws.Applied,
 			Mode:             ws.Mode,
 			ActiveStore:      ws.ActiveStore,
-			StackCount:       len(ws.Stack),
+			StackCount:       0,
 			AppliedPathCount: len(ws.Paths),
 		})
 		return nil
@@ -69,6 +70,7 @@ func (e *Engine) DescribeWorkspace(ctx context.Context, workspaceID string) (*De
 	}
 
 	// Step 2: Return detailed information
+	ws.MigrateDeprecatedStack()
 	return &DescribeWorkspaceResult{
 		WorkspaceID:   workspaceID,
 		WorkspacePath: ws.WorkspacePath,
@@ -76,7 +78,7 @@ func (e *Engine) DescribeWorkspace(ctx context.Context, workspaceID string) (*De
 		Applied:       ws.Applied,
 		Mode:          ws.Mode,
 		ActiveStore:   ws.ActiveStore,
-		Stack:         ws.Stack,
+		Stack:         []string{},
 		AppliedStores: ws.AppliedStores,
 		Paths:         ws.Paths,
 	}, nil

@@ -153,7 +153,7 @@ func TestPushPull_WorkspaceReferenceRestoresAcrossCheckoutRoots(t *testing.T) {
 	if restored.AbsolutePath == clientA.repoRoot {
 		t.Fatal("restored workspace retained the remote machine absolute path")
 	}
-	if restored.ActiveStore != "active-store" || len(restored.Stack) != 1 || restored.Stack[0] != "stack-store" {
+	if restored.ActiveStore != "active-store" || len(restored.Stack) != 0 {
 		t.Fatalf("restored workspace metadata = %#v", restored)
 	}
 	if restored.Applied || len(restored.Paths) != 0 || len(restored.AppliedStores) != 0 {

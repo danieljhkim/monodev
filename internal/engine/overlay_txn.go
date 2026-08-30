@@ -17,10 +17,8 @@ import (
 const (
 	overlayTxnVersion = 1
 
-	overlayTxnApply        = "apply"
-	overlayTxnUnapply      = "unapply"
-	overlayTxnStackApply   = "stack-apply"
-	overlayTxnStackUnapply = "stack-unapply"
+	overlayTxnApply   = "apply"
+	overlayTxnUnapply = "unapply"
 
 	overlayTxnPreparing = "preparing"
 	overlayTxnPrepared  = "prepared"

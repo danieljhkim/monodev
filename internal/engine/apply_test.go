@@ -94,9 +94,9 @@ func TestApply_WithStoreIDRequiresNoCheckout(t *testing.T) {
 	eng := newTrackEngine(gitRepo, storeRepo, stateStore, fs)
 
 	result, err := eng.Apply(context.Background(), &ApplyRequest{
-		CWD:     "/repo",
-		StoreID: "my-store",
-		Mode:    "copy",
+		CWD:      "/repo",
+		StoreIDs: []string{"my-store"},
+		Mode:     "copy",
 	})
 
 	// Should NOT return ErrNoActiveStore — StoreID is explicitly provided
@@ -156,9 +156,9 @@ func TestApply_RejectsPulledGitHookWithoutWriting(t *testing.T) {
 	eng := newTrackEngine(gitRepo, storeRepo, stateStore, fs)
 
 	_, err := eng.Apply(context.Background(), &ApplyRequest{
-		CWD:     "/repo",
-		StoreID: "untrusted-store",
-		Mode:    "copy",
+		CWD:      "/repo",
+		StoreIDs: []string{"untrusted-store"},
+		Mode:     "copy",
 	})
 	if err == nil {
 		t.Fatal("expected .git hook path to be rejected")
@@ -185,7 +185,7 @@ func TestApply_RejectsSymlinkedParentIntoGitHooksBeforeWriting(t *testing.T) {
 	track.Tracked = []stores.TrackedPath{{Path: "hooks-link/pre-commit", Kind: "file"}}
 	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, newMockStateStore())
 
-	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreID: "untrusted-store", Mode: "copy"})
+	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreIDs: []string{"untrusted-store"}, Mode: "copy"})
 	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
 		t.Fatalf("Apply error = %v, want symlinked destination ancestor rejection", err)
 	}
@@ -205,7 +205,7 @@ func TestApply_RejectsSymlinkedParentOutsideWorkspaceWithoutMutation(t *testing.
 	track.Tracked = []stores.TrackedPath{{Path: "escape/created/payload.txt", Kind: "file"}}
 	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, newMockStateStore())
 
-	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreID: "untrusted-store", Mode: "copy"})
+	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreIDs: []string{"untrusted-store"}, Mode: "copy"})
 	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
 		t.Fatalf("Apply error = %v, want symlinked destination ancestor rejection", err)
 	}
@@ -233,7 +233,7 @@ func TestApply_ForceRejectsSymlinkedParentBeforeRemovingTarget(t *testing.T) {
 	track.Tracked = []stores.TrackedPath{{Path: "escape/payload.txt", Kind: "file"}}
 	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, newMockStateStore())
 
-	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreID: "untrusted-store", Mode: "copy", Force: true})
+	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreIDs: []string{"untrusted-store"}, Mode: "copy", Force: true})
 	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
 		t.Fatalf("Apply --force error = %v, want symlinked destination ancestor rejection", err)
 	}
@@ -257,7 +257,7 @@ func TestApply_SymlinkModeRejectsSymlinkedParentOutsideWorkspace(t *testing.T) {
 	track.Tracked = []stores.TrackedPath{{Path: "escape/payload.txt", Kind: "file"}}
 	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, newMockStateStore())
 
-	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreID: "untrusted-store", Mode: "symlink"})
+	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreIDs: []string{"untrusted-store"}, Mode: "symlink"})
 	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
 		t.Fatalf("symlink-mode Apply error = %v, want symlinked destination ancestor rejection", err)
 	}
@@ -284,9 +284,9 @@ func TestApply_WithStoreIDPrefersComponentScopeWhenDuplicate(t *testing.T) {
 	eng := newScopedTestEngineWithState(globalRepo, componentRepo, stateStore)
 
 	result, err := eng.Apply(context.Background(), &ApplyRequest{
-		CWD:     "/repo",
-		StoreID: "shared",
-		Mode:    "copy",
+		CWD:      "/repo",
+		StoreIDs: []string{"shared"},
+		Mode:     "copy",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

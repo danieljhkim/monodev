@@ -80,19 +80,22 @@ func (s *Syncer) buildWorkspaceReference(req *PushRequest, workspaceState *state
 		absolutePath = filepath.Clean(filepath.Join(req.RepoRoot, workspaceState.WorkspacePath))
 	}
 
+	normalized := state.CloneWorkspaceState(workspaceState)
+	normalized.MigrateDeprecatedStack()
+
 	return workspaceReference{
 		SchemaVersion: workspaceReferenceSchemaVersion,
 		WorkspaceID:   req.WorkspaceID,
 		Repo:          workspaceReferenceRepository(req, workspaceState),
 		WorkspacePath: workspaceState.WorkspacePath,
 		AbsolutePath:  absolutePath,
-		Applied:       workspaceState.Applied,
-		Mode:          workspaceState.Mode,
-		ActiveStore:   workspaceState.ActiveStore,
-		ActiveScope:   workspaceState.ActiveStoreScope,
-		Stack:         append([]string(nil), workspaceState.Stack...),
-		AppliedStores: append([]state.AppliedStore(nil), workspaceState.AppliedStores...),
-		PathOwnership: summarizePathOwnership(workspaceState.Paths),
+		Applied:       normalized.Applied,
+		Mode:          normalized.Mode,
+		ActiveStore:   normalized.ActiveStore,
+		ActiveScope:   normalized.ActiveStoreScope,
+		Stack:         []string{},
+		AppliedStores: append([]state.AppliedStore(nil), normalized.AppliedStores...),
+		PathOwnership: summarizePathOwnership(normalized.Paths),
 		GeneratedAt:   s.clock.Now(),
 	}
 }
@@ -158,11 +161,9 @@ func (s *Syncer) validateWorkspaceReference(req *PullRequest, ref *workspaceRefe
 		return fmt.Errorf("workspace reference path ownership count mismatch")
 	}
 
-	stores := make(map[string]struct{}, len(ref.Stack)+1)
-	for _, storeID := range append(append([]string{}, ref.Stack...), ref.ActiveStore) {
-		if storeID == "" {
-			continue
-		}
+	storeIDs := workspaceReferenceStoreIDs(ref)
+	stores := make(map[string]struct{}, len(storeIDs))
+	for _, storeID := range storeIDs {
 		if err := s.fs.ValidateIdentifier(storeID); err != nil {
 			return fmt.Errorf("invalid workspace reference store %q: %w", storeID, err)
 		}
@@ -191,10 +192,7 @@ func (s *Syncer) restoreWorkspaceReference(req *PullRequest, ref *workspaceRefer
 		return fmt.Errorf("failed to inspect local workspace state: %w", err)
 	}
 
-	for _, storeID := range append(append([]string{}, ref.Stack...), ref.ActiveStore) {
-		if storeID == "" {
-			continue
-		}
+	for _, storeID := range workspaceReferenceStoreIDs(ref) {
 		exists, err := s.storeRepo.Exists(storeID)
 		if err != nil {
 			return fmt.Errorf("failed to check workspace reference store %q: %w", storeID, err)
@@ -205,20 +203,43 @@ func (s *Syncer) restoreWorkspaceReference(req *PullRequest, ref *workspaceRefer
 	}
 
 	// The reference describes a prior machine's applied files. Restoring it must
-	// never claim those files on this checkout: normal apply/stack apply will
-	// plan and validate local changes before writing them.
+	// never claim those files on this checkout: normal apply will plan and
+	// validate local changes before writing them.
 	return s.stateStore.SaveWorkspace(req.LocalWorkspaceID, &state.WorkspaceState{
 		Repo:             req.RepoFingerprint,
 		WorkspacePath:    req.WorkspacePath,
 		AbsolutePath:     filepath.Join(req.RepoRoot, req.WorkspacePath),
 		Applied:          false,
 		Mode:             ref.Mode,
-		Stack:            append([]string{}, ref.Stack...),
+		Stack:            []string{},
 		AppliedStores:    []state.AppliedStore{},
 		ActiveStore:      ref.ActiveStore,
 		ActiveStoreScope: ref.ActiveScope,
 		Paths:            make(map[string]state.PathOwnership),
 	})
+}
+
+func workspaceReferenceStoreIDs(ref *workspaceReference) []string {
+	ids := make([]string, 0, len(ref.Stack)+len(ref.AppliedStores)+1)
+	seen := make(map[string]struct{})
+	add := func(id string) {
+		if id == "" {
+			return
+		}
+		if _, exists := seen[id]; exists {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	for _, id := range ref.Stack {
+		add(id)
+	}
+	for _, applied := range ref.AppliedStores {
+		add(applied.Store)
+	}
+	add(ref.ActiveStore)
+	return ids
 }
 
 func summarizePathOwnership(paths map[string]state.PathOwnership) workspacePathOwnershipSummary {

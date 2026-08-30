@@ -54,9 +54,11 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 
 	// If workspace state exists, populate from it
 	if workspaceState != nil {
+		workspaceState.MigrateDeprecatedStack()
 		result.Applied = workspaceState.Applied
 		result.Mode = workspaceState.Mode
-		result.Stack = workspaceState.Stack
+		result.Stack = []string{}
+		result.AppliedStores = workspaceState.AppliedStoreIDs()
 		result.ActiveStore = workspaceState.ActiveStore
 
 		// Convert paths to PathInfo
@@ -104,59 +106,37 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 
 // computeAppliedStoreDetails computes per-store applied path counts.
 func (e *Engine) computeAppliedStoreDetails(workspaceState *state.WorkspaceState) []AppliedStoreInfo {
-	// Build a set of all unique stores (stack + active store)
-	storeSet := make(map[string]bool)
-	for _, storeID := range workspaceState.Stack {
-		storeSet[storeID] = true
-	}
-	if workspaceState.ActiveStore != "" {
-		storeSet[workspaceState.ActiveStore] = true
-	}
-
-	// Count paths per store
 	storeCounts := make(map[string]int)
 	storeModes := make(map[string]string)
 
 	for _, ownership := range workspaceState.Paths {
 		storeCounts[ownership.Store]++
-		// Capture the mode (should be consistent per store)
 		if _, exists := storeModes[ownership.Store]; !exists {
 			storeModes[ownership.Store] = ownership.Type
 		}
 	}
 
-	// Build result in stack order, then active store
 	var details []AppliedStoreInfo
-
-	// Add stack stores first
-	for _, storeID := range workspaceState.Stack {
-		if count, hasCount := storeCounts[storeID]; hasCount && count > 0 {
+	seen := make(map[string]bool)
+	for _, applied := range workspaceState.AppliedStores {
+		if count, hasCount := storeCounts[applied.Store]; hasCount && count > 0 {
 			details = append(details, AppliedStoreInfo{
-				StoreID:      storeID,
-				Mode:         storeModes[storeID],
+				StoreID:      applied.Store,
+				Mode:         storeModes[applied.Store],
 				AppliedCount: count,
 			})
+			seen[applied.Store] = true
 		}
 	}
-
-	// Add active store if not already in stack
-	if workspaceState.ActiveStore != "" {
-		alreadyInStack := false
-		for _, storeID := range workspaceState.Stack {
-			if storeID == workspaceState.ActiveStore {
-				alreadyInStack = true
-				break
-			}
+	for storeID, count := range storeCounts {
+		if seen[storeID] || count == 0 {
+			continue
 		}
-		if !alreadyInStack {
-			if count, hasCount := storeCounts[workspaceState.ActiveStore]; hasCount && count > 0 {
-				details = append(details, AppliedStoreInfo{
-					StoreID:      workspaceState.ActiveStore,
-					Mode:         storeModes[workspaceState.ActiveStore],
-					AppliedCount: count,
-				})
-			}
-		}
+		details = append(details, AppliedStoreInfo{
+			StoreID:      storeID,
+			Mode:         storeModes[storeID],
+			AppliedCount: count,
+		})
 	}
 
 	return details

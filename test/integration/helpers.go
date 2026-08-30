@@ -273,8 +273,11 @@ func (r *testStoreRepo) OverlayRoot(id string) string {
 	return filepath.Join("/stores", id, "overlay")
 }
 
-func (r *testStoreRepo) List() ([]string, error)                            { return nil, nil }
-func (r *testStoreRepo) Exists(id string) (bool, error)                     { return false, nil }
+func (r *testStoreRepo) List() ([]string, error) { return nil, nil }
+func (r *testStoreRepo) Exists(id string) (bool, error) {
+	_, ok := r.tracks[id]
+	return ok, nil
+}
 func (r *testStoreRepo) Create(id string, meta *stores.StoreMeta) error     { return nil }
 func (r *testStoreRepo) LoadMeta(id string) (*stores.StoreMeta, error)      { return nil, nil }
 func (r *testStoreRepo) SaveMeta(id string, meta *stores.StoreMeta) error   { return nil }

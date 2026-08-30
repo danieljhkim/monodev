@@ -125,10 +125,6 @@ func init() {
 		Title: "Store Operations:",
 	})
 	rootCmd.AddGroup(&cobra.Group{
-		ID:    "stack-management",
-		Title: "Stack Management:",
-	})
-	rootCmd.AddGroup(&cobra.Group{
 		ID:    "remote-persistence",
 		Title: "Remote Persistence:",
 	})
@@ -228,8 +224,6 @@ See each sub-command's help for details on how to use the generated script.`,
 	rootCmd.AddCommand(trackCmd)
 	rootCmd.AddCommand(untrackCmd)
 
-	// Stack Management commands
-	stackCmd.GroupID = "stack-management"
 	rootCmd.AddCommand(stackCmd)
 
 	// Remote Persistence commands

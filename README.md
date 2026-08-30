@@ -198,11 +198,20 @@ monodev commit <path>
 # persist all tracked paths in the active store
 monodev commit --all
 
-# this applies the "active store's" overlays to the current workspace
+# apply the active store's overlays to the current workspace
 monodev apply [--force] [--dry-run]
 
-# this removes the "active store's" applied overlays from the current workspace
+# apply one or more stores in order; later stores win path conflicts
+monodev apply store-a store-b [--force] [--dry-run]
+
+# remove the active store's applied overlays from the current workspace
 monodev unapply [--force] [--dry-run]
+
+# remove overlays owned by specific stores; other applied stores remain
+monodev unapply store-a [--force] [--dry-run]
+
+# show the ordered applied set and path ownership
+monodev status
 
 ```
 
@@ -215,38 +224,8 @@ monodev workspace ls
 # show detailed information about a workspace
 monodev workspace describe <workspace-id>
 
-# delete a workspace
-monodev workspace rm <workspace-id>
-```
-
-### Stack management
-
-To easily manage multiple stores in one go, you can use the stack command. 
-
-Stack isn't technically required (you can still use `monodev apply/unapply` multiple times), but it's a convenient way to manage multiple stores. 
-
-When using stack, the "active store" is not affected - use `monodev apply/unapply` separately for that.
-
-When there are conflicts (i.e. multiple stores claim the same path), you can use `--force` to override them - later stores take precedence.
-
-```bash
-# list all stores in the stack
-monodev stack ls
-
-# add a store to the stack
-monodev stack add <store-id>
-
-# remove a store from the stack
-monodev stack pop [<store-id>]
-
-# clear the stack
-monodev stack clear
-
-# apply the stack to the current workspace
-monodev stack apply [--force] [--dry-run]
-
-# remove the stack-applied overlays from the current workspace
-monodev stack unapply [--force] [--dry-run]
+# delete a workspace (omit the id to delete the current workspace)
+monodev workspace rm [workspace-id]
 ```
 
 ### Remote persistence
@@ -291,7 +270,7 @@ monodev pull <store-id>... --force
 2. Stores are materialized to `.monodev/persist/stores/` before pushing
 3. With `--with-workspace`, the current workspace reference is written to `.monodev/persist/workspaces/<workspace-id>.json`
    with `schemaVersion`, `workspaceID`, `repo`, `workspacePath`, `absolutePath`, `activeStore`,
-   `activeStoreScope`, `stack`, `appliedStores`, `mode`, and a `pathOwnership` summary
+   `activeStoreScope`, `appliedStores`, `mode`, and a `pathOwnership` summary
 4. A separate Git repository is created at `.monodev/.git` with an orphan branch
 5. The orphan branch is pushed to your configured remote
 6. When pulling, stores are fetched and dematerialized to `~/.monodev/stores/`

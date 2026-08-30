@@ -41,5 +41,6 @@ func (e *Engine) LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath
 		}
 	}
 	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
+	workspaceState.MigrateDeprecatedStack()
 	return workspaceState, workspaceID, nil
 }

@@ -65,6 +65,12 @@ func (s *FileStateStore) LoadWorkspace(id string) (*WorkspaceState, error) {
 		return nil, fmt.Errorf("failed to unmarshal workspace state: %w", err)
 	}
 
+	if state.MigrateDeprecatedStack() {
+		if err := s.SaveWorkspace(id, &state); err != nil {
+			return nil, fmt.Errorf("failed to persist migrated workspace state: %w", err)
+		}
+	}
+
 	return &state, nil
 }
 

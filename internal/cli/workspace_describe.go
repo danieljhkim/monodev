@@ -41,14 +41,6 @@ var workspaceDescribeCmd = &cobra.Command{
 		PrintLabelValue("Mode", result.Mode)
 		PrintLabelValue("Active Store", result.ActiveStore)
 
-		if len(result.Stack) > 0 {
-			PrintSubsection(fmt.Sprintf("\nStack (%s)", PrintCount(len(result.Stack), "store", "stores")))
-			PrintNumberedList(result.Stack, 1)
-		} else {
-			PrintSubsection("\nStack")
-			PrintEmptyState("Stack is empty")
-		}
-
 		if len(result.AppliedStores) > 0 {
 			PrintSubsection(fmt.Sprintf("\nApplied Stores (%s)", PrintCount(len(result.AppliedStores), "store", "stores")))
 			storesList := make([]string, 0, len(result.AppliedStores))

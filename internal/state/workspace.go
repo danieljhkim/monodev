@@ -1,6 +1,9 @@
 package state
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // WorkspaceState represents the state of overlays applied to a workspace.
 // This is the authoritative record of what monodev has modified in a workspace.
@@ -20,7 +23,8 @@ type WorkspaceState struct {
 	// Mode is the overlay mode ("symlink" or "copy")
 	Mode string `json:"mode"`
 
-	// Stack is the ordered list of stores applied (excluding active store)
+	// Stack is the deprecated ordered store list from the retired stack command.
+	// Migrated into AppliedStores on load; kept so old workspace JSON still unmarshals.
 	Stack []string `json:"stack"`
 
 	// AppliedStores is the list of stores that have been applied
@@ -147,16 +151,74 @@ func (ws *WorkspaceState) PruneAppliedStores() {
 	ws.AppliedStores = newAppliedStores
 }
 
-// updates the applied stores list based on the paths in the workspace
-func (ws *WorkspaceState) RefreshAppliedStores() {
-	newAppliedStores := []AppliedStore{}
-	appliedStoresMap := make(map[string]struct{})
-	for _, path := range ws.Paths {
-		appliedStoresMap[path.Store] = struct{}{}
+// AppliedStoreIDs returns applied store IDs in ledger order.
+func (ws *WorkspaceState) AppliedStoreIDs() []string {
+	if ws == nil {
+		return []string{}
+	}
+	ids := make([]string, 0, len(ws.AppliedStores))
+	for _, applied := range ws.AppliedStores {
+		ids = append(ids, applied.Store)
+	}
+	return ids
+}
+
+// MigrateDeprecatedStack folds the retired stack field into AppliedStores.
+// Stores that own at least one path are recorded in stack order, then any
+// remaining AppliedStores and path owners. Pending stack entries that never
+// applied are dropped. Returns whether the in-memory state changed.
+func (ws *WorkspaceState) MigrateDeprecatedStack() bool {
+	if ws == nil || len(ws.Stack) == 0 {
+		return false
 	}
 
-	for key := range appliedStoresMap { // TODO: just one mode for now per workspace
-		newAppliedStores = append(newAppliedStores, AppliedStore{Store: key, Type: ws.Mode})
+	ownsPath := make(map[string]string, len(ws.Paths))
+	for _, ownership := range ws.Paths {
+		if _, exists := ownsPath[ownership.Store]; !exists {
+			ownsPath[ownership.Store] = ownership.Type
+		}
 	}
-	ws.AppliedStores = newAppliedStores
+
+	seen := make(map[string]bool)
+	next := make([]AppliedStore, 0, len(ws.Stack)+len(ws.AppliedStores))
+	appendOwner := func(id, typ string) {
+		if id == "" || seen[id] {
+			return
+		}
+		pathType, ok := ownsPath[id]
+		if !ok {
+			return
+		}
+		if pathType != "" {
+			typ = pathType
+		} else if typ == "" {
+			typ = ws.Mode
+		}
+		next = append(next, AppliedStore{Store: id, Type: typ})
+		seen[id] = true
+	}
+
+	for _, id := range ws.Stack {
+		appendOwner(id, ws.Mode)
+	}
+	for _, applied := range ws.AppliedStores {
+		appendOwner(applied.Store, applied.Type)
+	}
+	leftover := make([]string, 0, len(ownsPath))
+	for id := range ownsPath {
+		if !seen[id] {
+			leftover = append(leftover, id)
+		}
+	}
+	sort.Strings(leftover)
+	for _, id := range leftover {
+		appendOwner(id, ownsPath[id])
+	}
+
+	ws.AppliedStores = next
+	if len(ws.Paths) > 0 {
+		ws.Applied = true
+	}
+	ws.Stack = []string{}
+	return true
 }

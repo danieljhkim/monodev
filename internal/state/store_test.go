@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -173,5 +174,60 @@ func TestFileStateStoreValidHashWorkspaceIDLifecycle(t *testing.T) {
 	}
 	if _, err := store.LoadWorkspace(workspaceID); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("LoadWorkspace() after delete error = %v, want os.ErrNotExist", err)
+	}
+}
+
+func TestFileStateStore_MigratesLegacyStackOnLoad(t *testing.T) {
+	workspacesDir := t.TempDir()
+	workspaceID := "legacy-stack"
+	fixture, err := os.ReadFile(filepath.Join("testdata", "legacy_stack_workspace.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspacesDir, workspaceID+".json"), fixture, 0600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	store := NewFileStateStore(fsops.NewRealFS(), workspacesDir)
+	got, err := store.LoadWorkspace(workspaceID)
+	if err != nil {
+		t.Fatalf("LoadWorkspace() error = %v", err)
+	}
+	if len(got.Stack) != 0 {
+		t.Fatalf("Stack = %#v, want empty after migration", got.Stack)
+	}
+	wantApplied := []string{"store-a", "store-b", "active-store"}
+	if gotIDs := got.AppliedStoreIDs(); len(gotIDs) != len(wantApplied) {
+		t.Fatalf("AppliedStores = %#v, want %v", got.AppliedStores, wantApplied)
+	} else {
+		for i, id := range wantApplied {
+			if gotIDs[i] != id {
+				t.Fatalf("AppliedStores = %#v, want %v", gotIDs, wantApplied)
+			}
+		}
+	}
+	if got.Paths["a.txt"].Store != "store-a" || got.Paths["shared.txt"].Store != "store-b" || got.Paths["active.txt"].Store != "active-store" {
+		t.Fatalf("path ownership = %#v", got.Paths)
+	}
+	if !got.Applied {
+		t.Fatal("Applied = false, want true so overlays remain applied")
+	}
+
+	persisted, err := os.ReadFile(filepath.Join(workspacesDir, workspaceID+".json"))
+	if err != nil {
+		t.Fatalf("read persisted workspace: %v", err)
+	}
+	var onDisk WorkspaceState
+	if err := json.Unmarshal(persisted, &onDisk); err != nil {
+		t.Fatalf("unmarshal persisted workspace: %v", err)
+	}
+	if len(onDisk.Stack) != 0 {
+		t.Fatalf("persisted Stack = %#v, want empty", onDisk.Stack)
+	}
+	if onDisk.AppliedStoreIDs()[0] != "store-a" || onDisk.AppliedStoreIDs()[1] != "store-b" || onDisk.AppliedStoreIDs()[2] != "active-store" {
+		t.Fatalf("persisted AppliedStores = %#v", onDisk.AppliedStores)
+	}
+	if onDisk.Paths["shared.txt"].Store != "store-b" {
+		t.Fatalf("persisted shared.txt owner = %#v, want store-b", onDisk.Paths["shared.txt"])
 	}
 }

@@ -50,12 +50,10 @@ var statusCmd = &cobra.Command{
 			PrintLabelValue("Git URL", result.GitURL)
 		}
 		PrintLabelValue("Workspace Path", result.WorkspacePath)
-		// Stack Display
-		if len(result.Stack) > 0 {
-			stackDisplay := fmt.Sprintf("[\"%s\"]", strings.Join(result.Stack, "\", \""))
-			PrintLabelValue("Stack", stackDisplay)
+		if len(result.AppliedStores) > 0 {
+			PrintLabelValue("Applied Stores", fmt.Sprintf("[\"%s\"]", strings.Join(result.AppliedStores, "\", \"")))
 		} else {
-			PrintLabelValue("Stack", "[]")
+			PrintLabelValue("Applied Stores", "[]")
 		}
 
 		fmt.Println()

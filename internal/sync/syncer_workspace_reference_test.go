@@ -90,8 +90,8 @@ func TestSyncer_PushWorkspaceReference(t *testing.T) {
 		if ref.ActiveStore != storeID {
 			t.Errorf("ActiveStore = %q, want %q", ref.ActiveStore, storeID)
 		}
-		if len(ref.Stack) != 1 || ref.Stack[0] != "stack-store" {
-			t.Errorf("Stack = %#v, want [stack-store]", ref.Stack)
+		if len(ref.Stack) != 0 {
+			t.Errorf("Stack = %#v, want empty after stack retirement", ref.Stack)
 		}
 		if ref.Mode != "copy" {
 			t.Errorf("Mode = %q, want copy", ref.Mode)
@@ -283,8 +283,8 @@ func TestSyncer_PullWorkspaceReferenceRestoresPortableLocalState(t *testing.T) {
 	if restored.ActiveStore != "active-store" || restored.ActiveStoreScope != "component" {
 		t.Errorf("active store = %q/%q", restored.ActiveStore, restored.ActiveStoreScope)
 	}
-	if len(restored.Stack) != 1 || restored.Stack[0] != "stack-store" {
-		t.Errorf("Stack = %#v, want [stack-store]", restored.Stack)
+	if len(restored.Stack) != 0 {
+		t.Errorf("Stack = %#v, want empty after stack retirement", restored.Stack)
 	}
 	if restored.Applied || len(restored.Paths) != 0 || len(restored.AppliedStores) != 0 {
 		t.Errorf("restored state claims remote applied files: %#v", restored)

@@ -14,8 +14,8 @@ type ApplyRequest struct {
 	// DryRun performs planning only without making changes
 	DryRun bool
 
-	// StoreID is an optional store ID to apply instead of the active store
-	StoreID string
+	// StoreIDs are stores to apply in argument order. Empty means the active store.
+	StoreIDs []string
 }
 
 // UnapplyRequest represents a request to unapply overlays.
@@ -28,39 +28,15 @@ type UnapplyRequest struct {
 
 	// DryRun shows what would be removed without actually removing
 	DryRun bool
+
+	// StoreIDs are stores whose paths to remove. Empty means the active store.
+	StoreIDs []string
 }
 
 // StatusRequest represents a request for workspace status.
 type StatusRequest struct {
 	// CWD is the current working directory
 	CWD string
-}
-
-// StackApplyRequest represents a request to apply the configured stack.
-type StackApplyRequest struct {
-	// CWD is the current working directory (workspace path)
-	CWD string
-
-	// Mode is the overlay mode ("symlink" or "copy")
-	Mode string
-
-	// Force allows overwriting conflicts
-	Force bool
-
-	// DryRun performs planning only without making changes
-	DryRun bool
-}
-
-// StackUnapplyRequest represents a request to unapply the stack portion only.
-type StackUnapplyRequest struct {
-	// CWD is the current working directory (workspace path)
-	CWD string
-
-	// Force allows removing paths even if validation fails
-	Force bool
-
-	// DryRun shows what would be removed without actually removing
-	DryRun bool
 }
 
 // DeleteStoreRequest represents a request to delete a store.
@@ -94,34 +70,4 @@ type DiffRequest struct {
 
 	// NameStatus shows filenames with status indicators (M, A, D)
 	NameStatus bool
-}
-
-// StackListRequest represents a request to list the store stack.
-type StackListRequest struct {
-	// CWD is the current working directory
-	CWD string
-}
-
-// StackAddRequest represents a request to add a store to the stack.
-type StackAddRequest struct {
-	// CWD is the current working directory
-	CWD string
-
-	// StoreID is the store to add to the stack
-	StoreID string
-}
-
-// StackPopRequest represents a request to remove a store from the stack.
-type StackPopRequest struct {
-	// CWD is the current working directory
-	CWD string
-
-	// StoreID is the store to remove (if empty, removes last store - LIFO)
-	StoreID string
-}
-
-// StackClearRequest represents a request to clear the stack.
-type StackClearRequest struct {
-	// CWD is the current working directory
-	CWD string
 }
