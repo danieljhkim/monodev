@@ -626,13 +626,45 @@ func TestStoreUpdateCommand_Flags(t *testing.T) {
 }
 
 func TestREADMECommandExamplesUseRegisteredSurface(t *testing.T) {
-	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	assertDocumentedCommandsMatchBinary(t, filepath.Join("..", "..", "README.md"))
+}
+
+func TestDocsCommandExamplesUseRegisteredSurface(t *testing.T) {
+	docsDir := filepath.Join("..", "..", "docs")
+	entries, err := os.ReadDir(docsDir)
 	if err != nil {
-		t.Fatalf("ReadFile(README.md) error = %v", err)
+		t.Fatalf("ReadDir(docs) error = %v", err)
+	}
+	found := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		found++
+		assertDocumentedCommandsMatchBinary(t, filepath.Join(docsDir, entry.Name()))
+	}
+	if found == 0 {
+		t.Fatal("docs/ contained no markdown files to check")
+	}
+}
+
+func assertDocumentedCommandsMatchBinary(t *testing.T, path string) {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	rel := path
+	if abs, absErr := filepath.Abs(path); absErr == nil {
+		if repoRoot, repoErr := filepath.Abs(filepath.Join("..", "..")); repoErr == nil {
+			if trimmed, trimErr := filepath.Rel(repoRoot, abs); trimErr == nil {
+				rel = trimmed
+			}
+		}
 	}
 
 	flagPattern := regexp.MustCompile(`(?:^|\s)(--?[[:alpha:]][[:alnum:]-]*)`)
-	for lineNumber, line := range strings.Split(string(readme), "\n") {
+	for lineNumber, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(strings.SplitN(line, " #", 2)[0])
 		if !strings.HasPrefix(line, "monodev ") {
 			continue
@@ -659,13 +691,13 @@ func TestREADMECommandExamplesUseRegisteredSurface(t *testing.T) {
 			current = child
 		}
 		if len(commandPath) == 0 {
-			t.Errorf("README:%d: command path missing in %q", lineNumber+1, line)
+			t.Errorf("%s:%d: command path missing in %q", rel, lineNumber+1, line)
 			continue
 		}
 
 		cmd, _, findErr := rootCmd.Find(commandPath)
 		if findErr != nil || cmd == nil || cmd.Name() != commandPath[len(commandPath)-1] {
-			t.Errorf("README:%d: command %q is not registered (error: %v)", lineNumber+1, strings.Join(commandPath, " "), findErr)
+			t.Errorf("%s:%d: command %q is not registered (error: %v)", rel, lineNumber+1, strings.Join(commandPath, " "), findErr)
 			continue
 		}
 
@@ -677,7 +709,10 @@ func TestREADMECommandExamplesUseRegisteredSurface(t *testing.T) {
 				registered = cmd.Flags().ShorthandLookup(normalizedFlagName)
 			}
 			if registered == nil {
-				t.Errorf("README:%d: flag %s is not registered for %q", lineNumber+1, flagName, strings.Join(commandPath, " "))
+				registered = cmd.InheritedFlags().Lookup(normalizedFlagName)
+			}
+			if registered == nil {
+				t.Errorf("%s:%d: flag %s is not registered for %q", rel, lineNumber+1, flagName, strings.Join(commandPath, " "))
 			}
 		}
 	}
