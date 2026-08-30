@@ -1,8 +1,6 @@
 package gitx
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -87,30 +85,55 @@ func (g *RealGitRepo) CommonGitDir(root string) (string, error) {
 	return filepath.Clean(gitDir), nil
 }
 
+func execGit(dir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd
+}
+
+func execGitConfig(dir, key string) *exec.Cmd {
+	return execGit(dir, "config", "--get", key)
+}
+
 // Fingerprint computes a stable fingerprint for the repository.
-// It uses the repo root path and remote origin URL (if available).
+//
+// Identity precedence:
+//  1. Durable repo ID (`.monodev/repo-id`, else git-common-dir `monodev/repo-id`)
+//  2. Normalized remote URL (origin, otherwise the first `git remote`)
+//  3. Newly persisted durable ID for a git repo with no remotes
+//  4. Absolute path for non-git directories
+//
+// The clone's absolute path is not part of (1)–(3), so moving a clone does not
+// change the fingerprint.
 func (g *RealGitRepo) Fingerprint(root string) (string, error) {
-	// Get the absolute path of the root
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	// Try to get the remote origin URL
-	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
-	cmd.Dir = root
-	output, err := cmd.Output()
-
-	remoteURL := "unknown"
-	if err == nil {
-		remoteURL = strings.TrimSpace(string(output))
+	if id, err := readDurableRepoID(absRoot); err != nil {
+		return "", err
+	} else if id != "" {
+		return HashFingerprint(fingerprintIDPrefix + id), nil
 	}
 
-	// Compute fingerprint from root path + remote URL
-	data := absRoot + "|" + remoteURL
+	remoteURL, err := selectRemoteURL(absRoot)
+	if err == nil && remoteURL != "" {
+		normalized := NormalizeRemoteURL(remoteURL)
+		if normalized != "" {
+			return HashFingerprint(fingerprintRemotePrefix + normalized), nil
+		}
+	}
 
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:]), nil
+	if _, gitErr := g.CommonGitDir(absRoot); gitErr == nil {
+		id, err := EnsureDurableRepoID(absRoot)
+		if err != nil {
+			return "", fmt.Errorf("failed to persist durable repo id: %w", err)
+		}
+		return HashFingerprint(fingerprintIDPrefix + id), nil
+	}
+
+	return HashFingerprint(fingerprintPathPrefix + absRoot), nil
 }
 
 // RelPath computes the relative path from repo root to the given absolute path.
@@ -138,7 +161,9 @@ func (g *RealGitRepo) RelPath(root, absPath string) (string, error) {
 	return relPath, nil
 }
 
-// GetFingerprintComponents returns the absolute path and git URL used to compute the fingerprint.
+// GetFingerprintComponents returns the absolute repository path and the raw
+// origin URL (empty when origin is unset). The fingerprint no longer hashes
+// these values directly; callers use them for display and legacy migration.
 func (g *RealGitRepo) GetFingerprintComponents(root string) (string, string, error) {
 	// Get the absolute path of the root
 	absRoot, err := filepath.Abs(root)
@@ -146,9 +171,7 @@ func (g *RealGitRepo) GetFingerprintComponents(root string) (string, string, err
 		return "", "", fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	// Try to get the remote origin URL
-	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
-	cmd.Dir = root
+	cmd := execGitConfig(root, "remote.origin.url")
 	output, err := cmd.Output()
 
 	gitURL := ""
@@ -163,8 +186,7 @@ func (g *RealGitRepo) GetFingerprintComponents(root string) (string, string, err
 // falling back to git config user.name, then "user".
 func (g *RealGitRepo) Username(root string) string {
 	// Try to extract username from remote origin URL
-	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
-	cmd.Dir = root
+	cmd := execGitConfig(root, "remote.origin.url")
 	output, err := cmd.Output()
 	if err == nil {
 		url := strings.TrimSpace(string(output))
