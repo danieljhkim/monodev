@@ -1,6 +1,8 @@
 package gitx
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,6 +31,11 @@ type GitRepo interface {
 	// Username returns the GitHub username derived from the remote origin URL,
 	// or falls back to git config user.name. Returns "user" if neither is available.
 	Username(root string) string
+
+	// IsIgnored reports which of the given paths (relative to cwd) are
+	// excluded by standard git ignore rules (.gitignore, .git/info/exclude,
+	// global excludes). Paths not present in the result are not ignored.
+	IsIgnored(cwd string, relPaths []string) (map[string]bool, error)
 }
 
 // RealGitRepo implements GitRepo using actual git commands.
@@ -306,6 +313,59 @@ func extractGitHubUsername(url string) string {
 	return ""
 }
 
+// IsIgnored reports which of relPaths (interpreted relative to cwd) are
+// excluded by git's ignore rules, using a single batched `git check-ignore`
+// call. A failure to run git (e.g. cwd is not inside a repository) is
+// returned as an error; callers that want best-effort behavior should treat
+// that as "nothing is ignored" rather than failing discovery outright.
+func (g *RealGitRepo) IsIgnored(cwd string, relPaths []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(relPaths))
+	if len(relPaths) == 0 {
+		return result, nil
+	}
+
+	cmd := exec.Command("git", "check-ignore", "--stdin", "-z")
+	cmd.Dir = cwd
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open check-ignore stdin: %w", err)
+	}
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start check-ignore: %w", err)
+	}
+
+	for _, p := range relPaths {
+		if _, err := stdin.Write([]byte(filepath.ToSlash(p) + "\x00")); err != nil {
+			_ = stdin.Close()
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("failed to write check-ignore input: %w", err)
+		}
+	}
+	if err := stdin.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close check-ignore stdin: %w", err)
+	}
+
+	// git check-ignore exits 1 when none of the supplied paths are ignored;
+	// that is a normal outcome, not a failure.
+	if err := cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return nil, fmt.Errorf("check-ignore failed: %w", err)
+		}
+	}
+
+	for _, ignored := range strings.Split(stdout.String(), "\x00") {
+		if ignored == "" {
+			continue
+		}
+		result[filepath.FromSlash(ignored)] = true
+	}
+	return result, nil
+}
+
 // FakeGitRepo implements GitRepo with predetermined values for testing.
 type FakeGitRepo struct {
 	root        string
@@ -313,6 +373,7 @@ type FakeGitRepo struct {
 	absPath     string
 	gitURL      string
 	username    string
+	ignored     map[string]bool
 	err         error
 }
 
@@ -403,4 +464,26 @@ func (g *FakeGitRepo) Username(root string) string {
 		return g.username
 	}
 	return "user"
+}
+
+// IsIgnored reports the predetermined ignored set, or nothing ignored by default.
+func (g *FakeGitRepo) IsIgnored(cwd string, relPaths []string) (map[string]bool, error) {
+	if g.err != nil {
+		return nil, g.err
+	}
+	result := make(map[string]bool, len(g.ignored))
+	for _, p := range relPaths {
+		if g.ignored[p] {
+			result[p] = true
+		}
+	}
+	return result, nil
+}
+
+// SetIgnored configures which relative paths IsIgnored reports as ignored.
+func (g *FakeGitRepo) SetIgnored(paths ...string) {
+	g.ignored = make(map[string]bool, len(paths))
+	for _, p := range paths {
+		g.ignored[p] = true
+	}
 }

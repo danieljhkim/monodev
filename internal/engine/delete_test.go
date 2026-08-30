@@ -109,6 +109,9 @@ func (m *mockGitRepo) GetFingerprintComponents(root string) (string, string, err
 	return "", "", nil
 }
 func (m *mockGitRepo) Username(root string) string { return "user" }
+func (m *mockGitRepo) IsIgnored(cwd string, relPaths []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
 
 type mockHasher struct{}
 

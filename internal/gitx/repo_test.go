@@ -675,3 +675,48 @@ func TestNewFakeGitRepoWithComponents(t *testing.T) {
 		}
 	})
 }
+
+func TestRealGitRepo_IsIgnored(t *testing.T) {
+	repoDir := setupGitRepo(t)
+
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("*.log\n"), 0644); err != nil {
+		t.Fatalf("failed to write .gitignore: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoDir, "sub"), 0755); err != nil {
+		t.Fatalf("failed to create sub dir: %v", err)
+	}
+	for _, name := range []string{"sub/keep.txt", "sub/skip.log"} {
+		if err := os.WriteFile(filepath.Join(repoDir, name), []byte("x"), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", name, err)
+		}
+	}
+
+	repo := NewRealGitRepo()
+	ignored, err := repo.IsIgnored(repoDir, []string{
+		filepath.Join("sub", "keep.txt"),
+		filepath.Join("sub", "skip.log"),
+	})
+	if err != nil {
+		t.Fatalf("IsIgnored failed: %v", err)
+	}
+
+	if ignored[filepath.Join("sub", "keep.txt")] {
+		t.Errorf("keep.txt should not be ignored")
+	}
+	if !ignored[filepath.Join("sub", "skip.log")] {
+		t.Errorf("skip.log should be ignored")
+	}
+}
+
+func TestRealGitRepo_IsIgnored_EmptyInput(t *testing.T) {
+	repoDir := setupGitRepo(t)
+
+	repo := NewRealGitRepo()
+	ignored, err := repo.IsIgnored(repoDir, nil)
+	if err != nil {
+		t.Fatalf("IsIgnored failed: %v", err)
+	}
+	if len(ignored) != 0 {
+		t.Errorf("expected no ignored paths, got %v", ignored)
+	}
+}
