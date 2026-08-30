@@ -40,6 +40,27 @@ monodev apply
 monodev help
 ```
 
+Downloaded release archives also contain shell completions under
+`completions/` and man pages under `man/`. After extracting an archive, install
+the binary and the optional integrations for your shell:
+
+```bash
+PREFIX="${PREFIX:-$HOME/.local}"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+mkdir -p "$PREFIX/bin" "$DATA_DIR/bash-completion/completions" \
+  "$HOME/.zfunc" "$HOME/.config/fish/completions" "$DATA_DIR/man/man1"
+install -m 0755 monodev "$PREFIX/bin/monodev"
+install -m 0644 completions/monodev.bash \
+  "$DATA_DIR/bash-completion/completions/monodev"
+install -m 0644 completions/_monodev "$HOME/.zfunc/_monodev"
+install -m 0644 completions/monodev.fish "$HOME/.config/fish/completions/monodev.fish"
+install -m 0644 man/monodev.1 "$DATA_DIR/man/man1/monodev.1"
+```
+
+Add `fpath=(~/.zfunc $fpath)` to `.zshrc` before `compinit` for zsh, and add
+`${XDG_DATA_HOME:-$HOME/.local/share}/man` to `MANPATH` if your system does not
+already search it. The Homebrew formula installs these same files automatically.
+
 ![monodev preview](docs/assets/cli_preview.png)
 
 ---

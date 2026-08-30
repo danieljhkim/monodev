@@ -42,6 +42,11 @@ func SetVersion(v string) {
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 }
 
+// RootCommand returns the Cobra command tree for build-time documentation generation.
+func RootCommand() *cobra.Command {
+	return rootCmd
+}
+
 // customHelpFunc returns a custom help function that colors group titles
 func customHelpFunc(cmd *cobra.Command, args []string) {
 	// Build complete help output

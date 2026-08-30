@@ -71,24 +71,38 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "asset=${ASSET}" >> "$GITHUB_OUTPUT"
 
-      - name: Build binary
+      - name: Build binary and documentation artifacts
         shell: bash
         run: |
-          mkdir -p dist
-          CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" go build \
-            -trimpath -buildvcs=false \
-            -ldflags "-s -w -X main.version=${{ steps.meta.outputs.version }}" \
-            -o dist/monodev ./cmd/monodev
+          make release-artifacts \
+            VERSION="${{ steps.meta.outputs.version }}" \
+            RELEASE_DIR=dist \
+            GOOS="${{ matrix.goos }}" \
+            GOARCH="${{ matrix.goarch }}"
 
       - name: Smoke test version on native runner
         run: ./dist/monodev version
+
+      - name: Validate generated documentation
+        shell: bash
+        run: |
+          test -s dist/completions/monodev.bash
+          test -s dist/completions/_monodev
+          test -s dist/completions/monodev.fish
+          test -s dist/man/monodev.1
+          zsh -n dist/completions/_monodev
+          zsh -f -c 'autoload -Uz compinit; compinit -D; source "$1"' zsh "$PWD/dist/completions/_monodev"
+
+          VERSION="$(./dist/monodev version)"
+          MAN_OUTPUT="$(MANPAGER=cat man dist/man/monodev.1 2>/dev/null)"
+          grep -Fq "$VERSION" <<< "$MAN_OUTPUT"
 
       - name: Package archive and checksum
         shell: bash
         run: |
           ASSET="${{ steps.meta.outputs.asset }}"
-          tar -C dist -czf "dist/${ASSET}" monodev
-          rm dist/monodev
+          tar -C dist -czf "dist/${ASSET}" monodev completions man
+          rm -rf dist/monodev dist/completions dist/man
 
           if [[ "${{ matrix.goos }}" == "darwin" ]]; then
             SHA="$(shasum -a 256 "dist/${ASSET}" | awk '{print $1}')"
@@ -192,6 +206,10 @@ jobs:
           perl -0777 -i -pe "s|^\s*url\s+\".*?\"|  url \"${URL}\"|m" "$FORMULA"
           perl -0777 -i -pe "s|^\s*sha256\s+\".*?\"|  sha256 \"${SHA}\"|m" "$FORMULA"
           perl -0777 -i -pe "s|^\s*version\s+\".*?\"|  version \"${VERSION}\"|m" "$FORMULA"
+
+          if ! grep -Fq 'zsh_completion.install "completions/_monodev"' "$FORMULA"; then
+            perl -0777 -i -pe 's|(\n[ \t]*bin\.install "monodev"\n)|$1    bash_completion.install "completions/monodev.bash"\n    zsh_completion.install "completions/_monodev"\n    fish_completion.install "completions/monodev.fish"\n    man1.install Dir["man/*.1"]\n|' "$FORMULA"
+          fi
 
           sed -n '1,120p' "$FORMULA"
 
