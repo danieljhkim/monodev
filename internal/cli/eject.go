@@ -62,12 +62,13 @@ later explicit store rm.`,
 			if jsonOutput {
 				return outputJSON(plan)
 			}
-			printEjectPlan(cmd, plan)
-			return nil
+			return printEjectPlan(cmd, plan)
 		}
 
 		if !jsonOutput {
-			printEjectPlan(cmd, plan)
+			if err := printEjectPlan(cmd, plan); err != nil {
+				return err
+			}
 		}
 		if !ejectYes {
 			confirmed, confirmErr := confirmEject(cmd)
@@ -89,13 +90,19 @@ later explicit store rm.`,
 		}
 
 		for _, warning := range result.Warnings {
-			fmt.Fprintf(cmd.OutOrStdout(), "warning: %s\n", warning)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "warning: %s\n", warning); err != nil {
+				return fmt.Errorf("write eject warning: %w", err)
+			}
 		}
 		if result.RemoveFiles {
-			fmt.Fprintf(cmd.OutOrStdout(), "Ejected monodev and removed %d overlaid path(s). Stores were kept.\n", len(result.Removed))
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Ejected monodev and removed %d overlaid path(s). Stores were kept.\n", len(result.Removed)); err != nil {
+				return fmt.Errorf("write eject result: %w", err)
+			}
 			return nil
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Ejected monodev and kept %d file(s) in place. They are now ordinary workspace files; stores were kept.\n", len(result.Retained))
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Ejected monodev and kept %d file(s) in place. They are now ordinary workspace files; stores were kept.\n", len(result.Retained)); err != nil {
+			return fmt.Errorf("write eject result: %w", err)
+		}
 		return nil
 	},
 }
@@ -107,7 +114,7 @@ func init() {
 	ejectCmd.Flags().BoolVar(&ejectYes, "yes", false, "Confirm eject without an interactive prompt")
 }
 
-func printEjectPlan(cmd *cobra.Command, result *engine.EjectResult) {
+func printEjectPlan(cmd *cobra.Command, result *engine.EjectResult) error {
 	mode := "keep files"
 	paths := result.Retained
 	action := "leave these paths on disk unchanged"
@@ -118,18 +125,33 @@ func printEjectPlan(cmd *cobra.Command, result *engine.EjectResult) {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Eject plan (%s):\n", mode)
-	fmt.Fprintf(out, "  - %s\n", action)
-	for _, path := range paths {
-		fmt.Fprintf(out, "  - %s\n", path)
+	if _, err := fmt.Fprintf(out, "Eject plan (%s):\n", mode); err != nil {
+		return fmt.Errorf("write eject plan: %w", err)
 	}
-	fmt.Fprintln(out, "  - remove this workspace's ownership ledger")
-	fmt.Fprintln(out, "  - remove monodev's managed .git/info/exclude block")
-	fmt.Fprintln(out, "  - keep all stores; remove them later with `monodev store rm` if wanted")
+	if _, err := fmt.Fprintf(out, "  - %s\n", action); err != nil {
+		return fmt.Errorf("write eject plan: %w", err)
+	}
+	for _, path := range paths {
+		if _, err := fmt.Fprintf(out, "  - %s\n", path); err != nil {
+			return fmt.Errorf("write eject plan: %w", err)
+		}
+	}
+	if _, err := fmt.Fprintln(out, "  - remove this workspace's ownership ledger"); err != nil {
+		return fmt.Errorf("write eject plan: %w", err)
+	}
+	if _, err := fmt.Fprintln(out, "  - remove monodev's managed .git/info/exclude block"); err != nil {
+		return fmt.Errorf("write eject plan: %w", err)
+	}
+	if _, err := fmt.Fprintln(out, "  - keep all stores; remove them later with `monodev store rm` if wanted"); err != nil {
+		return fmt.Errorf("write eject plan: %w", err)
+	}
+	return nil
 }
 
 func confirmEject(cmd *cobra.Command) (bool, error) {
-	fmt.Fprint(cmd.OutOrStdout(), "Proceed with eject? [y/N]: ")
+	if _, err := fmt.Fprint(cmd.OutOrStdout(), "Proceed with eject? [y/N]: "); err != nil {
+		return false, fmt.Errorf("write eject confirmation prompt: %w", err)
+	}
 	response, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, fmt.Errorf("read eject confirmation: %w", err)
