@@ -64,9 +64,7 @@ template:
 
     The handoff ends after the survey and canonical-task creation or update.
     It must not edit CHANGELOG.md or any repository file; commit, tag, push,
-    publish, create a GitHub Release, change task approval/status, or request
-    or record human confirmation of breaking-change classification. Those
-    actions belong only to the later human-approved release task.
+    publish, create a GitHub Release, or change task approval/status.
 
     ## Deterministic validation scenarios
 
@@ -87,7 +85,7 @@ template:
   - An unfinished-work, no-baseline, or no-release pass changes no repository or release state and completes with evidence in execution_summary.
   - An eligible pass records the latest reachable v* tag, no-merge survey, referenced task IDs, candidate semver bump, and breaking-change candidates with evidence.
   - An eligible pass creates or updates exactly one canonical Prepare v<X.Y.Z> release task carrying the release tag, pointing to RELEASING.md, and using only file:CHANGELOG.md as a repository modification selector.
-  - The handoff stops before edits, commits, tags, pushes, publication, task approval/status changes, or human confirmation of breaking-change classification.
+  - The handoff stops before edits, commits, tags, pushes, publication, or task approval/status changes.
   - Repeated passes do not duplicate the open probe or canonical release-preparation task.
   task_type: chore
   tags:
