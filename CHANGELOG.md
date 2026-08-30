@@ -15,9 +15,19 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 - Removed `--owner`, `--task-id`, and `--scope` from `checkout -n`, `store update`, `store ls`, and `store rm`. Using a removed flag now errors with a message that names the flag as removed, rather than cobra's generic unknown-flag text.
 - Store metadata no longer persists `owner`, `taskId`, or `scope`. Existing `meta.json` files that still contain those keys remain readable; the extra keys are ignored on load and omitted on the next write.
 - `store describe` and `store ls` (including `--json`) no longer emit owner, taskId, or scope.
+- Removed the `stack` command and all of its subcommands (`stack add`, `stack apply`, `stack unapply`, `stack ls`, `stack pop`, `stack clear`). Replacements: `monodev apply [store-id...]` (later stores win path conflicts), `monodev unapply [store-id...]`, and `monodev status` for the applied set. The hidden stubs error and name those replacements.
+- Removed `monodev clear`. Replacement: `monodev workspace rm` with no argument deletes the current workspace.
+
+### Added
+- `monodev apply [store-id...]` and `monodev unapply [store-id...]` apply or remove several stores in one invocation. `unapply --all` removes every applied overlay in the workspace.
+- `monodev save` tracks new files under already-tracked directories, then commits everything (`commit --all`). `--dry-run` previews both steps.
+- `monodev sync` commits, pushes, then pulls the active store against the configured remote. Configure the remote first with `monodev remote use`.
+- `monodev eject` detaches the current workspace. Default keeps overlay files on disk; `--remove-files` deletes them. Stores are retained in both modes (`store rm` remains the delete).
+- `monodev doctor` reports drift and interrupted overlay transactions; `doctor --fix` applies the safe repairs.
 
 ### Changed
-- New stores are created in the resolver default location: component (`<repo>/.monodev/stores/`) after `monodev init`, otherwise global (`~/.monodev/stores/`). There is no CLI flag to override that choice.
+- New stores are created in the resolver default location: component (`<repo>/.monodev/stores/`) after `monodev init` or the first command that needs a state root, otherwise global (`~/.monodev/stores/`). There is no CLI flag to override that choice; set `MONODEV_ROOT=$HOME/.monodev` to keep using the home-directory root.
+- README leads with the agent-context problem and a before/after `git status`. The exhaustive command list moved to `docs/commands.md`. Workflow pages: `docs/solo.md`, `docs/team.md`, `docs/worktrees.md`.
 
 ---
 
