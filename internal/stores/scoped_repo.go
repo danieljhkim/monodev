@@ -10,7 +10,8 @@ import (
 // scopedRepo looks up stores in both global and component scopes.
 // Existing stores are routed to the scope that already holds them (component
 // wins when both do). New stores are created in the component scope when it
-// is present, matching engine default-scope behavior after `monodev init`.
+// is present, matching engine default-scope behavior after repo-local
+// `.monodev` exists (auto-created on first use, or via `monodev init`).
 type scopedRepo struct {
 	global    StoreRepo
 	component StoreRepo

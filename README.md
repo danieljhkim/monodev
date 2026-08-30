@@ -71,7 +71,8 @@ already search it. The Homebrew formula installs these same files automatically.
 A **store** is a named, reusable snapshot of **dev-only files** (editor config, scripts, agent instructions, Makefiles, etc.).
 
 - A store defines *what* files are overlaid and their contents
-- Stored at: `~/.monodev/stores/<store-id>/`
+- Stored at: `.monodev/stores/<store-id>/` (created on first use)
+- Cross-repo / home-directory stores: set `MONODEV_ROOT=$HOME/.monodev`, or create a store with `--scope global`
 
 You can think of a store as a portable bundle of development artifacts that can be applied across multiple components or sessions.
 
@@ -148,7 +149,7 @@ monodev unapply # this will remove the overlays from the current dir
 
 When you invoke `monodev checkout <store-id>` under a specific directory within a repo, a workspace file is created in `.monodev/workspaces/<workspace-id>.json`. This file contains the metadata for the workspace, including the active store, the applied stores, and the tracked paths.
 
-The `workspace-id` is derived from the repo fingerprint and the relative path to the workspace. The fingerprint prefers a durable repo ID written by `monodev init` (or on first use in a remote-less repo); otherwise it hashes a normalized remote URL (`git@host:org/repo` and `https://host/org/repo.git` are the same). The clone's absolute path is not part of the fingerprint, so moving a clone does not orphan workspace state. When you cd into a different directory, you will not have an "active store" for that directory. When you cd back to the original component directory, the active store is restored. If a remote change still orphans a workspace, `monodev workspace repair` lists and rebinds it. See [docs/workspace-identity.md](docs/workspace-identity.md). 
+The `workspace-id` is derived from the repo fingerprint and the relative path to the workspace. The fingerprint prefers a durable repo ID written on first use (or by `monodev init`); otherwise it hashes a normalized remote URL (`git@host:org/repo` and `https://host/org/repo.git` are the same). The clone's absolute path is not part of the fingerprint, so moving a clone does not orphan workspace state. When you cd into a different directory, you will not have an "active store" for that directory. When you cd back to the original component directory, the active store is restored. If a remote change still orphans a workspace, `monodev workspace repair` lists and rebinds it. See [docs/workspace-identity.md](docs/workspace-identity.md). 
 
 When you invoke `monodev apply` with the active store, the overlays are applied to the current directory. This is done by creating copies of the tracked paths to the current directory.
 
@@ -253,7 +254,9 @@ encrypted. Treat it as organizational isolation, not secrecy: do not push
 secrets or other sensitive artifacts without a separate protection mechanism.
 
 ```bash
-monodev init # initialize the .monodev directory in the repository root
+# Optional: explicit initializer (commands auto-create .monodev on first use).
+# --force reinitializes an existing .monodev directory.
+monodev init
 
 # Configure which Git remote to use for persistence
 monodev remote use origin
@@ -289,7 +292,7 @@ monodev pull <store-id>... --force
    `activeStoreScope`, `appliedStores`, `mode`, and a `pathOwnership` summary
 4. A separate Git repository is created at `.monodev/.git` with an orphan branch
 5. The orphan branch is pushed to your configured remote
-6. When pulling, stores are fetched and dematerialized to `~/.monodev/stores/`
+6. When pulling, stores are fetched and dematerialized into the active store root (repo-local `.monodev/stores/` by default)
 
 This approach keeps persistence separate from your main Git history while leveraging Git's compression and deduplication.
 

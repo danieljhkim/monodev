@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -141,7 +142,7 @@ func TestDefaultPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to global ~/.monodev when no repo-local exists", func(t *testing.T) {
+	t.Run("prefers repo-local .monodev even when it does not exist yet", func(t *testing.T) {
 		// Clear MONODEV_ROOT env var
 		oldRoot := os.Getenv("MONODEV_ROOT")
 		defer func() {
@@ -190,11 +191,13 @@ func TestDefaultPaths(t *testing.T) {
 			t.Fatalf("DefaultPaths failed: %v", err)
 		}
 
-		// Should use global ~/.monodev
-		home, _ := os.UserHomeDir()
-		expectedRoot := filepath.Join(home, ".monodev")
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		expectedRoot := filepath.Join(wd, RepoLocalDirName)
 		if paths.Root != expectedRoot {
-			t.Errorf("Expected global .monodev at %s, got %s", expectedRoot, paths.Root)
+			t.Errorf("Expected repo-local .monodev at %s, got %s", expectedRoot, paths.Root)
 		}
 	})
 
@@ -613,6 +616,145 @@ func TestPaths_EnsureDirectories(t *testing.T) {
 		// Verify nested directories exist
 		if _, err := os.Stat(deepRoot); os.IsNotExist(err) {
 			t.Error("Nested root directory was not created")
+		}
+	})
+}
+
+func TestEnsureRepoLocalRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	path, err := EnsureRepoLocalRoot(tmpDir)
+	if err != nil {
+		t.Fatalf("EnsureRepoLocalRoot: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat .monodev: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("expected .monodev to be a directory")
+	}
+	if got := info.Mode().Perm(); got != 0700 {
+		t.Errorf(".monodev mode = %04o, want 0700", got)
+	}
+
+	for _, name := range []string{"stores", "workspaces"} {
+		dir := filepath.Join(path, name)
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if got := info.Mode().Perm(); got != 0700 {
+			t.Errorf("%s mode = %04o, want 0700", name, got)
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(path, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if string(data) != RepoLocalGitignore {
+		t.Errorf(".gitignore = %q, want %q", data, RepoLocalGitignore)
+	}
+
+	if _, err := EnsureRepoLocalRoot(tmpDir); err != nil {
+		t.Fatalf("EnsureRepoLocalRoot should be idempotent: %v", err)
+	}
+}
+
+func TestEnsureScopedPaths(t *testing.T) {
+	t.Run("auto-creates repo-local in a git repo", func(t *testing.T) {
+		t.Setenv(EnvRoot, "")
+		tmpDir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(tmpDir, ".git"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", t.TempDir())
+
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatal(err)
+		}
+
+		sp, err := EnsureScopedPaths()
+		if err != nil {
+			t.Fatalf("EnsureScopedPaths: %v", err)
+		}
+		if !sp.HasRepoContext {
+			t.Fatal("expected HasRepoContext after auto-create")
+		}
+		if sp.Component == nil {
+			t.Fatal("expected Component paths after auto-create")
+		}
+
+		info, err := os.Stat(filepath.Join(tmpDir, RepoLocalDirName))
+		if err != nil {
+			t.Fatalf("expected auto-created .monodev: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0700 {
+			t.Errorf(".monodev mode = %04o, want 0700", got)
+		}
+	})
+
+	t.Run("fails outside a git repository", func(t *testing.T) {
+		t.Setenv(EnvRoot, "")
+		t.Setenv("HOME", t.TempDir())
+		tmpDir := t.TempDir()
+
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = EnsureScopedPaths()
+		if err == nil {
+			t.Fatal("expected error outside a git repository")
+		}
+		got := err.Error()
+		if !strings.Contains(got, "not in a git repository") ||
+			!strings.Contains(got, "monodev init must be run inside a git repository") {
+			t.Errorf("error = %q, want init-style not-in-git-repository message", got)
+		}
+	})
+
+	t.Run("skips auto-create when MONODEV_ROOT is set", func(t *testing.T) {
+		customRoot := t.TempDir()
+		t.Setenv(EnvRoot, customRoot)
+		tmpDir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(tmpDir, ".git"), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chdir(oldWd) }()
+		if err := os.Chdir(tmpDir); err != nil {
+			t.Fatal(err)
+		}
+
+		sp, err := EnsureScopedPaths()
+		if err != nil {
+			t.Fatalf("EnsureScopedPaths: %v", err)
+		}
+		if sp.Global.Root != customRoot {
+			t.Errorf("Global.Root = %s, want %s", sp.Global.Root, customRoot)
+		}
+		if sp.Component != nil {
+			t.Fatalf("did not expect Component when MONODEV_ROOT is set, got %s", sp.Component.Root)
+		}
+		if _, err := os.Stat(filepath.Join(tmpDir, RepoLocalDirName)); !os.IsNotExist(err) {
+			t.Fatal("MONODEV_ROOT should skip auto-creating repo-local .monodev")
 		}
 	})
 }

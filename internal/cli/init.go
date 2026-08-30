@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/danieljhkim/monodev/internal/config"
 	"github.com/danieljhkim/monodev/internal/gitx"
 )
 
@@ -17,11 +18,14 @@ var initCmd = &cobra.Command{
 	Short: "Initialize repo-local .monodev directory",
 	Long: `Initialize a repo-local .monodev directory at the repository root.
 
-This creates .monodev/{stores,workspaces} in the git repository root,
-enabling repo-scoped monodev configuration instead of using ~/.monodev.
+Commands that need a state root auto-create .monodev on first use. init
+remains the explicit initializer for scripts and for --force reinit.
 
-The .monodev directory is automatically added to .gitignore to keep
-it local-only and not committed to the repository.`,
+This creates .monodev/{stores,workspaces} in the git repository root
+(mode 0700) and writes a * .gitignore so artifacts stay local-only.
+
+The home-directory root (~/.monodev) is an opt-in for cross-repo stores:
+set MONODEV_ROOT=$HOME/.monodev, or pass --scope global when creating a store.`,
 	Args: cobra.NoArgs,
 	RunE: runInit,
 }
@@ -41,11 +45,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 	gitRepo := gitx.NewRealGitRepo()
 	repoRoot, err := gitRepo.Discover(cwd)
 	if err != nil {
-		return fmt.Errorf("not in a git repository: %w\nmonodev init must be run inside a git repository", err)
+		return config.NotInGitRepositoryError(err)
 	}
 
 	// 2. Check if .monodev already exists
-	monodevPath := filepath.Join(repoRoot, ".monodev")
+	monodevPath := filepath.Join(repoRoot, config.RepoLocalDirName)
 	if info, err := os.Stat(monodevPath); err == nil && info.IsDir() {
 		if !initForce {
 			return fmt.Errorf(".monodev already exists at %s\nUse --force to reinitialize", monodevPath)
@@ -53,31 +57,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 		PrintInfo(fmt.Sprintf(".monodev already exists at %s (reinitializing with --force)", monodevPath))
 	}
 
-	// 3. Create directory structure
-	dirs := []string{
-		monodevPath,
-		filepath.Join(monodevPath, "stores"),
-		filepath.Join(monodevPath, "workspaces"),
-	}
-
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
-		}
+	// 3. Create directory structure and * .gitignore
+	if _, err := config.EnsureRepoLocalRoot(repoRoot); err != nil {
+		return err
 	}
 
 	if _, err := gitx.EnsureDurableRepoID(repoRoot); err != nil {
 		return fmt.Errorf("failed to persist durable repo id: %w", err)
 	}
 
-	// 4. Create .gitignore to exclude .monodev from git
-	gitignorePath := filepath.Join(monodevPath, ".gitignore")
-	gitignoreContent := []byte("# monodev artifacts (local-only)\n*\n")
-	if err := os.WriteFile(gitignorePath, gitignoreContent, 0600); err != nil {
-		return fmt.Errorf("failed to create .gitignore: %w", err)
-	}
-
-	// 5. Display success message
+	// 4. Display success message
 	if jsonOutput {
 		result := struct {
 			Initialized bool   `json:"initialized"`

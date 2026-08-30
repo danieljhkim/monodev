@@ -20,38 +20,27 @@ import (
 
 // newEngine creates a new engine with real implementations of all dependencies.
 func newEngine() (*engine.Engine, error) {
-	// Get scoped paths (global + component)
-	scopedPaths, err := config.NewScopedPaths()
+	scopedPaths, err := prepareScopedPaths()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get config paths: %w", err)
+		return nil, err
 	}
 
-	// Ensure directories exist
-	if err := scopedPaths.EnsureDirectories(); err != nil {
-		return nil, fmt.Errorf("failed to ensure directories: %w", err)
-	}
-
-	// Create real implementations
 	fs := fsops.NewRealFS()
 	gitRepo := gitx.NewRealGitRepo()
 	hasher := hash.NewSHA256Hasher()
 	clk := &clock.RealClock{}
 
-	// Create engine with dual-scope support
 	return engine.NewScoped(gitRepo, scopedPaths, fs, hasher, clk), nil
 }
 
 // newSyncer creates a new syncer with real implementations of all dependencies.
-// Path resolution matches newEngine: global ~/.monodev (or MONODEV_ROOT) plus
-// repo-local .monodev component scope after `monodev init`.
+// Path resolution matches newEngine: repo-local .monodev by default (auto-created
+// on first use), plus ~/.monodev (or MONODEV_ROOT) so existing home stores stay
+// reachable.
 func newSyncer() (*sync.Syncer, error) {
-	scopedPaths, err := config.NewScopedPaths()
+	scopedPaths, err := prepareScopedPaths()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get config paths: %w", err)
-	}
-
-	if err := scopedPaths.EnsureDirectories(); err != nil {
-		return nil, fmt.Errorf("failed to ensure directories: %w", err)
+		return nil, err
 	}
 
 	fs := fsops.NewRealFS()
@@ -65,10 +54,32 @@ func newSyncer() (*sync.Syncer, error) {
 	return sync.New(gitPersist, storeRepo, stateStore, snapshotMgr, configStore, fs, hasher, clk), nil
 }
 
+// prepareScopedPaths auto-creates repo-local .monodev when needed, then
+// ensures both scopes' directories exist. When inside a git repository it
+// also persists a durable repo ID, matching `monodev init`.
+func prepareScopedPaths() (*config.ScopedPaths, error) {
+	scopedPaths, err := config.EnsureScopedPaths()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := scopedPaths.EnsureDirectories(); err != nil {
+		return nil, fmt.Errorf("failed to ensure directories: %w", err)
+	}
+
+	if scopedPaths.RepoRoot != "" {
+		if _, err := gitx.EnsureDurableRepoID(scopedPaths.RepoRoot); err != nil {
+			return nil, fmt.Errorf("failed to persist durable repo id: %w", err)
+		}
+	}
+
+	return scopedPaths, nil
+}
+
 // scopedSyncerRepos builds store and workspace repos that share the engine's
 // dual-scope roots: workspace state is loaded from global then component and
 // saved to global for new IDs; stores are found in either scope and created
-// in the component scope when it is present.
+// in the repo-local component scope when it is present.
 func scopedSyncerRepos(fs fsops.FS, scopedPaths *config.ScopedPaths) (stores.StoreRepo, state.StateStore) {
 	globalStores := stores.NewFileStoreRepo(fs, scopedPaths.Global.Stores)
 	globalState := state.NewFileStateStore(fs, scopedPaths.Global.Workspaces)

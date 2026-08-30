@@ -16,14 +16,15 @@ path (typically the repo root), share:
   read from the shared git-common-dir, so it is identical across every
   worktree and the main checkout.
 - **Store content, for global-scope stores** — a global store's tracked
-  files live once, addressed by store ID, under `~/.monodev/stores/<id>/`,
-  independent of any workspace. Track and commit a dev-only file from the
-  main checkout once; every worktree can apply it by name. Component-scoped
-  stores are the exception: they live under `<repo-root>/.monodev/stores/`,
-  which is part of the working tree itself, so each worktree gets its own
-  (empty, until you commit into it) copy. Use a global-scope store
-  (`--scope global`, or no `.monodev/` directory in the repo) for anything
-  you want a new worktree to pick up for free.
+  files live once, addressed by store ID, under `~/.monodev/stores/<id>/`
+  (or `$MONODEV_ROOT/stores/<id>/`), independent of any workspace. Track
+  and commit a dev-only file from the main checkout once; every worktree
+  can apply it by name. Component-scoped stores are the exception: they
+  live under `<repo-root>/.monodev/stores/`, which is part of the working
+  tree itself, so each worktree gets its own (empty, until you commit into
+  it) copy. Use a global-scope store (`--scope global`, or
+  `MONODEV_ROOT=$HOME/.monodev` to skip auto-creating `.monodev/`) for
+  anything you want a new worktree to pick up for free.
 
 They do **not** share:
 
@@ -47,10 +48,11 @@ monodev commit
 monodev apply
 ```
 
-`--scope global` matters here: it is the default only when the repo has no
-`.monodev/` directory yet. Pass it explicitly once you have run `monodev
-init` (which creates one for the durable repo ID), or the store defaults to
-component scope and is not shared across worktrees — see below.
+`--scope global` matters here: the first command that needs a state root
+auto-creates `.monodev/`, after which new stores default to component
+scope and are not shared across worktrees. Pass `--scope global` (or set
+`MONODEV_ROOT=$HOME/.monodev` to keep using the home-directory root)
+explicitly for a store you want a new worktree to pick up for free.
 
 Spin up a worktree for a parallel agent run — inside the repo, or anywhere
 else on disk:

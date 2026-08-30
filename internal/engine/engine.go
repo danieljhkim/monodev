@@ -57,7 +57,9 @@ func New(
 }
 
 // NewScoped creates a new Engine with dual-scope StoreRepo instances.
-// Global stores live at ~/.monodev/stores/, component stores at repo_root/.monodev/stores/.
+// Component stores live at repo_root/.monodev/stores/ (the default after
+// auto-create or init). Global stores live at ~/.monodev/stores/ (or
+// MONODEV_ROOT) so existing home stores remain reachable.
 func NewScoped(
 	gitRepo gitx.GitRepo,
 	scopedPaths *config.ScopedPaths,
