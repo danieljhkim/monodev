@@ -108,9 +108,23 @@ func customHelpFunc(cmd *cobra.Command, args []string) {
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), help.String())
 }
 
+func rewriteRemovedFlagError(_ *cobra.Command, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	for _, flag := range []string{"--owner", "--task-id", "--scope"} {
+		if strings.Contains(msg, "unknown flag: "+flag) || strings.Contains(msg, "flag needs an argument: "+flag) {
+			return fmt.Errorf("flag %s has been removed", flag)
+		}
+	}
+	return err
+}
+
 func init() {
 	// Set custom help function to color group titles
 	rootCmd.SetHelpFunc(customHelpFunc)
+	rootCmd.SetFlagErrorFunc(rewriteRemovedFlagError)
 
 	// Global flags
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")

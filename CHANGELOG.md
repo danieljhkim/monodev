@@ -9,6 +9,18 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ---
 
+## [Unreleased]
+
+### Breaking Changes
+- Removed `--owner`, `--task-id`, and `--scope` from `checkout -n`, `store update`, `store ls`, and `store rm`. Using a removed flag now errors with a message that names the flag as removed, rather than cobra's generic unknown-flag text.
+- Store metadata no longer persists `owner`, `taskId`, or `scope`. Existing `meta.json` files that still contain those keys remain readable; the extra keys are ignored on load and omitted on the next write.
+- `store describe` and `store ls` (including `--json`) no longer emit owner, taskId, or scope.
+
+### Changed
+- New stores are created in the resolver default location: component (`<repo>/.monodev/stores/`) after `monodev init`, otherwise global (`~/.monodev/stores/`). There is no CLI flag to override that choice.
+
+---
+
 ## [0.2.8] — 2026-08-22
 
 ### Security

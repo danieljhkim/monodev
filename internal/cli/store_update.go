@@ -27,41 +27,27 @@ var storeUpdateCmd = &cobra.Command{
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
 
-		storeScope, _ := cmd.Flags().GetString("scope")
-
 		var storeID string
 		if len(args) > 0 {
 			storeID = args[0]
 		} else {
 			// Use active store
-			activeID, activeScope, err := eng.GetActiveStoreID(ctx, cwd)
+			activeID, _, err := eng.GetActiveStoreID(ctx, cwd)
 			if err != nil {
 				return fmt.Errorf("no store-id provided and %w", err)
 			}
 			storeID = activeID
-			if storeScope == "" {
-				storeScope = activeScope
-			}
 		}
 
 		req := &engine.UpdateStoreRequest{
 			CWD:     cwd,
 			StoreID: storeID,
-			Scope:   storeScope,
 		}
 
 		// Only set fields that were explicitly passed
 		if cmd.Flags().Changed("description") {
 			v, _ := cmd.Flags().GetString("description")
 			req.Description = &v
-		}
-		if cmd.Flags().Changed("owner") {
-			v, _ := cmd.Flags().GetString("owner")
-			req.Owner = &v
-		}
-		if cmd.Flags().Changed("task-id") {
-			v, _ := cmd.Flags().GetString("task-id")
-			req.TaskID = &v
 		}
 
 		if err := eng.UpdateStore(ctx, req); err != nil {
@@ -85,8 +71,5 @@ var storeUpdateCmd = &cobra.Command{
 }
 
 func init() {
-	storeUpdateCmd.Flags().String("scope", "", "Store scope to disambiguate (global or component)")
 	storeUpdateCmd.Flags().String("description", "", "Store description")
-	storeUpdateCmd.Flags().String("owner", "", "Store owner")
-	storeUpdateCmd.Flags().String("task-id", "", "External task ID")
 }

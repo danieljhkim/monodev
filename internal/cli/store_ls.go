@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,10 +11,8 @@ import (
 var storeLsCmd = &cobra.Command{
 	Use:   "ls",
 	Short: "List all stores",
-	Long: `Display all available stores.
-
-Use filter flags to narrow results.`,
-	Args: cobra.NoArgs,
+	Long:  `Display all available stores.`,
+	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		eng, err := newEngine()
 		if err != nil {
@@ -28,9 +25,6 @@ Use filter flags to narrow results.`,
 		if err != nil {
 			return err
 		}
-
-		// Apply filters
-		storeList = filterStores(cmd, storeList)
 
 		if jsonOutput {
 			return outputJSON(storeList)
@@ -60,40 +54,8 @@ func printStoreTable(storeList []stores.ScopedStore) {
 	for _, store := range storeList {
 		rows = append(rows, []string{
 			store.Meta.Name,
-			store.Scope,
-			orDash(store.Meta.Owner),
 			orDash(store.Meta.Description),
 		})
 	}
-	PrintTable([]string{"Name", "Scope", "Owner", "Description"}, rows)
-}
-
-func filterStores(cmd *cobra.Command, storeList []stores.ScopedStore) []stores.ScopedStore {
-	filters := []struct {
-		flag  string
-		match func(stores.ScopedStore, string) bool
-	}{
-		{"scope", func(s stores.ScopedStore, v string) bool { return strings.EqualFold(s.Scope, v) }},
-		{"owner", func(s stores.ScopedStore, v string) bool { return strings.EqualFold(s.Meta.Owner, v) }},
-	}
-
-	for _, f := range filters {
-		val, _ := cmd.Flags().GetString(f.flag)
-		if val == "" {
-			continue
-		}
-		filtered := make([]stores.ScopedStore, 0, len(storeList))
-		for _, s := range storeList {
-			if f.match(s, val) {
-				filtered = append(filtered, s)
-			}
-		}
-		storeList = filtered
-	}
-	return storeList
-}
-
-func init() {
-	storeLsCmd.Flags().String("scope", "", "Filter by scope (global, component)")
-	storeLsCmd.Flags().String("owner", "", "Filter by owner")
+	PrintTable([]string{"Name", "Description"}, rows)
 }

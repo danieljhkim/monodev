@@ -53,19 +53,11 @@ var storeDescribeCmd = &cobra.Command{
 			}
 
 			PrintLabelValue("Name", details.Meta.Name)
-			PrintLabelValue("Scope", details.Scope)
 			if details.Meta.Description != "" {
 				PrintLabelValue("Description", details.Meta.Description)
 			}
 			PrintLabelValue("Created", details.Meta.CreatedAt.Format("2006-01-02 15:04:05"))
 			PrintLabelValue("Updated", details.Meta.UpdatedAt.Format("2006-01-02 15:04:05"))
-
-			if details.Meta.Owner != "" {
-				PrintLabelValue("Owner", details.Meta.Owner)
-			}
-			if details.Meta.TaskID != "" {
-				PrintLabelValue("Task ID", details.Meta.TaskID)
-			}
 
 			if len(details.TrackedPaths) > 0 {
 				PrintSubsection(fmt.Sprintf("\nTracked Paths (%s)", PrintCount(len(details.TrackedPaths), "path", "paths")))

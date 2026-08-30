@@ -33,8 +33,9 @@ type ScopedStore struct {
 	// Meta is the store metadata
 	Meta *StoreMeta
 
-	// Scope indicates where the store is located (ScopeGlobal or ScopeComponent)
-	Scope string
+	// Scope indicates where the store is located (ScopeGlobal or ScopeComponent).
+	// Omitted from JSON: location is an internal routing concern, not store metadata.
+	Scope string `json:"-"`
 }
 
 // StoreLocation records where a store was found during scope search.
@@ -47,13 +48,14 @@ type StoreLocation struct {
 }
 
 // StoreMeta contains metadata about a store.
+//
+// Compatibility: owner, taskId, and scope were removed from the persisted
+// schema. encoding/json ignores unknown keys, so existing meta.json files
+// that still contain those fields remain readable and the extra keys are
+// dropped on the next write.
 type StoreMeta struct {
 	// Name is the human-readable name of the store
 	Name string `json:"name"`
-
-	// Scope indicates the intended use of the store
-	// Valid values: "global", "component"
-	Scope string `json:"scope"`
 
 	// Description provides additional context about the store
 	Description string `json:"description,omitempty"`
@@ -66,12 +68,6 @@ type StoreMeta struct {
 
 	// SchemaVersion is the version of the store metadata schema
 	SchemaVersion int `json:"schemaVersion,omitempty"`
-
-	// Owner identifies who owns the store
-	Owner string `json:"owner,omitempty"`
-
-	// TaskID links the store to an external task
-	TaskID string `json:"taskId,omitempty"`
 }
 
 // TrackFile represents the track.json file in a store.
@@ -137,11 +133,10 @@ func (tf *TrackFile) Paths() []string {
 	return paths
 }
 
-// NewStoreMeta creates a new StoreMeta with the given name and scope.
-func NewStoreMeta(name, scope string, createdAt time.Time) *StoreMeta {
+// NewStoreMeta creates a new StoreMeta with the given name.
+func NewStoreMeta(name string, createdAt time.Time) *StoreMeta {
 	return &StoreMeta{
 		Name:          name,
-		Scope:         scope,
 		CreatedAt:     createdAt,
 		UpdatedAt:     createdAt,
 		SchemaVersion: 2,

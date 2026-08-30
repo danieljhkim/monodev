@@ -208,7 +208,6 @@ func TestUseStore_RestoresAfterSSHToHTTPS(t *testing.T) {
 		StoreID: "dev-store",
 		Name:    "Dev Store",
 		Scope:   stores.ScopeGlobal,
-		Owner:   "tester",
 	}); err != nil {
 		t.Fatalf("CreateStore: %v", err)
 	}

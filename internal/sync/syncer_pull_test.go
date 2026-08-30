@@ -31,7 +31,7 @@ func savePullRemoteConfig(t *testing.T, repoRoot string, configStore *fakeRemote
 func stagePersistedStoreForPull(t *testing.T, repoRoot string, snapshotMgr *persist.SnapshotManager, storeRepo *fakeStoreRepo, storeID string) (storeDir string, persistStorePath string) {
 	t.Helper()
 
-	meta := stores.NewStoreMeta("Remote Store", "global", time.Now())
+	meta := stores.NewStoreMeta("Remote Store", time.Now())
 	if err := storeRepo.Create(storeID, meta); err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestSyncer_PullStore(t *testing.T) {
 
 		// Create a store in the persist directory (simulating remote store)
 		storeID := "remote-store"
-		meta := stores.NewStoreMeta("Remote Store", "global", time.Now())
+		meta := stores.NewStoreMeta("Remote Store", time.Now())
 		if err := storeRepo.Create(storeID, meta); err != nil {
 			t.Fatalf("failed to create store: %v", err)
 		}
@@ -311,7 +311,7 @@ func TestSyncer_PullStore(t *testing.T) {
 		savePullRemoteConfig(t, repoRoot, configStore)
 		storeID := "remote-store"
 
-		meta := stores.NewStoreMeta("Remote Store", "global", time.Now())
+		meta := stores.NewStoreMeta("Remote Store", time.Now())
 		if err := storeRepo.Create(storeID, meta); err != nil {
 			t.Fatalf("failed to create store: %v", err)
 		}
@@ -405,7 +405,7 @@ func TestSyncer_PullStore(t *testing.T) {
 
 		for i := 1; i <= 2; i++ {
 			storeID := fmt.Sprintf("store-%d", i)
-			meta := stores.NewStoreMeta(fmt.Sprintf("Store %d", i), "global", time.Now())
+			meta := stores.NewStoreMeta(fmt.Sprintf("Store %d", i), time.Now())
 			if err := storeRepo.Create(storeID, meta); err != nil {
 				t.Fatalf("failed to create store: %v", err)
 			}

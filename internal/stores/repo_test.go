@@ -2,8 +2,10 @@ package stores
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,7 +177,7 @@ func TestFileStoreRepo_Create(t *testing.T) {
 
 		storeID := "new-store"
 		now := time.Now()
-		meta := NewStoreMeta("Test Store", "component", now)
+		meta := NewStoreMeta("Test Store", now)
 		meta.Description = "A test store"
 
 		err := repo.Create(storeID, meta)
@@ -225,10 +227,6 @@ func TestFileStoreRepo_Create(t *testing.T) {
 			t.Errorf("Meta.Name = %s, want %s", loadedMeta.Name, meta.Name)
 		}
 
-		if loadedMeta.Scope != meta.Scope {
-			t.Errorf("Meta.Scope = %s, want %s", loadedMeta.Scope, meta.Scope)
-		}
-
 		if loadedMeta.Description != meta.Description {
 			t.Errorf("Meta.Description = %s, want %s", loadedMeta.Description, meta.Description)
 		}
@@ -249,7 +247,7 @@ func TestFileStoreRepo_Create(t *testing.T) {
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "existing-store"
-		meta := NewStoreMeta("Test", "global", time.Now())
+		meta := NewStoreMeta("Test", time.Now())
 
 		// Create store first time
 		if err := repo.Create(storeID, meta); err != nil {
@@ -267,7 +265,7 @@ func TestFileStoreRepo_Create(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
-		meta := NewStoreMeta("Test", "global", time.Now())
+		meta := NewStoreMeta("Test", time.Now())
 		err := repo.Create("../invalid", meta)
 		if err == nil {
 			t.Error("Expected error for invalid store ID, got nil")
@@ -282,7 +280,7 @@ func TestFileStoreRepo_LoadMeta(t *testing.T) {
 
 		storeID := "test-store"
 		now := time.Now()
-		originalMeta := NewStoreMeta("My Store", "profile", now)
+		originalMeta := NewStoreMeta("My Store", now)
 		originalMeta.Description = "Test description"
 
 		// Create store
@@ -298,10 +296,6 @@ func TestFileStoreRepo_LoadMeta(t *testing.T) {
 
 		if loadedMeta.Name != originalMeta.Name {
 			t.Errorf("Name = %s, want %s", loadedMeta.Name, originalMeta.Name)
-		}
-
-		if loadedMeta.Scope != originalMeta.Scope {
-			t.Errorf("Scope = %s, want %s", loadedMeta.Scope, originalMeta.Scope)
 		}
 
 		if loadedMeta.Description != originalMeta.Description {
@@ -328,6 +322,49 @@ func TestFileStoreRepo_LoadMeta(t *testing.T) {
 			t.Error("Expected error for invalid store ID, got nil")
 		}
 	})
+
+	t.Run("loads pre-removal meta.json and ignores owner, taskId, and scope", func(t *testing.T) {
+		tmpDir, repo := setupStoresDir(t)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		storeID := "legacy-store"
+		storeDir := filepath.Join(tmpDir, storeID)
+		if err := os.MkdirAll(storeDir, 0700); err != nil {
+			t.Fatalf("mkdir store: %v", err)
+		}
+		fixture, err := os.ReadFile(filepath.Join("testdata", "legacy_meta.json"))
+		if err != nil {
+			t.Fatalf("read fixture: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(storeDir, "meta.json"), fixture, 0600); err != nil {
+			t.Fatalf("write meta.json: %v", err)
+		}
+
+		meta, err := repo.LoadMeta(storeID)
+		if err != nil {
+			t.Fatalf("LoadMeta: %v", err)
+		}
+		if meta.Name != "legacy-store" {
+			t.Errorf("Name = %s, want legacy-store", meta.Name)
+		}
+		if meta.Description != "written by the pre-removal release" {
+			t.Errorf("Description = %s, want fixture description", meta.Description)
+		}
+		if meta.SchemaVersion != 2 {
+			t.Errorf("SchemaVersion = %d, want 2", meta.SchemaVersion)
+		}
+
+		data, err := json.Marshal(meta)
+		if err != nil {
+			t.Fatalf("marshal loaded meta: %v", err)
+		}
+		jsonStr := string(data)
+		for _, key := range []string{"owner", "taskId", "scope"} {
+			if strings.Contains(jsonStr, `"`+key+`"`) {
+				t.Errorf("rewritten meta.json should not contain %q: %s", key, jsonStr)
+			}
+		}
+	})
 }
 
 func TestFileStoreRepo_SaveMeta(t *testing.T) {
@@ -336,7 +373,7 @@ func TestFileStoreRepo_SaveMeta(t *testing.T) {
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
-		originalMeta := NewStoreMeta("Original", "global", time.Now())
+		originalMeta := NewStoreMeta("Original", time.Now())
 
 		// Create store
 		if err := repo.Create(storeID, originalMeta); err != nil {
@@ -344,7 +381,7 @@ func TestFileStoreRepo_SaveMeta(t *testing.T) {
 		}
 
 		// Update metadata
-		updatedMeta := NewStoreMeta("Updated", "component", time.Now())
+		updatedMeta := NewStoreMeta("Updated", time.Now())
 		updatedMeta.Description = "New description"
 
 		if err := repo.SaveMeta(storeID, updatedMeta); err != nil {
@@ -361,10 +398,6 @@ func TestFileStoreRepo_SaveMeta(t *testing.T) {
 			t.Errorf("Name = %s, want %s", loadedMeta.Name, updatedMeta.Name)
 		}
 
-		if loadedMeta.Scope != updatedMeta.Scope {
-			t.Errorf("Scope = %s, want %s", loadedMeta.Scope, updatedMeta.Scope)
-		}
-
 		if loadedMeta.Description != updatedMeta.Description {
 			t.Errorf("Description = %s, want %s", loadedMeta.Description, updatedMeta.Description)
 		}
@@ -374,7 +407,7 @@ func TestFileStoreRepo_SaveMeta(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
-		meta := NewStoreMeta("Test", "global", time.Now())
+		meta := NewStoreMeta("Test", time.Now())
 		err := repo.SaveMeta("../invalid", meta)
 		if err == nil {
 			t.Error("Expected error for invalid store ID, got nil")
@@ -388,7 +421,7 @@ func TestFileStoreRepo_LoadTrack(t *testing.T) {
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
-		meta := NewStoreMeta("Test", "global", time.Now())
+		meta := NewStoreMeta("Test", time.Now())
 
 		// Create store
 		if err := repo.Create(storeID, meta); err != nil {
@@ -432,7 +465,7 @@ func TestFileStoreRepo_LoadTrack(t *testing.T) {
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
-		meta := NewStoreMeta("Test", "global", time.Now())
+		meta := NewStoreMeta("Test", time.Now())
 
 		// Create store
 		if err := repo.Create(storeID, meta); err != nil {
@@ -473,7 +506,7 @@ func TestFileStoreRepo_SaveTrack(t *testing.T) {
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
-		meta := NewStoreMeta("Test", "global", time.Now())
+		meta := NewStoreMeta("Test", time.Now())
 
 		// Create store
 		if err := repo.Create(storeID, meta); err != nil {
@@ -550,7 +583,7 @@ func TestFileStoreRepo_Delete(t *testing.T) {
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		storeID := "test-store"
-		meta := NewStoreMeta("Test", "global", time.Now())
+		meta := NewStoreMeta("Test", time.Now())
 
 		// Create store
 		if err := repo.Create(storeID, meta); err != nil {

@@ -47,7 +47,7 @@ func TestConcurrentWorkspaceAndStoreMutationsSerializeAcrossProcesses(t *testing
 	if err := stateRepo.SaveWorkspace(workspaceID, ws); err != nil {
 		t.Fatal(err)
 	}
-	meta := stores.NewStoreMeta("Shared", stores.ScopeGlobal, time.Now())
+	meta := stores.NewStoreMeta("Shared", time.Now())
 	if err := storeRepo.Create(storeID, meta); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,6 @@ func TestConcurrentApplyAcrossLinkedWorktreesDoesNotContend(t *testing.T) {
 		StoreID: "shared-overlay",
 		Name:    "Shared overlay",
 		Scope:   stores.ScopeGlobal,
-		Owner:   "tester",
 	}); err != nil {
 		t.Fatalf("CreateStore: %v", err)
 	}

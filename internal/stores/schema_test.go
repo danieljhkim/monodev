@@ -98,17 +98,12 @@ func TestTrackFile_Paths(t *testing.T) {
 func TestNewStoreMeta(t *testing.T) {
 	t.Run("creates store meta with correct values", func(t *testing.T) {
 		name := "Test Store"
-		scope := "component"
 		now := time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC)
 
-		meta := NewStoreMeta(name, scope, now)
+		meta := NewStoreMeta(name, now)
 
 		if meta.Name != name {
 			t.Errorf("Name = %s, want %s", meta.Name, name)
-		}
-
-		if meta.Scope != scope {
-			t.Errorf("Scope = %s, want %s", meta.Scope, scope)
 		}
 
 		if !meta.CreatedAt.Equal(now) {
@@ -122,7 +117,7 @@ func TestNewStoreMeta(t *testing.T) {
 
 	t.Run("sets UpdatedAt equal to CreatedAt initially", func(t *testing.T) {
 		now := time.Now()
-		meta := NewStoreMeta("Test", "global", now)
+		meta := NewStoreMeta("Test", now)
 
 		if !meta.CreatedAt.Equal(meta.UpdatedAt) {
 			t.Error("Expected CreatedAt and UpdatedAt to be equal initially")
@@ -130,7 +125,7 @@ func TestNewStoreMeta(t *testing.T) {
 	})
 
 	t.Run("creates meta with empty description", func(t *testing.T) {
-		meta := NewStoreMeta("Test", "global", time.Now())
+		meta := NewStoreMeta("Test", time.Now())
 
 		if meta.Description != "" {
 			t.Errorf("Expected empty Description, got %q", meta.Description)
@@ -185,7 +180,6 @@ func TestStoreMeta_Fields(t *testing.T) {
 
 		meta := &StoreMeta{
 			Name:        "My Store",
-			Scope:       "profile",
 			Description: "Test description",
 			CreatedAt:   createdAt,
 			UpdatedAt:   updatedAt,
@@ -193,10 +187,6 @@ func TestStoreMeta_Fields(t *testing.T) {
 
 		if meta.Name != "My Store" {
 			t.Errorf("Name = %s, want 'My Store'", meta.Name)
-		}
-
-		if meta.Scope != "profile" {
-			t.Errorf("Scope = %s, want 'profile'", meta.Scope)
 		}
 
 		if meta.Description != "Test description" {
@@ -379,7 +369,7 @@ func TestTrackedPath_JSONSerialization(t *testing.T) {
 }
 
 func TestNewStoreMeta_SchemaVersion(t *testing.T) {
-	meta := NewStoreMeta("test", "global", time.Now())
+	meta := NewStoreMeta("test", time.Now())
 	if meta.SchemaVersion != 2 {
 		t.Errorf("SchemaVersion = %d, want 2", meta.SchemaVersion)
 	}
@@ -387,7 +377,7 @@ func TestNewStoreMeta_SchemaVersion(t *testing.T) {
 
 func TestStoreMeta_Validate(t *testing.T) {
 	t.Run("always passes", func(t *testing.T) {
-		meta := NewStoreMeta("test", "global", time.Now())
+		meta := NewStoreMeta("test", time.Now())
 		if err := meta.Validate(); err != nil {
 			t.Errorf("unexpected validation error: %v", err)
 		}
@@ -395,8 +385,8 @@ func TestStoreMeta_Validate(t *testing.T) {
 }
 
 func TestStoreMeta_BackwardCompat(t *testing.T) {
-	t.Run("unmarshal old JSON without new fields", func(t *testing.T) {
-		oldJSON := `{"name":"my-store","scope":"global","createdAt":"2024-01-15T10:30:00Z","updatedAt":"2024-01-15T10:30:00Z"}`
+	t.Run("ignores removed owner, taskId, and scope keys", func(t *testing.T) {
+		oldJSON := `{"name":"my-store","scope":"global","owner":"alice","taskId":"TASK-123","createdAt":"2024-01-15T10:30:00Z","updatedAt":"2024-01-15T10:30:00Z"}`
 
 		var meta StoreMeta
 		if err := json.Unmarshal([]byte(oldJSON), &meta); err != nil {
@@ -409,19 +399,22 @@ func TestStoreMeta_BackwardCompat(t *testing.T) {
 		if meta.SchemaVersion != 0 {
 			t.Errorf("SchemaVersion = %d, want 0 (zero value)", meta.SchemaVersion)
 		}
-		if meta.Owner != "" {
-			t.Errorf("Owner = %s, want empty", meta.Owner)
+
+		data, err := json.Marshal(meta)
+		if err != nil {
+			t.Fatalf("Failed to marshal: %v", err)
 		}
-		if meta.TaskID != "" {
-			t.Errorf("TaskID = %s, want empty", meta.TaskID)
+		jsonStr := string(data)
+		for _, key := range []string{"owner", "taskId", "scope"} {
+			if contains(jsonStr, `"`+key+`"`) {
+				t.Errorf("JSON should not contain %q key: %s", key, jsonStr)
+			}
 		}
 	})
 
 	t.Run("round-trip with remaining fields", func(t *testing.T) {
-		meta := NewStoreMeta("test", "global", time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
+		meta := NewStoreMeta("test", time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC))
 		meta.Description = "a test store"
-		meta.Owner = "alice"
-		meta.TaskID = "TASK-123"
 
 		data, err := json.Marshal(meta)
 		if err != nil {
@@ -436,14 +429,14 @@ func TestStoreMeta_BackwardCompat(t *testing.T) {
 		if result.SchemaVersion != 2 {
 			t.Errorf("SchemaVersion = %d, want 2", result.SchemaVersion)
 		}
-		if result.Owner != "alice" {
-			t.Errorf("Owner = %s, want 'alice'", result.Owner)
-		}
-		if result.TaskID != "TASK-123" {
-			t.Errorf("TaskID = %s, want 'TASK-123'", result.TaskID)
-		}
 		if result.Description != "a test store" {
 			t.Errorf("Description = %s, want 'a test store'", result.Description)
+		}
+		jsonStr := string(data)
+		for _, key := range []string{"owner", "taskId", "scope"} {
+			if contains(jsonStr, `"`+key+`"`) {
+				t.Errorf("JSON should not contain %q key: %s", key, jsonStr)
+			}
 		}
 	})
 }

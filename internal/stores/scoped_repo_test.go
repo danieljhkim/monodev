@@ -25,10 +25,10 @@ func TestScopedRepo_FindsComponentAndGlobalStores(t *testing.T) {
 	repo := NewScopedRepo(global, component)
 
 	now := time.Now()
-	if err := global.Create("global-store", NewStoreMeta("global-store", ScopeGlobal, now)); err != nil {
+	if err := global.Create("global-store", NewStoreMeta("global-store", now)); err != nil {
 		t.Fatal(err)
 	}
-	if err := component.Create("qa-store", NewStoreMeta("qa-store", ScopeComponent, now)); err != nil {
+	if err := component.Create("qa-store", NewStoreMeta("qa-store", now)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,10 +72,10 @@ func TestScopedRepo_PrefersComponentAndCreatesInComponent(t *testing.T) {
 	repo := NewScopedRepo(global, component)
 
 	now := time.Now()
-	if err := global.Create("shared", NewStoreMeta("shared-global", ScopeGlobal, now)); err != nil {
+	if err := global.Create("shared", NewStoreMeta("shared-global", now)); err != nil {
 		t.Fatal(err)
 	}
-	if err := component.Create("shared", NewStoreMeta("shared-component", ScopeComponent, now)); err != nil {
+	if err := component.Create("shared", NewStoreMeta("shared-component", now)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,7 +87,7 @@ func TestScopedRepo_PrefersComponentAndCreatesInComponent(t *testing.T) {
 		t.Fatalf("LoadMeta name = %q, want shared-component", meta.Name)
 	}
 
-	if err := repo.Create("new-store", NewStoreMeta("new-store", ScopeComponent, now)); err != nil {
+	if err := repo.Create("new-store", NewStoreMeta("new-store", now)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(componentDir, "new-store")); err != nil {

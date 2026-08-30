@@ -42,7 +42,7 @@ Track and commit a dev-only file once, from wherever you normally work:
 
 ```bash
 cd ~/src/myrepo
-monodev checkout -n dev-overlay --scope global
+monodev checkout -n dev-overlay
 monodev track .env.local
 monodev commit
 monodev apply
