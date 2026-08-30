@@ -18,8 +18,14 @@ The fingerprint is chosen in this order:
    by `git remote` is used.
 3. **Absolute path**, only when the directory is not a git repository.
 
-The clone's absolute path is not hashed in cases 1 and 2. Moving a clone, or
-using a linked git worktree of the same repository, keeps the fingerprint.
+The clone's absolute path is not hashed in cases 1–2. Moving a clone keeps the
+fingerprint. See [docs/worktrees.md](worktrees.md) for what a linked git
+worktree gets instead — it shares the repo-identity material above (the
+durable ID or remote URL are read from the common git dir, so they are
+identical across worktrees) but a worktree-specific suffix is still mixed in
+before hashing, so each worktree's fingerprint — and therefore its
+applied-overlay ledger — is distinct from the main checkout's and from every
+other worktree's.
 
 ## Remote URL normalization
 

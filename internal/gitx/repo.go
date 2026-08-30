@@ -104,24 +104,46 @@ func execGitConfig(dir, key string) *exec.Cmd {
 //  4. Absolute path for non-git directories
 //
 // The clone's absolute path is not part of (1)–(3), so moving a clone does not
-// change the fingerprint.
+// change the fingerprint. A linked git worktree shares the repo-identity
+// material with the main checkout (same durable ID / remote), but a
+// worktree-specific suffix is mixed in afterward so the two never collide —
+// see worktreeDiscriminator.
 func (g *RealGitRepo) Fingerprint(root string) (string, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
+	material, err := g.fingerprintMaterial(absRoot)
+	if err != nil {
+		return "", err
+	}
+
+	discriminator, err := g.worktreeDiscriminator(absRoot)
+	if err != nil {
+		return "", err
+	}
+	if discriminator != "" {
+		material += "|worktree:" + discriminator
+	}
+
+	return HashFingerprint(material), nil
+}
+
+// fingerprintMaterial returns the un-hashed repo-identity material, shared by
+// every linked worktree of the same repository.
+func (g *RealGitRepo) fingerprintMaterial(absRoot string) (string, error) {
 	if id, err := readDurableRepoID(absRoot); err != nil {
 		return "", err
 	} else if id != "" {
-		return HashFingerprint(fingerprintIDPrefix + id), nil
+		return fingerprintIDPrefix + id, nil
 	}
 
 	remoteURL, err := selectRemoteURL(absRoot)
 	if err == nil && remoteURL != "" {
 		normalized := NormalizeRemoteURL(remoteURL)
 		if normalized != "" {
-			return HashFingerprint(fingerprintRemotePrefix + normalized), nil
+			return fingerprintRemotePrefix + normalized, nil
 		}
 	}
 
@@ -130,10 +152,61 @@ func (g *RealGitRepo) Fingerprint(root string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to persist durable repo id: %w", err)
 		}
-		return HashFingerprint(fingerprintIDPrefix + id), nil
+		return fingerprintIDPrefix + id, nil
 	}
 
-	return HashFingerprint(fingerprintPathPrefix + absRoot), nil
+	return fingerprintPathPrefix + absRoot, nil
+}
+
+// worktreeDiscriminator returns a stable, non-empty suffix when root is a
+// linked git worktree (as opposed to the main checkout or a bare repo), so
+// that each worktree's fingerprint — and therefore its workspace ID and
+// applied-overlay ledger — is independent of every other worktree's. It
+// returns "" for the main checkout, keeping its fingerprint unchanged.
+//
+// A linked worktree's private git-dir lives at
+// "<git-common-dir>/worktrees/<name>", which differs from the main
+// checkout's git-dir (equal to the common dir itself). <name> is used as the
+// discriminator: it is stable across `monodev` invocations and does not
+// depend on the worktree's absolute path, so relocating the whole repository
+// (main checkout plus worktrees) together does not change it.
+func (g *RealGitRepo) worktreeDiscriminator(root string) (string, error) {
+	gitDir, err := gitDirAbsolute(root)
+	if err != nil {
+		// Not a git repository (or git is unavailable): no discriminator.
+		return "", nil
+	}
+
+	commonDir, err := g.CommonGitDir(root)
+	if err != nil {
+		return "", nil
+	}
+
+	if filepath.Clean(gitDir) == filepath.Clean(commonDir) {
+		return "", nil
+	}
+
+	return filepath.Base(filepath.Clean(gitDir)), nil
+}
+
+// gitDirAbsolute resolves the repository's per-worktree git directory
+// ("--git-dir"), which differs from the common git dir for linked worktrees.
+func gitDirAbsolute(root string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-dir")
+	cmd.Dir = root
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve git directory: %w", err)
+	}
+
+	gitDir := strings.TrimSpace(string(output))
+	if gitDir == "" {
+		return "", fmt.Errorf("git returned an empty git directory")
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	return filepath.Clean(gitDir), nil
 }
 
 // RelPath computes the relative path from repo root to the given absolute path.

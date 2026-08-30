@@ -148,7 +148,7 @@ func (e *Engine) migrateWorkspaceRecord(store state.StateStore, ws *state.Worksp
 			return fmt.Errorf("failed to remove legacy workspace %s: %w", oldID, err)
 		}
 	}
-	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
-	workspaceState.MigrateDeprecatedStack()
-	return workspaceState, workspaceID, nil
+	*ws = *migrated
+	ws.MigrateDeprecatedStack()
+	return nil
 }
