@@ -16,13 +16,13 @@ var (
 )
 
 var applyCmd = &cobra.Command{
-	Use:   "apply [store-id]",
-	Short: "Apply a single store's overlays to the current workspace",
-	Long: `Apply the active store (or specified store) to the current working directory.
+	Use:   "apply [store-id...]",
+	Short: "Apply store overlays to the current workspace",
+	Long: `Apply one or more stores to the current working directory.
 
-If [store-id] is provided, it overrides the active store for this apply.
-This command applies only a single store - use 'stack apply' to apply the stack.`,
-	Args: cobra.MaximumNArgs(1),
+With no arguments, applies the active store. With store IDs, applies those
+stores in argument order. Later stores take precedence on path conflicts.`,
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		eng, err := newEngine()
 		if err != nil {
@@ -36,14 +36,11 @@ This command applies only a single store - use 'stack apply' to apply the stack.
 		}
 
 		req := &engine.ApplyRequest{
-			CWD:    cwd,
-			Mode:   "copy",
-			Force:  applyForce,
-			DryRun: applyDryRun,
-		}
-
-		if len(args) > 0 {
-			req.StoreID = args[0]
+			CWD:      cwd,
+			Mode:     "copy",
+			Force:    applyForce,
+			DryRun:   applyDryRun,
+			StoreIDs: append([]string{}, args...),
 		}
 
 		result, err := eng.Apply(ctx, req)
@@ -84,14 +81,17 @@ This command applies only a single store - use 'stack apply' to apply the stack.
 					default:
 						opType = op.Type
 					}
-					ops = append(ops, fmt.Sprintf("%s: %s", opType, op.RelPath))
+					if op.Store != "" {
+						ops = append(ops, fmt.Sprintf("%s: %s (from %s)", opType, op.RelPath, op.Store))
+					} else {
+						ops = append(ops, fmt.Sprintf("%s: %s", opType, op.RelPath))
+					}
 				}
 				PrintList(ops, 1)
 			}
 			return nil
 		}
 
-		// Show warnings for missing tracked paths
 		if result.Plan != nil && len(result.Plan.Warnings) > 0 {
 			for _, w := range result.Plan.Warnings {
 				PrintWarning(w)

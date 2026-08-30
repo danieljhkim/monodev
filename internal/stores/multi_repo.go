@@ -8,7 +8,7 @@ import (
 )
 
 // MultiStoreRepo wraps multiple StoreRepo instances and routes operations
-// by store ID. This is used when a stack contains stores from both scopes.
+// by store ID. This is used when apply targets stores from both scopes.
 type MultiStoreRepo struct {
 	// mapping maps store IDs to their StoreRepo
 	mapping map[string]StoreRepo

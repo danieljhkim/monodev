@@ -12,14 +12,9 @@ import (
 	"github.com/danieljhkim/monodev/internal/stores"
 )
 
-// Algorithm steps:
-// 1. Resolve stores (stack + active store)
-// 2. Discover repo and compute workspace ID
-// 3. Load workspace state (if exists)
-// 4. Preflight checks (generate plan, check for conflicts)
-// 5. Apply overlays (if not DryRun)
-// 6. Persist workspace state
-// 7. Return result
+// Apply applies one or more stores to the workspace in argument order.
+// With no StoreIDs, it applies the active store. Later stores win path
+// conflicts, matching the retired stack precedence rule.
 func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, err
@@ -44,6 +39,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
+	workspaceState.MigrateDeprecatedStack()
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
@@ -60,6 +56,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		if reloadErr == nil {
 			workspaceState = reloaded
 			workspaceState.AbsolutePath = workspaceRoot
+			workspaceState.MigrateDeprecatedStack()
 		} else if !os.IsNotExist(reloadErr) {
 			return nil, fmt.Errorf("failed to reload workspace state: %w", reloadErr)
 		} else {
@@ -68,59 +65,24 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		}
 	}
 
-	var storeToApply string
-	if req.StoreID != "" {
-		storeToApply = req.StoreID
-	} else {
-		if workspaceState.ActiveStore == "" {
-			return nil, ErrNoActiveStore
-		}
-		storeToApply = workspaceState.ActiveStore
-	}
-	orderedStores := []string{storeToApply}
-
-	// If workspace state exists, verify mode matches
-	if workspaceState.Applied && workspaceState.Mode != req.Mode {
-		// TODO: add force option - too overcomplicated for now
-		return nil, fmt.Errorf("%w: existing mode is %s, requested mode is %s", ErrValidation, workspaceState.Mode, req.Mode)
-	}
-
-	// Resolve the store repo.
-	// When StoreID is explicitly provided, search by store ID (no checkout required).
-	// Otherwise fall back to the workspace's active store.
-	var applyRepo stores.StoreRepo
-	if req.StoreID != "" {
-		locations, findErr := e.storeResolver.findStore(storeToApply)
-		if findErr != nil {
-			return nil, fmt.Errorf("failed to resolve store: %w", findErr)
-		}
-		if len(locations) == 0 {
-			return nil, fmt.Errorf("failed to resolve store: %w: store '%s' not found", ErrNotFound, storeToApply)
-		}
-
-		// Apply by explicit ID should remain usable without checkout.
-		// If duplicated across scopes, prefer component scope.
-		chosen := locations[0]
-		for _, loc := range locations {
-			if loc.Scope == stores.ScopeComponent {
-				chosen = loc
-				break
-			}
-		}
-		applyRepo = chosen.Repo
-		workspaceState.ActiveStoreScope = chosen.Scope
-	} else {
-		applyRepo, err = e.storeResolver.activeStoreRepo(workspaceState)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve store repo: %w", err)
-		}
-	}
-
-	unlockStore, err := e.lockStores(ctx, storeLockRequest{repo: applyRepo, id: storeToApply, mode: lockfile.Shared})
+	orderedStores, applyRepo, lastScope, err := e.resolveApplyStores(workspaceState, req.StoreIDs)
 	if err != nil {
 		return nil, err
 	}
-	defer unlockStore()
+
+	if workspaceState.Applied && workspaceState.Mode != req.Mode {
+		return nil, fmt.Errorf("%w: existing mode is %s, requested mode is %s", ErrValidation, workspaceState.Mode, req.Mode)
+	}
+
+	storeRequests := make([]storeLockRequest, 0, len(orderedStores))
+	for _, storeID := range orderedStores {
+		storeRequests = append(storeRequests, storeLockRequest{repo: applyRepo, id: storeID, mode: lockfile.Shared})
+	}
+	unlockStores, err := e.lockStores(ctx, storeRequests...)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockStores()
 
 	if err := checkContext(ctx); err != nil {
 		return nil, err
@@ -183,8 +145,27 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 			}
 			final.Applied = true
 			final.Mode = req.Mode
-			final.ActiveStore = storeToApply
-			final.AddAppliedStore(storeToApply, req.Mode)
+			if len(req.StoreIDs) > 0 {
+				final.ActiveStore = orderedStores[len(orderedStores)-1]
+				if lastScope != "" {
+					final.ActiveStoreScope = lastScope
+				}
+			} else {
+				final.ActiveStore = orderedStores[0]
+			}
+			for _, storeID := range orderedStores {
+				ownsPath := false
+				for _, ownership := range final.Paths {
+					if ownership.Store == storeID {
+						ownsPath = true
+						break
+					}
+				}
+				if ownsPath {
+					final.AddAppliedStore(storeID, req.Mode)
+				}
+			}
+			final.PruneAppliedStores()
 			finalState = final
 			return final, false, nil
 		},
@@ -200,4 +181,46 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		RepoFingerprint: repoFingerprint,
 		WorkspacePath:   workspacePath,
 	}, nil
+}
+
+func (e *Engine) resolveApplyStores(workspaceState *state.WorkspaceState, storeIDs []string) ([]string, stores.StoreRepo, string, error) {
+	if len(storeIDs) == 0 {
+		if workspaceState.ActiveStore == "" {
+			return nil, nil, "", ErrNoActiveStore
+		}
+		applyRepo, err := e.storeResolver.activeStoreRepo(workspaceState)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("failed to resolve store repo: %w", err)
+		}
+		return []string{workspaceState.ActiveStore}, applyRepo, workspaceState.ActiveStoreScope, nil
+	}
+
+	for _, storeID := range storeIDs {
+		locations, findErr := e.storeResolver.findStore(storeID)
+		if findErr != nil {
+			return nil, nil, "", fmt.Errorf("failed to resolve store: %w", findErr)
+		}
+		if len(locations) == 0 {
+			return nil, nil, "", fmt.Errorf("failed to resolve store: %w: store '%s' not found", ErrNotFound, storeID)
+		}
+	}
+
+	applyRepo, err := e.storeResolver.multiRepoForStores(storeIDs)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	last := storeIDs[len(storeIDs)-1]
+	locations, err := e.storeResolver.findStore(last)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("failed to resolve store: %w", err)
+	}
+	chosen := locations[0]
+	for _, loc := range locations {
+		if loc.Scope == stores.ScopeComponent {
+			chosen = loc
+			break
+		}
+	}
+	return storeIDs, applyRepo, chosen.Scope, nil
 }

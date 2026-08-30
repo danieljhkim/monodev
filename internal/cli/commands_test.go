@@ -643,3 +643,25 @@ func TestCommandHelp(t *testing.T) {
 		})
 	}
 }
+
+func TestRetiredStackAddNamesApplyReplacement(t *testing.T) {
+	rootCmd.SetArgs([]string{"stack", "add", "x"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected stack add to fail")
+	}
+	if !strings.Contains(err.Error(), "apply") {
+		t.Fatalf("stack add error = %q, want it to name apply", err.Error())
+	}
+}
+
+func TestRetiredClearNamesWorkspaceRmReplacement(t *testing.T) {
+	rootCmd.SetArgs([]string{"clear"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected clear to fail")
+	}
+	if !strings.Contains(err.Error(), "workspace rm") {
+		t.Fatalf("clear error = %q, want it to name workspace rm", err.Error())
+	}
+}

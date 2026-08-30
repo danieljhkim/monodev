@@ -176,36 +176,12 @@ func (fx overlayTxnFixture) engine(t *testing.T, fs fsops.FS, store state.StateS
 	)
 }
 
-func (fx overlayTxnFixture) withStack(t *testing.T, store state.StateStore) {
-	t.Helper()
-	ws, err := store.LoadWorkspace(fx.workspaceID)
-	if os.IsNotExist(err) {
-		ws = state.NewWorkspaceState("fp1", ".", "copy")
-	} else if err != nil {
-		t.Fatalf("load workspace for stack seed: %v", err)
-	}
-	ws.Stack = []string{fx.storeID}
-	if err := store.SaveWorkspace(fx.workspaceID, ws); err != nil {
-		t.Fatalf("seed stack workspace: %v", err)
-	}
-}
-
 func (fx overlayTxnFixture) seedApplied(t *testing.T) {
 	t.Helper()
 	store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
 	eng := fx.engine(t, nil, store)
-	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreID: fx.storeID, Mode: "copy", Force: true}); err != nil {
+	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreIDs: []string{fx.storeID}, Mode: "copy", Force: true}); err != nil {
 		t.Fatalf("seed apply: %v", err)
-	}
-}
-
-func (fx overlayTxnFixture) seedStackApplied(t *testing.T) {
-	t.Helper()
-	store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
-	fx.withStack(t, store)
-	eng := fx.engine(t, nil, store)
-	if _, err := eng.StackApply(context.Background(), &StackApplyRequest{CWD: fx.repoRoot, Mode: "copy", Force: true}); err != nil {
-		t.Fatalf("seed stack apply: %v", err)
 	}
 }
 
@@ -247,21 +223,15 @@ func (fx overlayTxnFixture) requireCoherentApplied(t *testing.T, store state.Sta
 }
 
 func TestOverlayTxn_NthFilesystemFailureIsRecoverable(t *testing.T) {
-	kinds := []string{overlayTxnApply, overlayTxnUnapply, overlayTxnStackApply, overlayTxnStackUnapply}
+	kinds := []string{overlayTxnApply, overlayTxnUnapply}
 	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
 			recovered := false
 			for failAt := 1; failAt <= 40; failAt++ {
 				fx := newOverlayTxnFixture(t)
 				fx.requireUserFile(t, "a.txt", "user-original")
-				seedStore := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
-				switch kind {
-				case overlayTxnUnapply:
+				if kind == overlayTxnUnapply {
 					fx.seedApplied(t)
-				case overlayTxnStackApply:
-					fx.withStack(t, seedStore)
-				case overlayTxnStackUnapply:
-					fx.seedStackApplied(t)
 				}
 				fault := &faultingFS{RealFS: fsops.NewRealFS(), failAt: failAt}
 				store := state.NewFileStateStore(fault, fx.workspacesDir)
@@ -282,12 +252,9 @@ func TestOverlayTxn_NthFilesystemFailureIsRecoverable(t *testing.T) {
 				}
 
 				cleanStore := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
-				if kind == overlayTxnStackApply {
-					fx.withStack(t, cleanStore)
-				}
 				clean := fx.engine(t, nil, cleanStore)
 				if recoverErr := runOverlayKind(t, clean, fx, kind); recoverErr != nil {
-					if (kind != overlayTxnUnapply && kind != overlayTxnStackUnapply) || !errors.Is(recoverErr, ErrStateMissing) {
+					if kind != overlayTxnUnapply || !errors.Is(recoverErr, ErrStateMissing) {
 						t.Fatalf("kind %s failAt %d recovery: %v", kind, failAt, recoverErr)
 					}
 				}
@@ -301,18 +268,13 @@ func TestOverlayTxn_NthFilesystemFailureIsRecoverable(t *testing.T) {
 }
 
 func TestOverlayTxn_StateSaveFailureIsRecoverable(t *testing.T) {
-	kinds := []string{overlayTxnApply, overlayTxnUnapply, overlayTxnStackApply, overlayTxnStackUnapply}
+	kinds := []string{overlayTxnApply, overlayTxnUnapply}
 	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
 			fx := newOverlayTxnFixture(t)
 			base := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
-			switch kind {
-			case overlayTxnUnapply:
+			if kind == overlayTxnUnapply {
 				fx.seedApplied(t)
-			case overlayTxnStackApply:
-				fx.withStack(t, base)
-			case overlayTxnStackUnapply:
-				fx.seedStackApplied(t)
 			}
 			store := &failSaveStore{FileStateStore: base, fail: true}
 			eng := fx.engine(t, nil, store)
@@ -325,16 +287,13 @@ func TestOverlayTxn_StateSaveFailureIsRecoverable(t *testing.T) {
 			}
 
 			cleanStore := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
-			if kind == overlayTxnStackApply {
-				fx.withStack(t, cleanStore)
-			}
 			clean := fx.engine(t, nil, cleanStore)
 			if recoverErr := runOverlayKind(t, clean, fx, kind); recoverErr != nil {
-				if (kind != overlayTxnUnapply && kind != overlayTxnStackUnapply) || !errors.Is(recoverErr, ErrStateMissing) {
+				if kind != overlayTxnUnapply || !errors.Is(recoverErr, ErrStateMissing) {
 					t.Fatalf("recovery: %v", recoverErr)
 				}
 			}
-			if kind == overlayTxnApply || kind == overlayTxnStackApply {
+			if kind == overlayTxnApply {
 				fx.requireCoherentApplied(t, cleanStore)
 			}
 		})
@@ -348,7 +307,7 @@ func TestOverlayTxn_CancellationLeavesJournalOrRollback(t *testing.T) {
 	fs := &cancelAfterCopyFS{RealFS: fsops.NewRealFS(), cancel: cancel}
 	store := state.NewFileStateStore(fs, fx.workspacesDir)
 	eng := fx.engine(t, fs, store)
-	_, err := eng.Apply(ctx, &ApplyRequest{CWD: fx.repoRoot, StoreID: fx.storeID, Mode: "copy", Force: true})
+	_, err := eng.Apply(ctx, &ApplyRequest{CWD: fx.repoRoot, StoreIDs: []string{fx.storeID}, Mode: "copy", Force: true})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Apply error = %v, want context.Canceled", err)
 	}
@@ -359,7 +318,7 @@ func TestOverlayTxn_CancellationLeavesJournalOrRollback(t *testing.T) {
 	}
 
 	clean := fx.engine(t, nil, state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir))
-	if _, err := clean.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreID: fx.storeID, Mode: "copy", Force: true}); err != nil {
+	if _, err := clean.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreIDs: []string{fx.storeID}, Mode: "copy", Force: true}); err != nil {
 		t.Fatalf("recovery apply: %v", err)
 	}
 	fx.requireCoherentApplied(t, state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir))
@@ -370,7 +329,7 @@ func TestOverlayTxn_DryRunDoesNotMutate(t *testing.T) {
 	fx.requireUserFile(t, "a.txt", "user-original")
 	store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
 	eng := fx.engine(t, nil, store)
-	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreID: fx.storeID, Mode: "copy", DryRun: true, Force: true}); err != nil {
+	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreIDs: []string{fx.storeID}, Mode: "copy", DryRun: true, Force: true}); err != nil {
 		t.Fatalf("dry-run apply: %v", err)
 	}
 	if fx.readWorkspace(t, "a.txt") != "user-original" {
@@ -394,7 +353,7 @@ func TestOverlayTxn_SuccessfulApplyIsCoherent(t *testing.T) {
 	fx := newOverlayTxnFixture(t)
 	store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
 	eng := fx.engine(t, nil, store)
-	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreID: fx.storeID, Mode: "copy"}); err != nil {
+	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreIDs: []string{fx.storeID}, Mode: "copy"}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	fx.requireCoherentApplied(t, store)
@@ -456,16 +415,10 @@ func runOverlayKind(t *testing.T, eng *Engine, fx overlayTxnFixture, kind string
 	t.Helper()
 	switch kind {
 	case overlayTxnApply:
-		_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreID: fx.storeID, Mode: "copy", Force: true})
+		_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreIDs: []string{fx.storeID}, Mode: "copy", Force: true})
 		return err
 	case overlayTxnUnapply:
 		_, err := eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot})
-		return err
-	case overlayTxnStackApply:
-		_, err := eng.StackApply(context.Background(), &StackApplyRequest{CWD: fx.repoRoot, Mode: "copy", Force: true})
-		return err
-	case overlayTxnStackUnapply:
-		_, err := eng.StackUnapply(context.Background(), &StackUnapplyRequest{CWD: fx.repoRoot})
 		return err
 	default:
 		t.Fatalf("unknown kind %s", kind)

@@ -1,0 +1,33 @@
+{
+  "repo": "fp-legacy",
+  "workspacePath": ".",
+  "applied": true,
+  "mode": "copy",
+  "stack": ["store-a", "store-b"],
+  "appliedStores": [
+    {"store": "active-store", "type": "copy"}
+  ],
+  "activeStore": "active-store",
+  "paths": {
+    "a.txt": {
+      "store": "store-a",
+      "type": "copy",
+      "timestamp": "2024-01-01T00:00:00Z"
+    },
+    "shared.txt": {
+      "store": "store-b",
+      "type": "copy",
+      "timestamp": "2024-01-01T00:00:00Z"
+    },
+    "b.txt": {
+      "store": "store-b",
+      "type": "copy",
+      "timestamp": "2024-01-01T00:00:00Z"
+    },
+    "active.txt": {
+      "store": "active-store",
+      "type": "copy",
+      "timestamp": "2024-01-01T00:00:00Z"
+    }
+  }
+}

@@ -77,9 +77,9 @@ func newExcludeFixture(t *testing.T, workspacePath string) excludeFixture {
 func (fx excludeFixture) apply(t *testing.T) *engine.ApplyResult {
 	t.Helper()
 	result, err := fx.engine.Apply(context.Background(), &engine.ApplyRequest{
-		CWD:     fx.workspaceRoot,
-		Mode:    "copy",
-		StoreID: fx.storeID,
+		CWD:      fx.workspaceRoot,
+		Mode:     "copy",
+		StoreIDs: []string{fx.storeID},
 	})
 	if err != nil {
 		t.Fatalf("apply: %v", err)

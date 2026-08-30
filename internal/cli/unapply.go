@@ -16,12 +16,13 @@ var (
 )
 
 var unapplyCmd = &cobra.Command{
-	Use:   "unapply",
-	Short: "Remove active store's overlays from the workspace",
-	Long: `Remove overlays applied by the active store from the current workspace.
+	Use:   "unapply [store-id...]",
+	Short: "Remove applied overlays from the workspace",
+	Long: `Remove overlays applied by one or more stores from the current workspace.
 
-Paths applied by the stack are not affected - use 'stack unapply' for that.`,
-	Args: cobra.NoArgs,
+With no arguments, removes paths owned by the active store. With store IDs,
+removes only paths owned by those stores.`,
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		eng, err := newEngine()
 		if err != nil {
@@ -35,9 +36,10 @@ Paths applied by the stack are not affected - use 'stack unapply' for that.`,
 		}
 
 		req := &engine.UnapplyRequest{
-			CWD:    cwd,
-			Force:  unapplyForce,
-			DryRun: unapplyDryRun,
+			CWD:      cwd,
+			Force:    unapplyForce,
+			DryRun:   unapplyDryRun,
+			StoreIDs: append([]string{}, args...),
 		}
 
 		result, err := eng.Unapply(ctx, req)

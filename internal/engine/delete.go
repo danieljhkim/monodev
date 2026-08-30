@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
@@ -147,8 +146,9 @@ func (e *Engine) findWorkspacesUsingStore(storeID string) ([]WorkspaceUsage, err
 
 // checkWorkspaceUsage checks if a workspace uses the given store.
 func (e *Engine) checkWorkspaceUsage(ws *state.WorkspaceState, storeID, workspaceID string) *WorkspaceUsage {
+	ws.MigrateDeprecatedStack()
 	isActive := ws.ActiveStore == storeID
-	inStack := slices.Contains(ws.Stack, storeID)
+	inStack := ws.GetAppliedStore(storeID) != nil
 	appliedPathCount := 0
 
 	// Count applied paths
@@ -180,22 +180,13 @@ func (e *Engine) cleanWorkspaceReferences(storeID string, affectedWorkspaces []W
 		if err != nil {
 			return fmt.Errorf("failed to load workspace %s: %w", usage.WorkspaceID, err)
 		}
+		ws.MigrateDeprecatedStack()
 
-		// Clear active store if it matches
 		if ws.ActiveStore == storeID {
 			ws.ActiveStore = ""
 		}
 
-		// Remove from stack
-		newStack := []string{}
-		for _, s := range ws.Stack {
-			if s != storeID {
-				newStack = append(newStack, s)
-			}
-		}
-		ws.Stack = newStack
-
-		// Remove from applied stores
+		ws.Stack = []string{}
 		ws.RemoveAppliedStore(storeID)
 
 		// Remove paths owned by this store

@@ -348,9 +348,15 @@ func TestDeleteStore_InStack(t *testing.T) {
 		WorkspacePath: "services/web",
 		Applied:       true,
 		Mode:          "copy",
-		Stack:         []string{"global", "stack-store", "local"},
-		ActiveStore:   "local",
-		Paths:         map[string]state.PathOwnership{},
+		AppliedStores: []state.AppliedStore{
+			{Store: "global", Type: "copy"},
+			{Store: "stack-store", Type: "copy"},
+			{Store: "local", Type: "copy"},
+		},
+		ActiveStore: "local",
+		Paths: map[string]state.PathOwnership{
+			"from-stack": {Store: "stack-store", Type: "copy"},
+		},
 	}
 	stateStore.workspaces["ws1"] = ws
 
@@ -379,16 +385,13 @@ func TestDeleteStore_InStack(t *testing.T) {
 		t.Error("expected InStack to be true")
 	}
 
-	// Verify stack was cleaned
 	cleanedWs, _ := stateStore.LoadWorkspace("ws1")
-	expectedStack := []string{"global", "local"}
-	if len(cleanedWs.Stack) != len(expectedStack) {
-		t.Errorf("expected stack length %d, got %d", len(expectedStack), len(cleanedWs.Stack))
+	ids := cleanedWs.AppliedStoreIDs()
+	if len(ids) != 2 || ids[0] != "global" || ids[1] != "local" {
+		t.Errorf("AppliedStores = %v, want [global local]", ids)
 	}
-	for i, s := range expectedStack {
-		if i >= len(cleanedWs.Stack) || cleanedWs.Stack[i] != s {
-			t.Errorf("expected Stack[%d]=%q, got %q", i, s, cleanedWs.Stack[i])
-		}
+	if _, ok := cleanedWs.Paths["from-stack"]; ok {
+		t.Error("expected stack-store path to be removed")
 	}
 }
 
@@ -462,9 +465,11 @@ func TestDeleteStore_MultipleWorkspaces(t *testing.T) {
 		WorkspacePath: "services/api",
 		Applied:       true,
 		Mode:          "symlink",
-		Stack:         []string{"shared-store"},
+		AppliedStores: []state.AppliedStore{{Store: "shared-store", Type: "symlink"}},
 		ActiveStore:   "api-store",
-		Paths:         map[string]state.PathOwnership{},
+		Paths: map[string]state.PathOwnership{
+			"api.txt": {Store: "shared-store", Type: "symlink"},
+		},
 	}
 	ws2 := &state.WorkspaceState{
 		Repo:          "repo1",
@@ -660,8 +665,8 @@ func TestDeleteStore_ScopedComponentWorkspaceReferences(t *testing.T) {
 	if cleanedWs.ActiveStore != "" {
 		t.Errorf("ActiveStore = %q, want empty", cleanedWs.ActiveStore)
 	}
-	if len(cleanedWs.Stack) != 1 || cleanedWs.Stack[0] != "base-store" {
-		t.Errorf("Stack = %v, want [base-store]", cleanedWs.Stack)
+	if len(cleanedWs.Stack) != 0 {
+		t.Errorf("Stack = %v, want empty", cleanedWs.Stack)
 	}
 	if cleanedWs.GetAppliedStore("component-store") != nil {
 		t.Error("component-store should be removed from AppliedStores")

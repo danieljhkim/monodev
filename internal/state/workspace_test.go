@@ -325,6 +325,42 @@ func TestWorkspaceState_SchemaValidation(t *testing.T) {
 	}
 }
 
+func TestWorkspaceState_MigrateDeprecatedStack(t *testing.T) {
+	ws := &WorkspaceState{
+		Repo:          "repo1",
+		WorkspacePath: ".",
+		Applied:       true,
+		Mode:          "copy",
+		Stack:         []string{"store-a", "store-b", "never-applied"},
+		AppliedStores: []AppliedStore{{Store: "active-store", Type: "copy"}},
+		ActiveStore:   "active-store",
+		Paths: map[string]PathOwnership{
+			"a.txt":      {Store: "store-a", Type: "copy"},
+			"shared.txt": {Store: "store-b", Type: "copy"},
+			"active.txt": {Store: "active-store", Type: "copy"},
+		},
+	}
+	if !ws.MigrateDeprecatedStack() {
+		t.Fatal("MigrateDeprecatedStack() = false, want true")
+	}
+	if len(ws.Stack) != 0 {
+		t.Fatalf("Stack = %#v, want empty", ws.Stack)
+	}
+	got := ws.AppliedStoreIDs()
+	want := []string{"store-a", "store-b", "active-store"}
+	if len(got) != len(want) {
+		t.Fatalf("AppliedStoreIDs() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("AppliedStoreIDs() = %v, want %v", got, want)
+		}
+	}
+	if ws.MigrateDeprecatedStack() {
+		t.Fatal("second MigrateDeprecatedStack() = true, want false")
+	}
+}
+
 func TestWorkspaceID_Stability(t *testing.T) {
 	// Test that the same inputs always produce the same workspace ID
 	repoFingerprint := "abc123def456"

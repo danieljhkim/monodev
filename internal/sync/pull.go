@@ -83,7 +83,7 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		storeIDs = persistedStores
 	}
 	if workspaceRef != nil && req.WithStores {
-		storeIDs = appendUniqueStores(storeIDs, workspaceRef.Stack, workspaceRef.ActiveStore)
+		storeIDs = appendUniqueStores(storeIDs, workspaceReferenceStoreIDs(workspaceRef), "")
 	}
 
 	var pulledStores []string

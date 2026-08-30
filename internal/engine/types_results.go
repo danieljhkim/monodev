@@ -62,7 +62,7 @@ type StatusResult struct {
 	// Mode is the current overlay mode
 	Mode string
 
-	// Stack is the store stack
+	// Stack is retained for JSON compatibility and is always empty after stack retirement.
 	Stack []string
 
 	// ActiveStore is the active store
@@ -88,37 +88,6 @@ type StatusResult struct {
 
 	// ActiveStoreStatus is the application status of the active store
 	ActiveStoreStatus string // "Applied", "Not Applied", or "Partial"
-}
-
-// StackApplyResult represents the result of applying the stack.
-type StackApplyResult struct {
-	// Plan is the generated plan
-	Plan *planner.ApplyPlan
-
-	// Applied is the list of operations that were executed (empty if DryRun)
-	Applied []planner.Operation
-
-	// WorkspaceID is the computed workspace ID
-	WorkspaceID string
-
-	// RepoFingerprint is the repository fingerprint
-	RepoFingerprint string
-
-	// WorkspacePath is the relative path from repo root
-	WorkspacePath string
-}
-
-// StackUnapplyResult represents the result of unapplying the stack.
-type StackUnapplyResult struct {
-	// Removed is the list of paths that were removed
-	Removed []string
-
-	// WorkspaceID is the workspace ID
-	WorkspaceID string
-
-	// Warnings contains non-fatal follow-up issues, such as an unavailable
-	// repository-local exclude file.
-	Warnings []string
 }
 
 // DeleteStoreResult represents the result of deleting a store.
@@ -196,19 +165,4 @@ type DiffResult struct {
 
 	// Files contains all diffed files with their status
 	Files []DiffFileInfo
-}
-
-// StackListResult represents the result of listing the store stack.
-type StackListResult struct {
-	// Stack is the ordered list of stores
-	Stack []string
-
-	// ActiveStore is the currently active store
-	ActiveStore string
-}
-
-// StackPopResult represents the result of removing a store from the stack.
-type StackPopResult struct {
-	// Removed is the store that was removed
-	Removed string
 }

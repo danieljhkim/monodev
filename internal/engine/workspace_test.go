@@ -263,8 +263,8 @@ func TestListWorkspaces_ScopedComponentOnlyWorkspace(t *testing.T) {
 	if got.ActiveStore != "component-store" {
 		t.Errorf("ActiveStore = %q, want %q", got.ActiveStore, "component-store")
 	}
-	if got.StackCount != 2 {
-		t.Errorf("StackCount = %d, want 2", got.StackCount)
+	if got.StackCount != 0 {
+		t.Errorf("StackCount = %d, want 0", got.StackCount)
 	}
 	if got.AppliedPathCount != 2 {
 		t.Errorf("AppliedPathCount = %d, want 2", got.AppliedPathCount)
@@ -340,8 +340,8 @@ func TestDescribeWorkspace_Found(t *testing.T) {
 	if !result.Applied {
 		t.Error("Applied should be true")
 	}
-	if len(result.Stack) != 2 {
-		t.Errorf("Stack length = %d, want 2", len(result.Stack))
+	if len(result.Stack) != 0 {
+		t.Errorf("Stack length = %d, want 0", len(result.Stack))
 	}
 	if len(result.Paths) != 1 {
 		t.Errorf("Paths length = %d, want 1", len(result.Paths))
