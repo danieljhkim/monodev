@@ -136,10 +136,11 @@ func (e *Engine) migrateWorkspaceRecord(store state.StateStore, ws *state.Worksp
 	if store == nil {
 		return fmt.Errorf("failed to migrate workspace %s: no state store", oldID)
 	}
-	ws.Repo = repoFingerprint
-	ws.WorkspacePath = workspacePath
-	ws.AbsolutePath = filepath.Join(root, workspacePath)
-	if err := store.SaveWorkspace(newID, ws); err != nil {
+	migrated := state.CloneWorkspaceState(ws)
+	migrated.Repo = repoFingerprint
+	migrated.WorkspacePath = workspacePath
+	migrated.AbsolutePath = filepath.Join(root, workspacePath)
+	if err := store.SaveWorkspace(newID, migrated); err != nil {
 		return fmt.Errorf("failed to migrate workspace %s: %w", oldID, err)
 	}
 	if oldID != newID {
