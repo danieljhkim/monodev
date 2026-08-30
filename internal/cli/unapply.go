@@ -13,6 +13,7 @@ import (
 var (
 	unapplyForce  bool
 	unapplyDryRun bool
+	unapplyAll    bool
 )
 
 var unapplyCmd = &cobra.Command{
@@ -24,6 +25,10 @@ With no arguments, removes paths owned by the active store. With store IDs,
 removes only paths owned by those stores.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if unapplyAll && len(args) > 0 {
+			return fmt.Errorf("--all cannot be combined with store IDs")
+		}
+
 		eng, err := newEngine()
 		if err != nil {
 			return err
@@ -40,6 +45,7 @@ removes only paths owned by those stores.`,
 			Force:    unapplyForce,
 			DryRun:   unapplyDryRun,
 			StoreIDs: append([]string{}, args...),
+			All:      unapplyAll,
 		}
 
 		result, err := eng.Unapply(ctx, req)
@@ -73,4 +79,5 @@ removes only paths owned by those stores.`,
 func init() {
 	unapplyCmd.Flags().BoolVarP(&unapplyForce, "force", "f", false, "Force unapply, bypassing validation")
 	unapplyCmd.Flags().BoolVar(&unapplyDryRun, "dry-run", false, "Show what would be removed without removing")
+	unapplyCmd.Flags().BoolVar(&unapplyAll, "all", false, "Remove overlays from every applied store in this workspace")
 }

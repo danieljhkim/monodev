@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -209,6 +210,39 @@ func TestUnapply_ForceRemovesDriftedCopyAndUpdatesWorkspaceState(t *testing.T) {
 	}
 	if updated.GetAppliedStore("stack-store") == nil {
 		t.Fatal("AppliedStores removed stack-store; want stack store retained")
+	}
+}
+
+func TestUnapply_AllRemovesEveryLedgerOwner(t *testing.T) {
+	gitRepo := &trackGitRepo{root: "/repo", fingerprint: "fp1", workspacePath: "."}
+	stateStore := newMockStateStore()
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	ws := state.NewWorkspaceState("fp1", ".", "copy")
+	ws.Applied = true
+	ws.ActiveStore = "active-store"
+	ws.Paths["active.yml"] = state.PathOwnership{Store: "active-store", Type: "copy"}
+	ws.Paths["stack/config.yml"] = state.PathOwnership{Store: "stack-store", Type: "copy"}
+	ws.AppliedStores = []state.AppliedStore{
+		{Store: "active-store", Type: "copy"},
+		{Store: "stack-store", Type: "copy"},
+	}
+	stateStore.workspaces[workspaceID] = ws
+
+	fs := newRemoveCapturingFS("/repo/active.yml", "/repo/stack/config.yml")
+	eng := newUnapplyDriftEngine(gitRepo, stateStore, fs, hash.NewFakeHasher())
+
+	result, err := eng.Unapply(context.Background(), &UnapplyRequest{CWD: "/repo", All: true, Force: true})
+	if err != nil {
+		t.Fatalf("Unapply --all: %v", err)
+	}
+	if got, want := result.Removed, []string{"stack/config.yml", "active.yml"}; !slices.Equal(got, want) {
+		t.Fatalf("Removed = %v, want %v", got, want)
+	}
+	if got, want := workspaceRemoveAllCalls(fs.removed), []string{"/repo/stack/config.yml", "/repo/active.yml"}; !slices.Equal(got, want) {
+		t.Fatalf("RemoveAll calls = %v, want %v", got, want)
+	}
+	if _, err := stateStore.LoadWorkspace(workspaceID); !os.IsNotExist(err) {
+		t.Fatalf("workspace state after --all = %v, want missing", err)
 	}
 }
 

@@ -71,8 +71,12 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		workspaceState.MigrateDeprecatedStack()
 	}
 
+	if req.All && len(req.StoreIDs) > 0 {
+		return nil, fmt.Errorf("--all cannot be combined with store IDs")
+	}
+
 	storesToRemove := req.StoreIDs
-	if len(storesToRemove) == 0 {
+	if !req.All && len(storesToRemove) == 0 {
 		if workspaceState.ActiveStore == "" {
 			return &UnapplyResult{
 				Removed:     []string{},
@@ -90,10 +94,11 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 
 	ownedPaths := []string{}
 	for relPath, ownership := range workspaceState.Paths {
-		if storeSet[ownership.Store] {
+		if req.All || storeSet[ownership.Store] {
 			ownedPaths = append(ownedPaths, relPath)
 		}
 	}
+	sortDeepestFirst(ownedPaths)
 
 	if len(ownedPaths) == 0 {
 		return &UnapplyResult{

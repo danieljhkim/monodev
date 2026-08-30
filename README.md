@@ -213,10 +213,46 @@ monodev unapply [--force] [--dry-run]
 # remove overlays owned by specific stores; other applied stores remain
 monodev unapply store-a [--force] [--dry-run]
 
+# remove every applied overlay in this workspace
+monodev unapply --all [--force] [--dry-run]
+
 # show the ordered applied set and path ownership
 monodev status
 
 ```
+
+### Leave monodev without losing your files
+
+`monodev eject` is the workspace exit path. It always leaves your stores in
+place; deleting a store remains a separate, explicit `monodev store rm` action.
+This makes eject safe when you want to stop managing one workspace but may want
+to reuse its overlays later.
+
+The default is **keep files**. It keeps the exact bytes currently in every
+overlaid path, including changes you made after applying an overlay. Eject then
+removes that workspace's ownership ledger and monodev's managed
+`.git/info/exclude` block, so the retained paths become ordinary untracked files
+that you can inspect, commit, move, or delete yourself.
+
+```bash
+# preview the default keep-files exit; this changes nothing
+monodev eject --dry-run
+
+# confirm interactively, or provide an explicit non-interactive confirmation
+monodev eject
+monodev eject --yes
+
+# instead remove every overlaid path and detach the workspace
+monodev eject --remove-files
+monodev eject --remove-files --dry-run
+```
+
+Both modes print the planned paths and require confirmation before changing the
+workspace. `--dry-run` never asks for confirmation and only prints that plan.
+
+If an eject is interrupted, run `monodev eject` again (or `monodev doctor
+--fix`) to recover through the same journaled overlay transaction used by
+apply and unapply.
 
 ### Workspace management
 

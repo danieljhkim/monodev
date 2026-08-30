@@ -38,6 +38,29 @@ type UnapplyResult struct {
 	message string
 }
 
+// EjectResult describes the workspace paths affected while detaching monodev.
+// Stores remain available; eject only removes this workspace's ownership ledger.
+type EjectResult struct {
+	// Retained lists paths left in place by keep-files mode.
+	Retained []string
+
+	// Removed lists paths deleted by remove-files mode.
+	Removed []string
+
+	// WorkspaceID is the detached workspace's ID.
+	WorkspaceID string
+
+	// RemoveFiles reports whether remove-files mode was selected.
+	RemoveFiles bool
+
+	// DryRun reports whether this was only a plan.
+	DryRun bool
+
+	// Warnings contains non-fatal follow-up issues, such as an unavailable
+	// repository-local exclude file.
+	Warnings []string
+}
+
 // StatusResult represents the current workspace status.
 type StatusResult struct {
 
