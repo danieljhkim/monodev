@@ -19,6 +19,7 @@ const (
 
 	overlayTxnApply   = "apply"
 	overlayTxnUnapply = "unapply"
+	overlayTxnEject   = "eject"
 
 	overlayTxnPreparing = "preparing"
 	overlayTxnPrepared  = "prepared"
@@ -192,10 +193,6 @@ func (e *Engine) runOverlayTxn(ctx context.Context, req overlayTxnRequest) error
 		return fmt.Errorf("overlay transaction is missing a finalize callback")
 	}
 
-	if len(req.ops) == 0 {
-		return e.finalizeOverlayTxn(req.workspaceID, req.finalize)
-	}
-
 	journalPath, txnDir, err := e.overlayTxnPaths(req.workspaceID)
 	if err != nil {
 		return err
@@ -262,14 +259,6 @@ func (e *Engine) runOverlayTxn(ctx context.Context, req overlayTxnRequest) error
 		return err
 	}
 	return e.discardOverlayTxn(journalPath, txnDir)
-}
-
-func (e *Engine) finalizeOverlayTxn(workspaceID string, finalize func() (*state.WorkspaceState, bool, error)) error {
-	final, deleteState, err := finalize()
-	if err != nil {
-		return err
-	}
-	return e.commitOverlayTxnState(workspaceID, &overlayTxn{FinalState: final, DeleteState: deleteState})
 }
 
 func (e *Engine) prepareOverlayOp(workspaceRoot, txnDir string, op planner.Operation) (overlayTxnOp, error) {

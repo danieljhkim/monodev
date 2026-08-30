@@ -31,6 +31,23 @@ type UnapplyRequest struct {
 
 	// StoreIDs are stores whose paths to remove. Empty means the active store.
 	StoreIDs []string
+
+	// All removes every path recorded in the workspace ownership ledger.
+	// It cannot be combined with StoreIDs.
+	All bool
+}
+
+// EjectRequest detaches the current workspace from monodev.
+type EjectRequest struct {
+	// CWD is the current working directory (workspace path).
+	CWD string
+
+	// RemoveFiles removes every overlaid path. When false, files stay in place
+	// and become ordinary workspace files after the ownership ledger is removed.
+	RemoveFiles bool
+
+	// DryRun returns the eject plan without changing files, state, or excludes.
+	DryRun bool
 }
 
 // StatusRequest represents a request for workspace status.

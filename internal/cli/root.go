@@ -215,6 +215,7 @@ See each sub-command's help for details on how to use the generated script.`,
 	// Workspace Lifecycle commands
 	applyCmd.GroupID = "workspace-lifecycle"
 	unapplyCmd.GroupID = "workspace-lifecycle"
+	ejectCmd.GroupID = "workspace-lifecycle"
 	clearCmd.GroupID = "workspace-lifecycle"
 	statusCmd.GroupID = "workspace-lifecycle"
 	workspaceCmd.GroupID = "workspace-lifecycle"
@@ -222,6 +223,7 @@ See each sub-command's help for details on how to use the generated script.`,
 	doctorCmd.GroupID = "workspace-lifecycle"
 	rootCmd.AddCommand(applyCmd)
 	rootCmd.AddCommand(unapplyCmd)
+	rootCmd.AddCommand(ejectCmd)
 	rootCmd.AddCommand(clearCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(workspaceCmd)
