@@ -78,6 +78,13 @@ type DeleteWorkspaceRequest struct {
 	DryRun      bool
 }
 
+// RebindWorkspaceRequest rebinds an orphaned workspace onto the current repo identity.
+type RebindWorkspaceRequest struct {
+	CWD         string
+	WorkspaceID string
+	Force       bool
+}
+
 // DiffRequest represents a request to diff workspace files against store overlay.
 type DiffRequest struct {
 	// CWD is the current working directory

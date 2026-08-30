@@ -225,6 +225,170 @@ func TestRealGitRepo_Fingerprint(t *testing.T) {
 			t.Error("Different repos should have different fingerprints")
 		}
 	})
+
+	t.Run("ssh and https remotes produce the same fingerprint", func(t *testing.T) {
+		sshRepo := setupGitRepoWithRemote(t, "git@github.com:org/repo.git")
+		defer func() { _ = os.RemoveAll(sshRepo) }()
+		httpsRepo := setupGitRepoWithRemote(t, "https://github.com/org/repo.git")
+		defer func() { _ = os.RemoveAll(httpsRepo) }()
+
+		fpSSH, err := repo.Fingerprint(sshRepo)
+		if err != nil {
+			t.Fatalf("Fingerprint ssh: %v", err)
+		}
+		fpHTTPS, err := repo.Fingerprint(httpsRepo)
+		if err != nil {
+			t.Fatalf("Fingerprint https: %v", err)
+		}
+		if fpSSH != fpHTTPS {
+			t.Errorf("SSH and HTTPS fingerprints differ: %s vs %s", fpSSH, fpHTTPS)
+		}
+	})
+
+	t.Run("rewriting origin ssh to https keeps fingerprint", func(t *testing.T) {
+		gitDir := setupGitRepoWithRemote(t, "git@github.com:org/repo.git")
+		defer func() { _ = os.RemoveAll(gitDir) }()
+
+		before, err := repo.Fingerprint(gitDir)
+		if err != nil {
+			t.Fatalf("Fingerprint before rewrite: %v", err)
+		}
+		cmd := exec.Command("git", "remote", "set-url", "origin", "https://github.com/org/repo.git")
+		cmd.Dir = gitDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote set-url: %v\n%s", err, output)
+		}
+		after, err := repo.Fingerprint(gitDir)
+		if err != nil {
+			t.Fatalf("Fingerprint after rewrite: %v", err)
+		}
+		if before != after {
+			t.Errorf("fingerprint changed after remote rewrite: %s vs %s", before, after)
+		}
+	})
+
+	t.Run("clone path is not part of fingerprint", func(t *testing.T) {
+		repo1 := setupGitRepoWithRemote(t, "https://github.com/org/same.git")
+		defer func() { _ = os.RemoveAll(repo1) }()
+		repo2 := setupGitRepoWithRemote(t, "https://github.com/org/same.git")
+		defer func() { _ = os.RemoveAll(repo2) }()
+
+		fp1, err := repo.Fingerprint(repo1)
+		if err != nil {
+			t.Fatalf("Fingerprint repo1: %v", err)
+		}
+		fp2, err := repo.Fingerprint(repo2)
+		if err != nil {
+			t.Fatalf("Fingerprint repo2: %v", err)
+		}
+		if fp1 != fp2 {
+			t.Errorf("same remote at different paths produced %s and %s", fp1, fp2)
+		}
+	})
+
+	t.Run("remote-less repo is stable after adding a remote", func(t *testing.T) {
+		gitDir := setupGitRepo(t)
+		defer func() { _ = os.RemoveAll(gitDir) }()
+
+		first, err := repo.Fingerprint(gitDir)
+		if err != nil {
+			t.Fatalf("Fingerprint first: %v", err)
+		}
+		second, err := repo.Fingerprint(gitDir)
+		if err != nil {
+			t.Fatalf("Fingerprint second: %v", err)
+		}
+		if first != second {
+			t.Errorf("remote-less fingerprint not stable: %s vs %s", first, second)
+		}
+
+		cmd := exec.Command("git", "remote", "add", "origin", "git@github.com:org/later.git")
+		cmd.Dir = gitDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add: %v\n%s", err, output)
+		}
+		afterRemote, err := repo.Fingerprint(gitDir)
+		if err != nil {
+			t.Fatalf("Fingerprint after remote add: %v", err)
+		}
+		if afterRemote != first {
+			t.Errorf("adding a remote changed fingerprint: %s vs %s", first, afterRemote)
+		}
+	})
+
+	t.Run("origin is preferred over other remotes", func(t *testing.T) {
+		gitDir := setupGitRepo(t)
+		defer func() { _ = os.RemoveAll(gitDir) }()
+
+		cmd := exec.Command("git", "remote", "add", "upstream", "https://github.com/other/upstream.git")
+		cmd.Dir = gitDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add upstream: %v\n%s", err, output)
+		}
+		cmd = exec.Command("git", "remote", "add", "origin", "https://github.com/org/origin.git")
+		cmd.Dir = gitDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git remote add origin: %v\n%s", err, output)
+		}
+
+		fp, err := repo.Fingerprint(gitDir)
+		if err != nil {
+			t.Fatalf("Fingerprint: %v", err)
+		}
+		want := HashFingerprint(fingerprintRemotePrefix + NormalizeRemoteURL("https://github.com/org/origin.git"))
+		if fp != want {
+			t.Errorf("Fingerprint = %s, want origin-based %s", fp, want)
+		}
+	})
+}
+
+func TestLegacyFingerprint(t *testing.T) {
+	got := LegacyFingerprint("/abs/repo", "git@github.com:org/repo.git")
+	want := HashFingerprint("/abs/repo|git@github.com:org/repo.git")
+	if got != want {
+		t.Errorf("LegacyFingerprint = %s, want %s", got, want)
+	}
+	if LegacyFingerprint("/abs/repo", "") != HashFingerprint("/abs/repo|unknown") {
+		t.Error("empty remote should use the legacy unknown token")
+	}
+}
+
+func TestEnsureDurableRepoID(t *testing.T) {
+	gitDir := setupGitRepo(t)
+	defer func() { _ = os.RemoveAll(gitDir) }()
+
+	id1, err := EnsureDurableRepoID(gitDir)
+	if err != nil {
+		t.Fatalf("EnsureDurableRepoID: %v", err)
+	}
+	if id1 == "" {
+		t.Fatal("expected non-empty repo id")
+	}
+	id2, err := EnsureDurableRepoID(gitDir)
+	if err != nil {
+		t.Fatalf("EnsureDurableRepoID second: %v", err)
+	}
+	if id1 != id2 {
+		t.Errorf("durable id not stable: %s vs %s", id1, id2)
+	}
+
+	if err := os.MkdirAll(filepath.Join(gitDir, ".monodev"), 0700); err != nil {
+		t.Fatalf("mkdir .monodev: %v", err)
+	}
+	id3, err := EnsureDurableRepoID(gitDir)
+	if err != nil {
+		t.Fatalf("EnsureDurableRepoID with .monodev: %v", err)
+	}
+	if id3 != id1 {
+		t.Errorf("init copy changed id: %s vs %s", id1, id3)
+	}
+	data, err := os.ReadFile(filepath.Join(gitDir, ".monodev", "repo-id"))
+	if err != nil {
+		t.Fatalf("read .monodev/repo-id: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != id1 {
+		t.Errorf(".monodev/repo-id = %q, want %q", strings.TrimSpace(string(data)), id1)
+	}
 }
 
 func TestRealGitRepo_RelPath(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
@@ -133,16 +132,10 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 	}
 	defer unlockStore()
 
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
-		if os.IsNotExist(err) {
-			// Create new workspace state
-			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "copy")
-		} else {
-			return fmt.Errorf("failed to load workspace state: %w", err)
-		}
+		return fmt.Errorf("failed to load workspace state: %w", err)
 	}
-	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
 	if workspaceState.ActiveStore == req.StoreID && workspaceState.ActiveStoreScope == resolvedScope {
 		return nil // already active store
 	}
@@ -214,17 +207,10 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 		return fmt.Errorf("failed to create store: %w", err)
 	}
 
-	// Load or create workspace state
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+	workspaceState, workspaceID, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
-		if os.IsNotExist(err) {
-			// Create new workspace state
-			workspaceState = state.NewWorkspaceState(repoFingerprint, workspacePath, "copy")
-		} else {
-			return fmt.Errorf("failed to load workspace state: %w", err)
-		}
+		return fmt.Errorf("failed to load workspace state: %w", err)
 	}
-	workspaceState.AbsolutePath = filepath.Join(root, workspacePath)
 
 	workspaceState.Applied = false
 	workspaceState.ActiveStore = req.StoreID

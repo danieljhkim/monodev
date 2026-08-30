@@ -15,4 +15,5 @@ func init() {
 	workspaceCmd.AddCommand(workspaceLsCmd)
 	workspaceCmd.AddCommand(workspaceDescribeCmd)
 	workspaceCmd.AddCommand(workspaceRmCmd)
+	workspaceCmd.AddCommand(workspaceRepairCmd)
 }

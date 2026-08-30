@@ -111,7 +111,7 @@ func TestStoreCommand_Subcommands(t *testing.T) {
 }
 
 func TestWorkspaceCommand_Subcommands(t *testing.T) {
-	workspaceSubcommands := []string{"ls", "rm", "describe"}
+	workspaceSubcommands := []string{"ls", "rm", "describe", "repair"}
 
 	for _, cmd := range workspaceSubcommands {
 		t.Run(cmd, func(t *testing.T) {

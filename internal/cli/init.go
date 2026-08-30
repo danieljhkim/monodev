@@ -66,6 +66,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if _, err := gitx.EnsureDurableRepoID(repoRoot); err != nil {
+		return fmt.Errorf("failed to persist durable repo id: %w", err)
+	}
+
 	// 4. Create .gitignore to exclude .monodev from git
 	gitignorePath := filepath.Join(monodevPath, ".gitignore")
 	gitignoreContent := []byte("# monodev artifacts (local-only)\n*\n")
