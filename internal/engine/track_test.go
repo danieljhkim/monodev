@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,10 @@ type trackGitRepo struct {
 	workspacePath string
 }
 
-func (m *trackGitRepo) Discover(path string) (string, error)      { return m.root, nil }
+func (m *trackGitRepo) Discover(path string) (string, error) { return m.root, nil }
+func (m *trackGitRepo) CommonGitDir(root string) (string, error) {
+	return filepath.Join(root, ".git"), nil
+}
 func (m *trackGitRepo) Fingerprint(root string) (string, error)   { return m.fingerprint, nil }
 func (m *trackGitRepo) RelPath(root, path string) (string, error) { return m.workspacePath, nil }
 func (m *trackGitRepo) GetFingerprintComponents(root string) (string, string, error) {

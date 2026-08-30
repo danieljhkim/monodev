@@ -132,6 +132,10 @@ Paths applied by the active store are not affected - use 'monodev unapply' for t
 			return nil
 		}
 
+		for _, warning := range result.Warnings {
+			PrintWarning(warning)
+		}
+
 		PrintSuccess(fmt.Sprintf("Removed %s from stack successfully", PrintCount(len(result.Removed), "path", "paths")))
 		return nil
 	},

@@ -31,6 +31,10 @@ type UnapplyResult struct {
 	// WorkspaceID is the workspace ID
 	WorkspaceID string
 
+	// Warnings contains non-fatal follow-up issues, such as an unavailable
+	// repository-local exclude file.
+	Warnings []string
+
 	message string
 }
 
@@ -111,6 +115,10 @@ type StackUnapplyResult struct {
 
 	// WorkspaceID is the workspace ID
 	WorkspaceID string
+
+	// Warnings contains non-fatal follow-up issues, such as an unavailable
+	// repository-local exclude file.
+	Warnings []string
 }
 
 // DeleteStoreResult represents the result of deleting a store.

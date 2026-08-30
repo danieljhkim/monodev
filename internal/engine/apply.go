@@ -49,10 +49,13 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	}
 
 	workspaceRoot := filepath.Join(root, workspacePath)
+	var excludeWarnings []string
 	if !req.DryRun {
-		if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
-			return nil, err
+		recoveryWarnings, recoverErr := e.recoverWorkspaceOverlay(ctx, workspaceID, root, workspaceRoot, workspacePath)
+		if recoverErr != nil {
+			return nil, recoverErr
 		}
+		excludeWarnings = append(excludeWarnings, recoveryWarnings...)
 		reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
 		if reloadErr == nil {
 			workspaceState = reloaded
@@ -134,6 +137,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to build apply plan: %w", err)
 	}
+	plan.Warnings = append(plan.Warnings, excludeWarnings...)
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
@@ -159,6 +163,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	}
 
 	appliedOps := append([]planner.Operation{}, plan.Operations...)
+	var finalState *state.WorkspaceState
 	if err := e.runOverlayTxn(ctx, overlayTxnRequest{
 		kind:          overlayTxnApply,
 		workspaceID:   workspaceID,
@@ -180,11 +185,13 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 			final.Mode = req.Mode
 			final.ActiveStore = storeToApply
 			final.AddAppliedStore(storeToApply, req.Mode)
+			finalState = final
 			return final, false, nil
 		},
 	}); err != nil {
 		return nil, err
 	}
+	plan.Warnings = appendExcludeWarning(plan.Warnings, e.syncManagedExcludes(root, workspacePath, finalState))
 
 	return &ApplyResult{
 		Plan:            plan,

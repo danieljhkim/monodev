@@ -403,6 +403,55 @@ func TestOverlayTxn_SuccessfulApplyIsCoherent(t *testing.T) {
 	}
 }
 
+func TestOverlayTxn_PreparedRecoverySynchronizesExcludeLedger(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "a.txt")
+	store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
+	ws := state.NewWorkspaceState("fp1", ".", "copy")
+	ws.Paths["a.txt"] = state.PathOwnership{Store: fx.storeID, Type: "copy"}
+	if err := store.SaveWorkspace(fx.workspaceID, ws); err != nil {
+		t.Fatalf("seed workspace state: %v", err)
+	}
+
+	eng := fx.engine(t, nil, store)
+	journalPath, _, err := eng.overlayTxnPaths(fx.workspaceID)
+	if err != nil {
+		t.Fatalf("journal paths: %v", err)
+	}
+	if err := eng.writeOverlayTxn(journalPath, &overlayTxn{
+		Version:       overlayTxnVersion,
+		Kind:          overlayTxnApply,
+		WorkspaceID:   fx.workspaceID,
+		WorkspaceRoot: fx.repoRoot,
+		Phase:         overlayTxnPrepared,
+	}); err != nil {
+		t.Fatalf("write prepared journal: %v", err)
+	}
+
+	excludePath := filepath.Join(fx.repoRoot, ".git", "info", "exclude")
+	if err := os.MkdirAll(filepath.Dir(excludePath), 0700); err != nil {
+		t.Fatalf("create git info directory: %v", err)
+	}
+	if err := os.WriteFile(excludePath, []byte("# >>> monodev managed block — do not edit <<<\n/stale.txt\n# <<< monodev managed block <<<\n"), 0600); err != nil {
+		t.Fatalf("seed stale exclude block: %v", err)
+	}
+
+	warnings, err := eng.recoverWorkspaceOverlay(context.Background(), fx.workspaceID, fx.repoRoot, fx.repoRoot, ".")
+	if err != nil {
+		t.Fatalf("recover prepared journal: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("recovery warnings = %v, want none", warnings)
+	}
+	contents, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("read recovered exclude file: %v", err)
+	}
+	want := "# >>> monodev managed block — do not edit <<<\n/a.txt\n# <<< monodev managed block <<<\n"
+	if string(contents) != want {
+		t.Fatalf("recovered exclude file = %q, want %q", contents, want)
+	}
+}
+
 func runOverlayKind(t *testing.T, eng *Engine, fx overlayTxnFixture, kind string) error {
 	t.Helper()
 	switch kind {

@@ -15,6 +15,10 @@ type GitRepo interface {
 	// Discover finds the git repository root starting from cwd.
 	Discover(cwd string) (root string, err error)
 
+	// CommonGitDir resolves the shared git directory, including when root is a
+	// linked worktree whose .git entry is a file.
+	CommonGitDir(root string) (string, error)
+
 	// Fingerprint computes a stable fingerprint for the repository.
 	Fingerprint(root string) (string, error)
 
@@ -61,6 +65,26 @@ func (g *RealGitRepo) Discover(cwd string) (string, error) {
 		}
 		current = parent
 	}
+}
+
+// CommonGitDir returns the repository's shared git directory. Git owns the
+// indirection for linked worktrees, so do not infer this from root/.git.
+func (g *RealGitRepo) CommonGitDir(root string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
+	cmd.Dir = root
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve common git directory: %w", err)
+	}
+
+	gitDir := strings.TrimSpace(string(output))
+	if gitDir == "" {
+		return "", fmt.Errorf("git returned an empty common git directory")
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	return filepath.Clean(gitDir), nil
 }
 
 // Fingerprint computes a stable fingerprint for the repository.
@@ -228,6 +252,15 @@ func (g *FakeGitRepo) Discover(cwd string) (string, error) {
 		return "", g.err
 	}
 	return g.root, nil
+}
+
+// CommonGitDir returns the conventional metadata location beneath the fake
+// repository root.
+func (g *FakeGitRepo) CommonGitDir(root string) (string, error) {
+	if g.err != nil {
+		return "", g.err
+	}
+	return filepath.Join(root, ".git"), nil
 }
 
 // Fingerprint returns the predetermined fingerprint.

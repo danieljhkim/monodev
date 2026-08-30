@@ -58,10 +58,13 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	}
 
 	workspaceRoot := filepath.Join(root, workspacePath)
+	var warnings []string
 	if !req.DryRun {
-		if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
-			return nil, err
+		recoveryWarnings, recoverErr := e.recoverWorkspaceOverlay(ctx, workspaceID, root, workspaceRoot, workspacePath)
+		if recoverErr != nil {
+			return nil, recoverErr
 		}
+		warnings = append(warnings, recoveryWarnings...)
 		reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
 		if reloadErr != nil {
 			if os.IsNotExist(reloadErr) {
@@ -87,6 +90,7 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return &UnapplyResult{
 			Removed:     []string{},
 			WorkspaceID: workspaceID,
+			Warnings:    warnings,
 			message:     "nothing to remove",
 		}, nil
 	}
@@ -96,6 +100,7 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		return &UnapplyResult{
 			Removed:     activeStorePaths,
 			WorkspaceID: workspaceID,
+			Warnings:    warnings,
 			message:     "dry run",
 		}, nil
 	}
@@ -133,10 +138,16 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	}); err != nil {
 		return nil, err
 	}
+	finalExcludeState := final
+	if deleteState {
+		finalExcludeState = nil
+	}
+	warnings = appendExcludeWarning(warnings, e.syncManagedExcludes(root, workspacePath, finalExcludeState))
 
 	return &UnapplyResult{
 		Removed:     removed,
 		WorkspaceID: workspaceID,
+		Warnings:    warnings,
 	}, nil
 }
 

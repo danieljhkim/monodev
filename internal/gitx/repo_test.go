@@ -121,6 +121,47 @@ func TestRealGitRepo_Discover(t *testing.T) {
 	})
 }
 
+func TestRealGitRepo_CommonGitDir(t *testing.T) {
+	repo := NewRealGitRepo()
+	gitRoot := setupGitRepo(t)
+	defer func() { _ = os.RemoveAll(gitRoot) }()
+
+	if err := os.WriteFile(filepath.Join(gitRoot, "README.md"), []byte("initial\n"), 0600); err != nil {
+		t.Fatalf("write initial file: %v", err)
+	}
+	for _, args := range [][]string{{"add", "README.md"}, {"commit", "-m", "initial"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = gitRoot
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
+		}
+	}
+
+	worktree := t.TempDir()
+	cmd := exec.Command("git", "worktree", "add", "-b", "linked", worktree)
+	cmd.Dir = gitRoot
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, output)
+	}
+
+	gitDir, err := repo.CommonGitDir(worktree)
+	if err != nil {
+		t.Fatalf("CommonGitDir: %v", err)
+	}
+	want := filepath.Join(gitRoot, ".git")
+	gotInfo, err := os.Stat(gitDir)
+	if err != nil {
+		t.Fatalf("stat CommonGitDir result: %v", err)
+	}
+	wantInfo, err := os.Stat(want)
+	if err != nil {
+		t.Fatalf("stat expected git directory: %v", err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("CommonGitDir = %q, want %q", gitDir, want)
+	}
+}
+
 func TestRealGitRepo_Fingerprint(t *testing.T) {
 	repo := NewRealGitRepo()
 
