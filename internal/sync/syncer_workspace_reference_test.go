@@ -420,3 +420,92 @@ func TestSyncer_PullWorkspaceReferenceFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// TestSyncer_PullWorkspaceReferenceAcceptsEquivalentRepositoryIdentity covers
+// producers and consumers that spell the same remote differently. Restoring
+// must follow the documented remote-identity equivalence rules rather than
+// comparing the raw strings.
+func TestSyncer_PullWorkspaceReferenceAcceptsEquivalentRepositoryIdentity(t *testing.T) {
+	aliasBase := t.TempDir()
+	realRemote := filepath.Join(aliasBase, "real", "remote.git")
+	if err := os.MkdirAll(realRemote, 0755); err != nil {
+		t.Fatal(err)
+	}
+	aliasRemote := filepath.Join(aliasBase, "alias", "remote.git")
+	if err := os.Symlink(filepath.Join(aliasBase, "real"), filepath.Join(aliasBase, "alias")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name            string
+		pushedIdentity  string
+		pullingIdentity string
+	}{
+		{
+			name:            "ssh and https spellings",
+			pushedIdentity:  "git@example.test:team/repo.git",
+			pullingIdentity: "https://example.test/team/repo",
+		},
+		{
+			name:            "local remote reached through a filesystem alias",
+			pushedIdentity:  realRemote,
+			pullingIdentity: aliasRemote,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+			defer cleanup()
+			savePullRemoteConfig(t, repoRoot, configStore)
+
+			if err := storeRepo.Create("active-store", stores.NewStoreMeta("active", time.Now())); err != nil {
+				t.Fatal(err)
+			}
+
+			remoteWorkspaceID := "source-workspace"
+			if err := syncer.stateStore.SaveWorkspace(remoteWorkspaceID, &state.WorkspaceState{
+				Repo:          "source-only-fingerprint",
+				WorkspacePath: "services/api",
+				Mode:          "copy",
+				ActiveStore:   "active-store",
+				Paths:         map[string]state.PathOwnership{},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := syncer.PushStore(context.Background(), &PushRequest{
+				RepoRoot:           repoRoot,
+				StoreIDs:           []string{"active-store"},
+				WorkspaceID:        remoteWorkspaceID,
+				RepositoryIdentity: tt.pushedIdentity,
+				WithWorkspace:      true,
+				Remote:             "origin",
+			}); err != nil {
+				t.Fatalf("push workspace reference: %v", err)
+			}
+			if err := syncer.stateStore.DeleteWorkspace(remoteWorkspaceID); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := syncer.PullStore(context.Background(), &PullRequest{
+				RepoRoot:           repoRoot,
+				WorkspaceID:        remoteWorkspaceID,
+				LocalWorkspaceID:   "local-workspace",
+				RepoFingerprint:    "local-only-fingerprint",
+				RepositoryIdentity: tt.pullingIdentity,
+				WorkspacePath:      "services/api",
+			})
+			if err != nil {
+				t.Fatalf("pull workspace reference pushed as %q and pulled as %q: %v", tt.pushedIdentity, tt.pullingIdentity, err)
+			}
+			if !result.WorkspaceReferenceValidated || !result.PulledWorkspace {
+				t.Fatalf("workspace result = %#v, want validated and restored", result)
+			}
+			restored, err := syncer.stateStore.LoadWorkspace("local-workspace")
+			if err != nil {
+				t.Fatalf("load restored workspace: %v", err)
+			}
+			if restored.ActiveStore != "active-store" {
+				t.Errorf("restored ActiveStore = %q, want active-store", restored.ActiveStore)
+			}
+		})
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danieljhkim/monodev/internal/gitx"
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
@@ -147,7 +148,11 @@ func (s *Syncer) validateWorkspaceReference(req *PullRequest, ref *workspaceRefe
 	if err := s.fs.ValidateIdentifier(req.LocalWorkspaceID); err != nil {
 		return fmt.Errorf("invalid local workspace ID: %w", err)
 	}
-	if ref.Repo != req.RepositoryIdentity {
+	// Compare repository identities under the same equivalence rules workspace
+	// identity uses, so two spellings of one remote (ssh vs https, or a local
+	// path reached through a filesystem alias such as /tmp -> /private/tmp)
+	// restore, while unrelated repositories still fail closed.
+	if !gitx.SameRemoteIdentity(ref.Repo, req.RepositoryIdentity) {
 		return fmt.Errorf("workspace reference repository mismatch")
 	}
 	remoteWorkspacePath := filepath.Clean(ref.WorkspacePath)
