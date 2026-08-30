@@ -82,9 +82,10 @@ A **workspace** represents a specific directory within a repository where overla
   - the active store
   - which stores are currently applied
 - Workspace IDs are derived from:
-  - the repository fingerprint (hashed git remote URL)
+  - the repository fingerprint (durable repo ID, else a normalized git remote URL)
   - the relative path within the repo
 - Stored at: `.monodev/workspaces/<workspace-id>.json`
+- See [docs/workspace-identity.md](docs/workspace-identity.md) for the full rule, including multiple remotes, moved clones, and repair.
 
 > **In short:** stores define *what* dev artifacts exist, and workspaces define *where* and *when* they are applied.
 
@@ -146,7 +147,7 @@ monodev unapply # this will remove the overlays from the current dir
 
 When you invoke `monodev checkout <store-id>` under a specific directory within a repo, a workspace file is created in `.monodev/workspaces/<workspace-id>.json`. This file contains the metadata for the workspace, including the active store, the applied stores, and the tracked paths.
 
-The `workspace-id` is derived from the repo fingerprint (hashed git remote URL + absolute path) and the relative path to the workspace. So when you cd into to a different directory, you will not have an "active store" for that directory. And when you cd back to the original component directory, the active store is restored. 
+The `workspace-id` is derived from the repo fingerprint and the relative path to the workspace. The fingerprint prefers a durable repo ID written by `monodev init` (or on first use in a remote-less repo); otherwise it hashes a normalized remote URL (`git@host:org/repo` and `https://host/org/repo.git` are the same). The clone's absolute path is not part of the fingerprint, so moving a clone does not orphan workspace state. When you cd into a different directory, you will not have an "active store" for that directory. When you cd back to the original component directory, the active store is restored. If a remote change still orphans a workspace, `monodev workspace repair` lists and rebinds it. See [docs/workspace-identity.md](docs/workspace-identity.md). 
 
 When you invoke `monodev apply` with the active store, the overlays are applied to the current directory. This is done by creating copies of the tracked paths to the current directory.
 

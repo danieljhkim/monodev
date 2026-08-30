@@ -31,9 +31,8 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 	}
 	defer unlockWorkspace()
 
-	// Load workspace state (may not exist)
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
-	if err != nil && !os.IsNotExist(err) {
+	workspaceState, workspaceID, err := e.loadWorkspaceState(root, repoFingerprint, workspacePath)
+	if err != nil {
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
 	}
 

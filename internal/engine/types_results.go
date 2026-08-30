@@ -125,6 +125,36 @@ type DeleteWorkspaceResult struct {
 	PathsRemoved  int
 }
 
+// OrphanedWorkspace describes a workspace file that belongs to the current
+// repository but is stored under a fingerprint that no longer matches.
+type OrphanedWorkspace struct {
+	WorkspaceID      string
+	CurrentID        string
+	WorkspacePath    string
+	AbsolutePath     string
+	Repo             string
+	ActiveStore      string
+	Applied          bool
+	AppliedPathCount int
+}
+
+// ListOrphanedWorkspacesResult is the repair listing payload.
+type ListOrphanedWorkspacesResult struct {
+	RepoFingerprint string
+	RepoRoot        string
+	Orphans         []OrphanedWorkspace
+}
+
+// RebindWorkspaceResult is the outcome of rebinding an orphaned workspace.
+type RebindWorkspaceResult struct {
+	OldWorkspaceID string
+	NewWorkspaceID string
+	WorkspacePath  string
+	ActiveStore    string
+	Applied        bool
+	AppliedPaths   int
+}
+
 // DiffResult represents the result of a diff operation.
 type DiffResult struct {
 	// WorkspaceID is the workspace identifier
