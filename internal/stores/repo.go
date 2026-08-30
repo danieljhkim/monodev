@@ -6,7 +6,7 @@
 //
 // Key components:
 //   - StoreRepo: Interface for managing store lifecycle (create, load, delete)
-//   - StoreMeta: Store metadata (description, scope, timestamps)
+//   - StoreMeta: Store metadata (description, timestamps)
 //   - TrackFile: List of paths tracked by the store
 //   - Overlay directory: Contains the actual files managed by the store
 package stores

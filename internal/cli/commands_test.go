@@ -164,6 +164,48 @@ func TestStatusCommand_JSONOutput(t *testing.T) {
 	}
 }
 
+func TestCheckoutCommand_RemovedOwnerFlag(t *testing.T) {
+	resetCommandFlags(rootCmd)
+	rootCmd.SetArgs([]string{"checkout", "-n", "foo", "--owner", "bar"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for removed --owner flag")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "--owner") || !strings.Contains(strings.ToLower(msg), "removed") {
+		t.Fatalf("error = %q, want an error that names --owner as removed", msg)
+	}
+	if strings.Contains(msg, "unknown flag") {
+		t.Fatalf("error = %q, must not be a bare unknown-flag message", msg)
+	}
+}
+
+func TestCheckoutCommand_DescriptionRoundTripAndDescribeJSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+	runCLI(t, "init")
+	runCLI(t, "checkout", "-n", "foo", "--description", "x")
+
+	out := runCLI(t, "store", "describe", "foo")
+	if !strings.Contains(out, "x") {
+		t.Fatalf("describe output = %q, want description x", out)
+	}
+
+	jsonOut := runCLI(t, "store", "describe", "--json", "foo")
+	var parsed any
+	if err := json.Unmarshal([]byte(jsonOut), &parsed); err != nil {
+		t.Fatalf("describe --json is not JSON: %v\n%s", err, jsonOut)
+	}
+	lower := strings.ToLower(jsonOut)
+	for _, key := range []string{`"owner"`, `"taskid"`, `"scope"`} {
+		if strings.Contains(lower, key) {
+			t.Fatalf("describe --json contains %s: %s", key, jsonOut)
+		}
+	}
+}
+
 func TestCheckoutCommand_InvalidArgs(t *testing.T) {
 	workspaceDir, cleanup := setupTestEnv(t)
 	defer cleanup()
@@ -505,11 +547,11 @@ func TestCheckoutCommand_Flags(t *testing.T) {
 		wantError string
 	}{
 		{"new flag", []string{"checkout", "test-store", "--new"}, ""},
-		{"scope flag", []string{"checkout", "test-store", "--new", "--scope", "global"}, ""},
 		{"description flag", []string{"checkout", "test-store", "--new", "--description", "test desc"}, ""},
-		{"owner flag", []string{"checkout", "test-store", "--new", "--owner", "test-owner"}, ""},
-		{"task-id flag", []string{"checkout", "test-store", "--new", "--task-id", "DANI-1"}, ""},
-		{"all supported flags", []string{"checkout", "test-store", "--new", "--scope", "global", "--description", "test", "--owner", "owner", "--task-id", "DANI-1"}, ""},
+		{"all supported flags", []string{"checkout", "test-store", "--new", "--description", "test"}, ""},
+		{"removed scope flag", []string{"checkout", "test-store", "--new", "--scope", "global"}, "flag --scope has been removed"},
+		{"removed owner flag", []string{"checkout", "test-store", "--new", "--owner", "test-owner"}, "flag --owner has been removed"},
+		{"removed task-id flag", []string{"checkout", "test-store", "--new", "--task-id", "DANI-1"}, "flag --task-id has been removed"},
 		{"retired type flag", []string{"checkout", "test-store", "--new", "--type", "issue"}, "unknown flag: --type"},
 		{"retired priority flag", []string{"checkout", "test-store", "--new", "--priority", "high"}, "unknown flag: --priority"},
 	}
@@ -545,10 +587,10 @@ func TestStoreUpdateCommand_Flags(t *testing.T) {
 		args      []string
 		wantError string
 	}{
-		{"scope flag", []string{"store", "update", "test-store", "--scope", "global"}, ""},
 		{"description flag", []string{"store", "update", "test-store", "--description", "test desc"}, ""},
-		{"owner flag", []string{"store", "update", "test-store", "--owner", "test-owner"}, ""},
-		{"task-id flag", []string{"store", "update", "test-store", "--task-id", "DANI-1"}, ""},
+		{"removed scope flag", []string{"store", "update", "test-store", "--scope", "global"}, "flag --scope has been removed"},
+		{"removed owner flag", []string{"store", "update", "test-store", "--owner", "test-owner"}, "flag --owner has been removed"},
+		{"removed task-id flag", []string{"store", "update", "test-store", "--task-id", "DANI-1"}, "flag --task-id has been removed"},
 		{"retired status flag", []string{"store", "update", "test-store", "--status", "done"}, "unknown flag: --status"},
 	}
 
@@ -562,7 +604,8 @@ func TestStoreUpdateCommand_Flags(t *testing.T) {
 			}
 			defer func() { _ = os.Chdir(oldDir) }()
 
-			rootCmd.SetArgs([]string{"checkout", "test-store", "--new", "--scope", "global"})
+			resetCommandFlags(rootCmd)
+			rootCmd.SetArgs([]string{"checkout", "test-store", "--new"})
 			if err := rootCmd.Execute(); err != nil {
 				t.Fatalf("setup checkout error = %v", err)
 			}

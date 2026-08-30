@@ -33,22 +33,15 @@ Use -n to create a new store if it doesn't exist.`,
 
 		// Get flag values
 		createNew, _ := cmd.Flags().GetBool("new")
-		storeScope, _ := cmd.Flags().GetString("scope")
 		storeDesc, _ := cmd.Flags().GetString("description")
 
 		// If -n flag is set, create the store (which also sets it as active)
 		if createNew {
-			owner, _ := cmd.Flags().GetString("owner")
-			taskID, _ := cmd.Flags().GetString("task-id")
-
 			createReq := &engine.CreateStoreRequest{
 				CWD:         cwd,
 				StoreID:     storeID,
 				Name:        storeID,
-				Scope:       storeScope,
 				Description: storeDesc,
-				Owner:       owner,
-				TaskID:      taskID,
 			}
 			if err := eng.CreateStore(ctx, createReq); err != nil {
 				return fmt.Errorf("failed to create store: %w", err)
@@ -58,21 +51,16 @@ Use -n to create a new store if it doesn't exist.`,
 				result := struct {
 					StoreID     string `json:"storeId"`
 					Created     bool   `json:"created"`
-					Scope       string `json:"scope,omitempty"`
 					Description string `json:"description,omitempty"`
 				}{
 					StoreID:     storeID,
 					Created:     true,
-					Scope:       storeScope,
 					Description: storeDesc,
 				}
 				return outputJSON(result)
 			}
 
 			PrintSuccess(fmt.Sprintf("Created and activated store: %s", storeID))
-			if storeScope != "" {
-				PrintLabelValue("Scope", storeScope)
-			}
 			return nil
 		}
 
@@ -103,8 +91,5 @@ Use -n to create a new store if it doesn't exist.`,
 
 func init() {
 	checkoutCmd.Flags().BoolP("new", "n", false, "Create a new store")
-	checkoutCmd.Flags().String("scope", "", "Store scope (global or component; defaults to component if in repo, otherwise global)")
 	checkoutCmd.Flags().String("description", "", "Store description")
-	checkoutCmd.Flags().String("owner", "", "Store owner")
-	checkoutCmd.Flags().String("task-id", "", "External task ID")
 }

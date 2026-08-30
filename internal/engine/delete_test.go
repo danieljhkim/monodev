@@ -587,7 +587,7 @@ func TestDeleteStore_DryRun(t *testing.T) {
 func TestDeleteStore_ScopedComponentWorkspaceReferences(t *testing.T) {
 	eng, globalStateStore, componentStateStore, _, componentStoreRepo := newScopedDeleteStoreTestEngine(t)
 
-	if err := componentStoreRepo.Create("component-store", stores.NewStoreMeta("component-store", stores.ScopeComponent, time.Now())); err != nil {
+	if err := componentStoreRepo.Create("component-store", stores.NewStoreMeta("component-store", time.Now())); err != nil {
 		t.Fatalf("failed to create component store: %v", err)
 	}
 

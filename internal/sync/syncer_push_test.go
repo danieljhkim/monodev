@@ -22,7 +22,7 @@ func TestSyncer_PushStore(t *testing.T) {
 
 		// Create a test store
 		storeID := "test-store"
-		meta := stores.NewStoreMeta("Test Store", "global", time.Now())
+		meta := stores.NewStoreMeta("Test Store", time.Now())
 		if err := storeRepo.Create(storeID, meta); err != nil {
 			t.Fatalf("failed to create store: %v", err)
 		}
@@ -93,7 +93,7 @@ func TestSyncer_PushStore(t *testing.T) {
 		// Create multiple stores
 		for i := 1; i <= 3; i++ {
 			storeID := fmt.Sprintf("store-%d", i)
-			meta := stores.NewStoreMeta(fmt.Sprintf("Store %d", i), "global", time.Now())
+			meta := stores.NewStoreMeta(fmt.Sprintf("Store %d", i), time.Now())
 			if err := storeRepo.Create(storeID, meta); err != nil {
 				t.Fatalf("failed to create store %s: %v", storeID, err)
 			}
@@ -128,7 +128,7 @@ func TestSyncer_PushStore(t *testing.T) {
 
 		// Create a test store
 		storeID := "test-store"
-		meta := stores.NewStoreMeta("Test", "global", time.Now())
+		meta := stores.NewStoreMeta("Test", time.Now())
 		if err := storeRepo.Create(storeID, meta); err != nil {
 			t.Fatalf("failed to create store: %v", err)
 		}
@@ -204,7 +204,7 @@ func TestSyncer_PushStoreCancellationStopsBeforeLaterGitSteps(t *testing.T) {
 	defer cleanup()
 
 	storeID := "test-store"
-	if err := storeRepo.Create(storeID, stores.NewStoreMeta("Test Store", "global", time.Now())); err != nil {
+	if err := storeRepo.Create(storeID, stores.NewStoreMeta("Test Store", time.Now())); err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
 
@@ -247,7 +247,7 @@ func TestSyncer_PushStoreSecretScanAbortsBeforeCommitAndAllowsExplicitOverride(t
 			defer cleanup()
 
 			storeID := "secret-store"
-			if err := storeRepo.Create(storeID, stores.NewStoreMeta("Secret Store", "global", time.Now())); err != nil {
+			if err := storeRepo.Create(storeID, stores.NewStoreMeta("Secret Store", time.Now())); err != nil {
 				t.Fatalf("Create() error = %v", err)
 			}
 			secretPath := filepath.Join(storeRepo.OverlayRoot(storeID), ".env")

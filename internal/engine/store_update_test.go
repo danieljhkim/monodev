@@ -20,8 +20,6 @@ func TestCreateStore_WithMetadata(t *testing.T) {
 		Name:        "meta-store",
 		Scope:       stores.ScopeGlobal,
 		Description: "test desc",
-		Owner:       "alice",
-		TaskID:      "T-1",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -34,12 +32,6 @@ func TestCreateStore_WithMetadata(t *testing.T) {
 	if meta.SchemaVersion != 2 {
 		t.Errorf("SchemaVersion = %d, want 2", meta.SchemaVersion)
 	}
-	if meta.Owner != "alice" {
-		t.Errorf("Owner = %s, want 'alice'", meta.Owner)
-	}
-	if meta.TaskID != "T-1" {
-		t.Errorf("TaskID = %s, want 'T-1'", meta.TaskID)
-	}
 	if meta.Description != "test desc" {
 		t.Errorf("Description = %s, want 'test desc'", meta.Description)
 	}
@@ -48,36 +40,34 @@ func TestCreateStore_WithMetadata(t *testing.T) {
 func TestUpdateStore_Success(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	globalRepo.storeIDs["my-store"] = true
-	globalRepo.metas["my-store"] = stores.NewStoreMeta("my-store", stores.ScopeGlobal, time.Now())
+	globalRepo.metas["my-store"] = stores.NewStoreMeta("my-store", time.Now())
 
 	eng := newScopedTestEngine(globalRepo, nil)
 
-	newOwner := "bob"
+	newDesc := "updated"
 	err := eng.UpdateStore(context.Background(), &UpdateStoreRequest{
-		StoreID: "my-store",
-		Owner:   &newOwner,
+		StoreID:     "my-store",
+		Description: &newDesc,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	meta := globalRepo.metas["my-store"]
-	if meta.Owner != "bob" {
-		t.Errorf("Owner = %s, want 'bob'", meta.Owner)
+	if meta.Description != "updated" {
+		t.Errorf("Description = %s, want 'updated'", meta.Description)
 	}
 }
 
 func TestUpdateStore_PartialUpdate(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
-	meta := stores.NewStoreMeta("my-store", stores.ScopeGlobal, time.Now())
-	meta.Owner = "alice"
-	meta.TaskID = "T-42"
+	meta := stores.NewStoreMeta("my-store", time.Now())
+	meta.Name = "my-store"
 	globalRepo.storeIDs["my-store"] = true
 	globalRepo.metas["my-store"] = meta
 
 	eng := newScopedTestEngine(globalRepo, nil)
 
-	// Only update description; owner and task-id should be unchanged
 	newDesc := "updated description"
 	err := eng.UpdateStore(context.Background(), &UpdateStoreRequest{
 		StoreID:     "my-store",
@@ -91,12 +81,8 @@ func TestUpdateStore_PartialUpdate(t *testing.T) {
 	if updated.Description != "updated description" {
 		t.Errorf("Description = %s, want 'updated description'", updated.Description)
 	}
-	// Unchanged fields should remain
-	if updated.Owner != "alice" {
-		t.Errorf("Owner = %s, want 'alice' (unchanged)", updated.Owner)
-	}
-	if updated.TaskID != "T-42" {
-		t.Errorf("TaskID = %s, want 'T-42' (unchanged)", updated.TaskID)
+	if updated.Name != "my-store" {
+		t.Errorf("Name = %s, want 'my-store' (unchanged)", updated.Name)
 	}
 }
 
@@ -104,10 +90,10 @@ func TestUpdateStore_NotFound(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	eng := newScopedTestEngine(globalRepo, nil)
 
-	newOwner := "bob"
+	newDesc := "bob"
 	err := eng.UpdateStore(context.Background(), &UpdateStoreRequest{
-		StoreID: "nonexistent",
-		Owner:   &newOwner,
+		StoreID:     "nonexistent",
+		Description: &newDesc,
 	})
 	if err == nil {
 		t.Fatal("expected error for non-existent store")
@@ -141,7 +127,7 @@ func TestDescribeStore_TrackedPathsType(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	now := time.Now()
 	globalRepo.storeIDs["my-store"] = true
-	globalRepo.metas["my-store"] = stores.NewStoreMeta("my-store", stores.ScopeGlobal, now)
+	globalRepo.metas["my-store"] = stores.NewStoreMeta("my-store", now)
 	globalRepo.tracks["my-store"] = &stores.TrackFile{
 		SchemaVersion: 2,
 		Tracked: []stores.TrackedPath{

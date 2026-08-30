@@ -40,13 +40,10 @@ Deleting a store will:
 		ctx := context.Background()
 		storeID := args[0]
 
-		storeRmScope, _ := cmd.Flags().GetString("scope")
-
 		req := &engine.DeleteStoreRequest{
 			StoreID: storeID,
 			Force:   storeRmForce,
 			DryRun:  storeRmDryRun,
-			Scope:   storeRmScope,
 		}
 
 		result, err := eng.DeleteStore(ctx, req)
@@ -151,7 +148,6 @@ Deleting a store will:
 func init() {
 	storeRmCmd.Flags().BoolVarP(&storeRmForce, "force", "f", false, "Force deletion without confirmation")
 	storeRmCmd.Flags().BoolVar(&storeRmDryRun, "dry-run", false, "Show what would be deleted without deleting")
-	storeRmCmd.Flags().String("scope", "", "Scope to delete from (global or component)")
 }
 
 // promptConfirm prompts the user for a yes/no confirmation.
