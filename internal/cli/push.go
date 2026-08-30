@@ -39,7 +39,10 @@ Examples:
   monodev push my-store --dry-run
 
   # Force push (overwrite remote)
-  monodev push my-store --force`,
+  monodev push my-store --force
+
+  # Deliberately push after reviewing a secret-scan finding
+  monodev push my-store --allow-secrets`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runPush,
 }
@@ -49,6 +52,7 @@ var (
 	pushRemote        string
 	pushDryRun        bool
 	pushForce         bool
+	pushAllowSecrets  bool
 )
 
 func init() {
@@ -56,6 +60,7 @@ func init() {
 	pushCmd.Flags().StringVar(&pushRemote, "remote", "", "Git remote to push to (defaults to configured remote)")
 	pushCmd.Flags().BoolVar(&pushDryRun, "dry-run", false, "Show what would be pushed without actually pushing")
 	pushCmd.Flags().BoolVar(&pushForce, "force", false, "Force push (overwrite remote changes)")
+	pushCmd.Flags().BoolVar(&pushAllowSecrets, "allow-secrets", false, "Push even when the plaintext persistence payload contains detected secrets")
 }
 
 func runPush(cmd *cobra.Command, args []string) error {
@@ -82,6 +87,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		Remote:        pushRemote,
 		DryRun:        pushDryRun,
 		Force:         pushForce,
+		AllowSecrets:  pushAllowSecrets,
 	}
 	if pushWithWorkspace {
 		cwd, err := os.Getwd()

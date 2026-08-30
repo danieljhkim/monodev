@@ -1,11 +1,13 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,4 +231,95 @@ func TestSyncer_PushStoreCancellationStopsBeforeLaterGitSteps(t *testing.T) {
 	if len(git.SetRemoteCalls) != 0 || len(git.CommitCalls) != 0 || len(git.PushCalls) != 0 {
 		t.Fatalf("later git calls ran after cancellation: set=%d commit=%d push=%d", len(git.SetRemoteCalls), len(git.CommitCalls), len(git.PushCalls))
 	}
+}
+
+func TestSyncer_PushStoreSecretScanAbortsBeforeCommitAndAllowsExplicitOverride(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		allowSecrets bool
+		wantError    bool
+	}{
+		{name: "blocks detected secret", wantError: true},
+		{name: "allows explicit override", allowSecrets: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repoRoot, _, syncer, git, storeRepo, _, cleanup := setupSyncerTest(t)
+			defer cleanup()
+
+			storeID := "secret-store"
+			if err := storeRepo.Create(storeID, stores.NewStoreMeta("Secret Store", "global", time.Now())); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			secretPath := filepath.Join(storeRepo.OverlayRoot(storeID), ".env")
+			if err := os.WriteFile(secretPath, []byte("AWS_ACCESS_KEY_ID="+syntheticAWSAccessKey+"\n"), 0600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			var err error
+			stdout, stderr := captureStandardStreams(t, func() {
+				_, err = syncer.PushStore(context.Background(), &PushRequest{
+					RepoRoot:     repoRoot,
+					StoreIDs:     []string{storeID},
+					Remote:       "origin",
+					AllowSecrets: testCase.allowSecrets,
+				})
+				if err != nil {
+					// This is the same error-to-stderr boundary used by cmd/monodev.
+					fmt.Fprintln(os.Stderr, err)
+				}
+			})
+			if testCase.wantError {
+				if err == nil {
+					t.Fatal("PushStore() error = nil, want secret scan failure")
+				}
+				if got := err.Error(); !strings.Contains(got, "secret-store/overlay/.env:1") || !strings.Contains(got, "aws-access-key") || !strings.Contains(got, secretMask) {
+					t.Fatalf("PushStore() error = %q, want file, line, rule, and mask", got)
+				}
+				if strings.Contains(err.Error(), syntheticAWSAccessKey) {
+					t.Fatalf("PushStore() error leaked raw secret: %q", err)
+				}
+				if strings.Contains(stdout, syntheticAWSAccessKey) || strings.Contains(stderr, syntheticAWSAccessKey) {
+					t.Fatalf("stdout/stderr leaked raw secret: stdout=%q stderr=%q", stdout, stderr)
+				}
+				if len(git.CommitCalls) != 0 || len(git.PushCalls) != 0 {
+					t.Fatalf("secret scan created persistence history: commits=%d pushes=%d", len(git.CommitCalls), len(git.PushCalls))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("PushStore() error = %v, want nil with AllowSecrets", err)
+			}
+			if len(git.CommitCalls) != 1 || len(git.PushCalls) != 1 {
+				t.Fatalf("explicit override did not commit and push: commits=%d pushes=%d", len(git.CommitCalls), len(git.PushCalls))
+			}
+		})
+	}
+}
+
+func captureStandardStreams(t *testing.T, fn func()) (stdout, stderr string) {
+	t.Helper()
+	oldStdout, oldStderr := os.Stdout, os.Stderr
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	stderrReader, stderrWriter, err := os.Pipe()
+	if err != nil {
+		_ = stdoutReader.Close()
+		_ = stdoutWriter.Close()
+		t.Fatalf("stderr pipe: %v", err)
+	}
+
+	os.Stdout, os.Stderr = stdoutWriter, stderrWriter
+	fn()
+	_ = stdoutWriter.Close()
+	_ = stderrWriter.Close()
+	os.Stdout, os.Stderr = oldStdout, oldStderr
+
+	var stdoutBuffer, stderrBuffer bytes.Buffer
+	_, _ = stdoutBuffer.ReadFrom(stdoutReader)
+	_, _ = stderrBuffer.ReadFrom(stderrReader)
+	_ = stdoutReader.Close()
+	_ = stderrReader.Close()
+	return stdoutBuffer.String(), stderrBuffer.String()
 }

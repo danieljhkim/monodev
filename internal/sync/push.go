@@ -87,6 +87,20 @@ func (s *Syncer) pushStore(ctx context.Context, req *PushRequest) (*PushResult, 
 		}
 	}
 
+	// The persistence branch is plaintext. Scan the complete materialized
+	// payload immediately before committing so accidental credentials never
+	// become part of its history. This is a guardrail, not confidentiality.
+	if !req.DryRun && !req.AllowSecrets {
+		if err := checkContext(ctx); err != nil {
+			return nil, err
+		}
+		if finding, err := scanPersistedStores(filepath.Join(req.RepoRoot, ".monodev", "persist", "stores")); err != nil {
+			return nil, fmt.Errorf("failed to scan persistence payload: %w", err)
+		} else if finding != nil {
+			return nil, newSecretScanError(*finding)
+		}
+	}
+
 	// Build commit message
 	commitMessage := s.buildPushCommitMessage(pushedStores, pushedWorkspace)
 
