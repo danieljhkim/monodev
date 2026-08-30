@@ -59,6 +59,10 @@ Paths applied by the stack are not affected - use 'stack unapply' for that.`,
 			return nil
 		}
 
+		for _, warning := range result.Warnings {
+			PrintWarning(warning)
+		}
+
 		PrintSuccess(fmt.Sprintf("Removed %s successfully", PrintCount(len(result.Removed), "path", "paths")))
 		return nil
 	},

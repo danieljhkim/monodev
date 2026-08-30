@@ -153,6 +153,23 @@ func (e *Engine) recoverOverlayTxn(ctx context.Context, workspaceID, workspaceRo
 	}
 }
 
+// recoverWorkspaceOverlay finishes any interrupted overlay mutation, then
+// repairs the best-effort git exclusion block from the durable ledger.
+func (e *Engine) recoverWorkspaceOverlay(ctx context.Context, workspaceID, repoRoot, workspaceRoot, workspacePath string) ([]string, error) {
+	if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
+		return nil, err
+	}
+
+	ws, err := e.stateStore.LoadWorkspace(workspaceID)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to reload workspace state after recovery: %w", err)
+	}
+	if os.IsNotExist(err) {
+		return appendExcludeWarning(nil, e.syncManagedExcludes(repoRoot, workspacePath, nil)), nil
+	}
+	return appendExcludeWarning(nil, e.syncManagedExcludes(repoRoot, ws.WorkspacePath, ws)), nil
+}
+
 func (e *Engine) commitOverlayTxnState(workspaceID string, txn *overlayTxn) error {
 	if txn.DeleteState {
 		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {

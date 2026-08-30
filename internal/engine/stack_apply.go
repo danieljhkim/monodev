@@ -32,10 +32,13 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
 	workspaceRoot := filepath.Join(root, workspacePath)
+	var excludeWarnings []string
 	if !req.DryRun {
-		if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
-			return nil, err
+		recoveryWarnings, recoverErr := e.recoverWorkspaceOverlay(ctx, workspaceID, root, workspaceRoot, workspacePath)
+		if recoverErr != nil {
+			return nil, recoverErr
 		}
+		excludeWarnings = append(excludeWarnings, recoveryWarnings...)
 		reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
 		if reloadErr == nil {
 			workspaceState = reloaded
@@ -87,6 +90,7 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 	if err != nil {
 		return nil, fmt.Errorf("failed to build apply plan: %w", err)
 	}
+	plan.Warnings = append(plan.Warnings, excludeWarnings...)
 
 	// Check for conflicts
 	if plan.HasConflicts() && !req.Force {
@@ -111,6 +115,7 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 	}
 
 	appliedOps := append([]planner.Operation{}, plan.Operations...)
+	var finalState *state.WorkspaceState
 	if err := e.runOverlayTxn(ctx, overlayTxnRequest{
 		kind:          overlayTxnStackApply,
 		workspaceID:   workspaceID,
@@ -129,11 +134,13 @@ func (e *Engine) StackApply(ctx context.Context, req *StackApplyRequest) (*Stack
 				}
 			}
 			final.RefreshAppliedStores()
+			finalState = final
 			return final, false, nil
 		},
 	}); err != nil {
 		return nil, err
 	}
+	plan.Warnings = appendExcludeWarning(plan.Warnings, e.syncManagedExcludes(root, workspacePath, finalState))
 
 	return &StackApplyResult{
 		Plan:            plan,
@@ -165,10 +172,13 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}
 	workspaceRoot := filepath.Join(root, workspacePath)
+	var warnings []string
 	if !req.DryRun {
-		if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
-			return nil, err
+		recoveryWarnings, recoverErr := e.recoverWorkspaceOverlay(ctx, workspaceID, root, workspaceRoot, workspacePath)
+		if recoverErr != nil {
+			return nil, recoverErr
 		}
+		warnings = append(warnings, recoveryWarnings...)
 		reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
 		if reloadErr == nil {
 			workspaceState = reloaded
@@ -200,6 +210,7 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		return &StackUnapplyResult{
 			Removed:     []string{},
 			WorkspaceID: workspaceID,
+			Warnings:    warnings,
 		}, nil
 	}
 
@@ -207,6 +218,7 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 		return &StackUnapplyResult{
 			Removed:     stackPaths,
 			WorkspaceID: workspaceID,
+			Warnings:    warnings,
 		}, nil
 	}
 
@@ -232,9 +244,11 @@ func (e *Engine) StackUnapply(ctx context.Context, req *StackUnapplyRequest) (*S
 	}); err != nil {
 		return nil, err
 	}
+	warnings = appendExcludeWarning(warnings, e.syncManagedExcludes(root, workspacePath, final))
 
 	return &StackUnapplyResult{
 		Removed:     removed,
 		WorkspaceID: workspaceID,
+		Warnings:    warnings,
 	}, nil
 }

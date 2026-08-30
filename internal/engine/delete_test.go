@@ -99,7 +99,10 @@ func (m *mockFS) ValidateIdentifier(id string) error                           {
 
 type mockGitRepo struct{}
 
-func (m *mockGitRepo) Discover(path string) (string, error)          { return "", nil }
+func (m *mockGitRepo) Discover(path string) (string, error) { return "", nil }
+func (m *mockGitRepo) CommonGitDir(root string) (string, error) {
+	return filepath.Join(root, ".git"), nil
+}
 func (m *mockGitRepo) Fingerprint(repoRoot string) (string, error)   { return "", nil }
 func (m *mockGitRepo) RelPath(repoRoot, path string) (string, error) { return "", nil }
 func (m *mockGitRepo) GetFingerprintComponents(root string) (string, string, error) {
