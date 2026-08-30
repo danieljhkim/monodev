@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"sort"
 	"time"
 )
@@ -8,6 +9,9 @@ import (
 // WorkspaceState represents the state of overlays applied to a workspace.
 // This is the authoritative record of what monodev has modified in a workspace.
 type WorkspaceState struct {
+	// SchemaVersion identifies the on-disk workspace-state format.
+	SchemaVersion int `json:"schemaVersion"`
+
 	// Repo is the fingerprint of the git repository
 	Repo string `json:"repo"`
 
@@ -25,7 +29,7 @@ type WorkspaceState struct {
 
 	// Stack is the deprecated ordered store list from the retired stack command.
 	// Migrated into AppliedStores on load; kept so old workspace JSON still unmarshals.
-	Stack []string `json:"stack"`
+	Stack []string `json:"stack,omitempty"`
 
 	// AppliedStores is the list of stores that have been applied
 	AppliedStores []AppliedStore `json:"appliedStores"`
@@ -38,6 +42,65 @@ type WorkspaceState struct {
 
 	// Paths maps destination paths to their ownership information
 	Paths map[string]PathOwnership `json:"paths"`
+
+	// opaqueFields holds top-level keys from a state file that this binary does
+	// not model. Keeping them through a load/save cycle lets migrations avoid
+	// destroying extension data owned by another release.
+	opaqueFields map[string]json.RawMessage
+}
+
+var workspaceStateKnownFields = map[string]struct{}{
+	"schemaVersion":    {},
+	"repo":             {},
+	"workspacePath":    {},
+	"absolutePath":     {},
+	"applied":          {},
+	"mode":             {},
+	"stack":            {},
+	"appliedStores":    {},
+	"activeStore":      {},
+	"activeStoreScope": {},
+	"paths":            {},
+}
+
+// UnmarshalJSON records opaque top-level fields so a later state save does
+// not erase data outside the schema this binary understands.
+func (ws *WorkspaceState) UnmarshalJSON(data []byte) error {
+	type workspaceStateAlias WorkspaceState
+	var decoded workspaceStateAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for field := range workspaceStateKnownFields {
+		delete(fields, field)
+	}
+	decoded.opaqueFields = fields
+	*ws = WorkspaceState(decoded)
+	return nil
+}
+
+// MarshalJSON writes opaque top-level fields back unchanged unless the
+// current schema now owns their names.
+func (ws WorkspaceState) MarshalJSON() ([]byte, error) {
+	type workspaceStateAlias WorkspaceState
+	data, err := json.Marshal(workspaceStateAlias(ws))
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	for field, value := range ws.opaqueFields {
+		if _, owned := fields[field]; !owned {
+			fields[field] = value
+		}
+	}
+	return json.Marshal(fields)
 }
 
 type AppliedStore struct {
@@ -76,6 +139,7 @@ type DirContents struct {
 // NewWorkspaceState creates a new empty WorkspaceState.
 func NewWorkspaceState(repo, workspacePath, mode string) *WorkspaceState {
 	return &WorkspaceState{
+		SchemaVersion: WorkspaceSchemaVersion,
 		Repo:          repo,
 		WorkspacePath: workspacePath,
 		Applied:       false,
@@ -94,6 +158,12 @@ func CloneWorkspaceState(ws *WorkspaceState) *WorkspaceState {
 		return nil
 	}
 	clone := *ws
+	if ws.opaqueFields != nil {
+		clone.opaqueFields = make(map[string]json.RawMessage, len(ws.opaqueFields))
+		for field, value := range ws.opaqueFields {
+			clone.opaqueFields[field] = append(json.RawMessage(nil), value...)
+		}
+	}
 	if ws.Stack != nil {
 		clone.Stack = append([]string{}, ws.Stack...)
 	}

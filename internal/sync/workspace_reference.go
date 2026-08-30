@@ -122,6 +122,10 @@ func (s *Syncer) loadWorkspaceReference(req *PullRequest) (*workspaceReference, 
 		}
 		return nil, false, fmt.Errorf("failed to read workspace reference %q: %w", req.WorkspaceID, err)
 	}
+	refPath := workspaceReferencePath(req.RepoRoot, req.WorkspaceID)
+	if _, err := state.CheckSchemaVersion(refPath, data, workspaceReferenceSchemaVersion); err != nil {
+		return nil, true, err
+	}
 
 	var ref workspaceReference
 	if err := json.Unmarshal(data, &ref); err != nil {
@@ -134,9 +138,6 @@ func (s *Syncer) loadWorkspaceReference(req *PullRequest) (*workspaceReference, 
 }
 
 func (s *Syncer) validateWorkspaceReference(req *PullRequest, ref *workspaceReference) error {
-	if ref.SchemaVersion != workspaceReferenceSchemaVersion {
-		return fmt.Errorf("unsupported workspace reference schema version %d", ref.SchemaVersion)
-	}
 	if ref.WorkspaceID != req.WorkspaceID {
 		return fmt.Errorf("workspace reference identity mismatch: requested %q, found %q", req.WorkspaceID, ref.WorkspaceID)
 	}

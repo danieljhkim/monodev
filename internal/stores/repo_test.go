@@ -323,7 +323,7 @@ func TestFileStoreRepo_LoadMeta(t *testing.T) {
 		}
 	})
 
-	t.Run("loads pre-removal meta.json and ignores owner, taskId, and scope", func(t *testing.T) {
+	t.Run("loads pre-change meta.json and ignores retired metadata", func(t *testing.T) {
 		tmpDir, repo := setupStoresDir(t)
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
@@ -365,6 +365,70 @@ func TestFileStoreRepo_LoadMeta(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestFileStoreRepo_LoadsLegacyTrackAndRejectsFutureSchemas(t *testing.T) {
+	tmpDir, repo := setupStoresDir(t)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	storeID := "legacy-track"
+	storeDir := filepath.Join(tmpDir, storeID)
+	if err := os.MkdirAll(storeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(filepath.Join("testdata", "legacy_track.json"))
+	if err != nil {
+		t.Fatalf("read legacy track fixture: %v", err)
+	}
+	trackPath := filepath.Join(storeDir, "track.json")
+	if err := os.WriteFile(trackPath, fixture, 0600); err != nil {
+		t.Fatalf("write legacy track fixture: %v", err)
+	}
+	track, err := repo.LoadTrack(storeID)
+	if err != nil {
+		t.Fatalf("LoadTrack() legacy fixture: %v", err)
+	}
+	if track.SchemaVersion != trackFileSchemaVersion || len(track.Tracked) != 1 || track.Tracked[0].Path != "scripts/setup.sh" {
+		t.Fatalf("LoadTrack() = %#v, want pre-change fixture", track)
+	}
+
+	for _, tt := range []struct {
+		name string
+		path string
+		load func() error
+	}{
+		{
+			name: "meta",
+			path: filepath.Join(storeDir, "meta.json"),
+			load: func() error {
+				_, err := repo.LoadMeta(storeID)
+				return err
+			},
+		},
+		{
+			name: "track",
+			path: trackPath,
+			load: func() error {
+				_, err := repo.LoadTrack(storeID)
+				return err
+			},
+		},
+	} {
+		t.Run("rejects future "+tt.name, func(t *testing.T) {
+			if err := os.WriteFile(tt.path, []byte(`{"schemaVersion":3}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err := tt.load()
+			if err == nil {
+				t.Fatal("load error = nil, want future schema refusal")
+			}
+			for _, want := range []string{tt.path, "schemaVersion 3", "supported schemaVersion 2", "upgrade monodev"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("load error = %q, want %q", err, want)
+				}
+			}
+		})
+	}
 }
 
 func TestFileStoreRepo_SaveMeta(t *testing.T) {

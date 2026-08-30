@@ -21,6 +21,7 @@ import (
 
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/lockfile"
+	"github.com/danieljhkim/monodev/internal/state"
 )
 
 // ErrLockUnsupported lets composite repositories preserve optional locking
@@ -168,6 +169,9 @@ func (r *FileStoreRepo) LoadMeta(id string) (*StoreMeta, error) {
 		}
 		return nil, fmt.Errorf("failed to read meta file: %w", err)
 	}
+	if _, err := state.CheckSchemaVersion(metaPath, data, storeMetaSchemaVersion); err != nil {
+		return nil, err
+	}
 
 	var meta StoreMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
@@ -185,6 +189,7 @@ func (r *FileStoreRepo) SaveMeta(id string, meta *StoreMeta) error {
 	}
 
 	metaPath := filepath.Join(r.storesDir, id, "meta.json")
+	meta.SchemaVersion = storeMetaSchemaVersion
 
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -215,6 +220,9 @@ func (r *FileStoreRepo) LoadTrack(id string) (*TrackFile, error) {
 		}
 		return nil, fmt.Errorf("failed to read track file: %w", err)
 	}
+	if _, err := state.CheckSchemaVersion(trackPath, data, trackFileSchemaVersion); err != nil {
+		return nil, err
+	}
 
 	var track TrackFile
 	if err := json.Unmarshal(data, &track); err != nil {
@@ -232,6 +240,7 @@ func (r *FileStoreRepo) SaveTrack(id string, track *TrackFile) error {
 	}
 
 	trackPath := filepath.Join(r.storesDir, id, "track.json")
+	track.SchemaVersion = trackFileSchemaVersion
 
 	data, err := json.MarshalIndent(track, "", "  ")
 	if err != nil {

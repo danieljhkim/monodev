@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/state"
 )
 
 const (
@@ -19,11 +20,16 @@ const (
 
 	// RemoteConfigFileName is the name of the remote config file
 	RemoteConfigFileName = "remote.json"
+
+	remoteConfigSchemaVersion = 1
 )
 
 // RemoteConfig represents the configuration for remote persistence operations.
 // It's stored repo-locally at .monodev/remote.json.
 type RemoteConfig struct {
+	// SchemaVersion identifies the on-disk remote configuration format.
+	SchemaVersion int `json:"schemaVersion"`
+
 	// Remote is the name of the Git remote to use (e.g., "origin")
 	Remote string `json:"remote"`
 
@@ -37,9 +43,10 @@ type RemoteConfig struct {
 // DefaultRemoteConfig returns a RemoteConfig with default values.
 func DefaultRemoteConfig() *RemoteConfig {
 	return &RemoteConfig{
-		Remote:    DefaultRemoteName,
-		Branch:    DefaultBranch,
-		UpdatedAt: time.Now(),
+		SchemaVersion: remoteConfigSchemaVersion,
+		Remote:        DefaultRemoteName,
+		Branch:        DefaultBranch,
+		UpdatedAt:     time.Now(),
 	}
 }
 
@@ -82,6 +89,9 @@ func (s *FileRemoteConfigStore) Load(repoRoot string) (*RemoteConfig, error) {
 		}
 		return nil, fmt.Errorf("failed to read remote config: %w", err)
 	}
+	if _, err := state.CheckSchemaVersion(path, data, remoteConfigSchemaVersion); err != nil {
+		return nil, err
+	}
 
 	var config RemoteConfig
 	if err := json.Unmarshal(data, &config); err != nil {
@@ -94,6 +104,7 @@ func (s *FileRemoteConfigStore) Load(repoRoot string) (*RemoteConfig, error) {
 // Save writes the remote configuration to disk using atomic writes.
 func (s *FileRemoteConfigStore) Save(repoRoot string, config *RemoteConfig) error {
 	path := s.configPath(repoRoot)
+	config.SchemaVersion = remoteConfigSchemaVersion
 
 	// Ensure the directory exists
 	dir := filepath.Dir(path)

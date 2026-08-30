@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -362,6 +363,72 @@ func TestOverlayTxn_SuccessfulApplyIsCoherent(t *testing.T) {
 	}
 }
 
+func TestOverlayTxn_LoadsLegacyFixtureAndRejectsFutureSchema(t *testing.T) {
+	fx := newOverlayTxnFixture(t)
+	eng := fx.engine(t, nil, state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir))
+	journalPath, _, err := eng.overlayTxnPaths(fx.workspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(journalPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(filepath.Join("testdata", "legacy_overlay_transaction.json"))
+	if err != nil {
+		t.Fatalf("read legacy journal fixture: %v", err)
+	}
+	if err := os.WriteFile(journalPath, fixture, 0600); err != nil {
+		t.Fatalf("write legacy journal fixture: %v", err)
+	}
+	txn, err := eng.loadOverlayTxn(journalPath)
+	if err != nil {
+		t.Fatalf("load legacy journal fixture: %v", err)
+	}
+	if txn.SchemaVersion != overlayTxnSchemaVersion || txn.Kind != overlayTxnApply || txn.Phase != overlayTxnPreparing {
+		t.Fatalf("load legacy journal = %#v", txn)
+	}
+	first, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(first, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := raw["version"]; exists {
+		t.Fatalf("migrated journal retains legacy version header: %s", first)
+	}
+	var extension struct {
+		Keep bool `json:"keep"`
+	}
+	if err := json.Unmarshal(raw["legacyExtension"], &extension); err != nil || !extension.Keep {
+		t.Fatalf("migrated journal lost unrecognized data: %s", first)
+	}
+	if _, err := eng.loadOverlayTxn(journalPath); err != nil {
+		t.Fatalf("second legacy journal load: %v", err)
+	}
+	second, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(second) != string(first) {
+		t.Fatalf("journal migration is not idempotent:\nfirst:  %s\nsecond: %s", first, second)
+	}
+
+	if err := os.WriteFile(journalPath, []byte(`{"schemaVersion":3}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = eng.loadOverlayTxn(journalPath)
+	if err == nil {
+		t.Fatal("load future journal error = nil, want refusal")
+	}
+	for _, want := range []string{journalPath, "schemaVersion 3", "supported schemaVersion 2", "upgrade monodev"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("load future journal error = %q, want %q", err, want)
+		}
+	}
+}
+
 func TestOverlayTxn_PreparedRecoverySynchronizesExcludeLedger(t *testing.T) {
 	fx := newOverlayTxnFixture(t, "a.txt")
 	store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
@@ -377,7 +444,7 @@ func TestOverlayTxn_PreparedRecoverySynchronizesExcludeLedger(t *testing.T) {
 		t.Fatalf("journal paths: %v", err)
 	}
 	if err := eng.writeOverlayTxn(journalPath, &overlayTxn{
-		Version:       overlayTxnVersion,
+		SchemaVersion: overlayTxnSchemaVersion,
 		Kind:          overlayTxnApply,
 		WorkspaceID:   fx.workspaceID,
 		WorkspaceRoot: fx.repoRoot,

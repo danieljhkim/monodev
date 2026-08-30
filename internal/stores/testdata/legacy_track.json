@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "tracked": [
+    {
+      "path": "scripts/setup.sh",
+      "kind": "file",
+      "role": "script",
+      "description": "written by the pre-schema-compatibility release"
+    }
+  ],
+  "ignore": [".cache"]
+}

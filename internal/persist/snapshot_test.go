@@ -644,6 +644,54 @@ func TestSnapshotManager_Verify(t *testing.T) {
 	})
 }
 
+func TestSnapshotManager_VerifyLegacyManifestFixtureAndRejectsFutureSchema(t *testing.T) {
+	storesDir, persistRoot, _, _, mgr := setupTestEnv(t)
+	defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+	storeID := "legacy-store"
+	storePath := persistStoreDir(persistRoot, storeID)
+	if err := os.MkdirAll(storePath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"meta.json", "track.json"} {
+		source := filepath.Join("..", "stores", "testdata", "legacy_"+strings.TrimSuffix(file, ".json")+".json")
+		data, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatalf("read legacy %s fixture: %v", file, err)
+		}
+		if err := os.WriteFile(filepath.Join(storePath, file), data, 0600); err != nil {
+			t.Fatalf("write legacy %s fixture: %v", file, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(storePath, "overlay"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(filepath.Join("testdata", "legacy_verification_manifest.json"))
+	if err != nil {
+		t.Fatalf("read legacy verification manifest fixture: %v", err)
+	}
+	manifestPath := filepath.Join(storePath, verificationManifestName)
+	if err := os.WriteFile(manifestPath, fixture, 0600); err != nil {
+		t.Fatalf("write legacy verification manifest fixture: %v", err)
+	}
+	if err := mgr.Verify(storeID, persistRoot, hash.NewSHA256Hasher()); err != nil {
+		t.Fatalf("Verify() legacy manifest fixture: %v", err)
+	}
+
+	if err := os.WriteFile(manifestPath, []byte(`{"schemaVersion":2}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err = mgr.Verify(storeID, persistRoot, hash.NewSHA256Hasher())
+	if err == nil {
+		t.Fatal("Verify() error = nil, want future schema refusal")
+	}
+	for _, want := range []string{manifestPath, "schemaVersion 2", "supported schemaVersion 1", "upgrade monodev"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Verify() error = %q, want %q", err, want)
+		}
+	}
+}
+
 func TestSnapshotManager_ListPersistedStores(t *testing.T) {
 	t.Run("returns empty list when persist directory does not exist", func(t *testing.T) {
 		storesDir, persistRoot, _, _, mgr := setupTestEnv(t)

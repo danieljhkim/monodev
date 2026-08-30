@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "workspaceID": "legacy-workspace",
+  "repo": "git@example.test:team/repo.git",
+  "workspacePath": ".",
+  "absolutePath": "/old-machine/checkout",
+  "applied": true,
+  "mode": "copy",
+  "activeStore": "active-store",
+  "activeStoreScope": "global",
+  "stack": [],
+  "appliedStores": [],
+  "pathOwnership": {"count": 0, "paths": []},
+  "generatedAt": "2025-03-04T05:06:07Z"
+}

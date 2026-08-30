@@ -291,6 +291,38 @@ func TestSyncer_PullWorkspaceReferenceRestoresPortableLocalState(t *testing.T) {
 	}
 }
 
+func TestSyncer_LoadsLegacyWorkspaceReferenceFixture(t *testing.T) {
+	repoRoot, _, syncer, _, _, _, cleanup := setupSyncerTest(t)
+	defer cleanup()
+
+	workspaceID := "legacy-workspace"
+	path := workspaceReferencePath(repoRoot, workspaceID)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(filepath.Join("testdata", "legacy_workspace_reference.json"))
+	if err != nil {
+		t.Fatalf("read legacy workspace-reference fixture: %v", err)
+	}
+	if err := os.WriteFile(path, fixture, 0600); err != nil {
+		t.Fatalf("write legacy workspace-reference fixture: %v", err)
+	}
+	ref, found, err := syncer.loadWorkspaceReference(&PullRequest{
+		RepoRoot:           repoRoot,
+		WorkspaceID:        workspaceID,
+		LocalWorkspaceID:   "local-workspace",
+		RepoFingerprint:    "local-fingerprint",
+		RepositoryIdentity: "git@example.test:team/repo.git",
+		WorkspacePath:      ".",
+	})
+	if err != nil || !found {
+		t.Fatalf("loadWorkspaceReference() = %#v, %v, want legacy fixture", ref, err)
+	}
+	if ref.SchemaVersion != workspaceReferenceSchemaVersion || ref.ActiveStore != "active-store" {
+		t.Fatalf("workspace reference = %#v, want legacy fixture", ref)
+	}
+}
+
 func TestSyncer_PullWorkspaceReferenceFailsClosed(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
@@ -301,7 +333,7 @@ func TestSyncer_PullWorkspaceReferenceFailsClosed(t *testing.T) {
 		{
 			name:      "unknown schema",
 			mutate:    func(ref *workspaceReference) { ref.SchemaVersion++ },
-			wantError: "unsupported workspace reference schema version",
+			wantError: "upgrade monodev",
 		},
 		{
 			name:      "repository mismatch",
@@ -368,6 +400,13 @@ func TestSyncer_PullWorkspaceReferenceFailsClosed(t *testing.T) {
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 				t.Fatalf("PullStore error = %v, want %q", err, tt.wantError)
+			}
+			if tt.name == "unknown schema" {
+				for _, want := range []string{refPath, "schemaVersion 2", "supported schemaVersion 1", "upgrade monodev"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("PullStore error = %q, want %q", err, want)
+					}
+				}
 			}
 
 			stateAfter, loadErr := syncer.stateStore.LoadWorkspace(localWorkspaceID)

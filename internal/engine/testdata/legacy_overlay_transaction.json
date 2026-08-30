@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "kind": "apply",
+  "workspaceId": "legacy-workspace",
+  "workspaceRoot": "/tmp/legacy-workspace",
+  "phase": "preparing",
+  "ops": [],
+  "legacyExtension": {"keep": true}
+}

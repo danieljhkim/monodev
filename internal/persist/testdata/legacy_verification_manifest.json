@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "hashAlgorithm": "sha256",
+  "files": [
+    {
+      "path": "meta.json",
+      "hash": "462241280e419629e93d3bd56aa616535746e650e72517de546f15d6811c4973"
+    },
+    {
+      "path": "track.json",
+      "hash": "0fccfb1b1bfaabaf5e471005d3f8f9ae1ee83cb462d66b5f9f1f394942c10de0"
+    }
+  ]
+}
