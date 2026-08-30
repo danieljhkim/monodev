@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/spf13/cobra"
 )
@@ -202,6 +204,154 @@ func TestTrackCommand_InvalidArgs(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for track command with no args")
 	}
+}
+
+func TestResolveAgentPresetPaths_UsesProvidedFilesystem(t *testing.T) {
+	workspace := fstest.MapFS{
+		".claude":         &fstest.MapFile{Mode: fs.ModeDir},
+		"CLAUDE.md":       &fstest.MapFile{Data: []byte("instructions")},
+		".aider.conf.yml": &fstest.MapFile{Data: []byte("model: test")},
+		"unrelated.txt":   &fstest.MapFile{Data: []byte("not a preset")},
+	}
+
+	found, missing, err := resolveAgentPresetPaths(workspace)
+	if err != nil {
+		t.Fatalf("resolveAgentPresetPaths() error = %v", err)
+	}
+
+	if !containsString(found, ".claude") || !containsString(found, "CLAUDE.md") || !containsString(found, ".aider.conf.yml") {
+		t.Fatalf("found = %v, want .claude, CLAUDE.md, and wildcard .aider match", found)
+	}
+	if containsString(found, "unrelated.txt") {
+		t.Fatalf("found unrelated path: %v", found)
+	}
+	if !containsString(missing, ".cursor/") {
+		t.Fatalf("missing = %v, want .cursor/", missing)
+	}
+}
+
+func TestTrackAgentsCommand_TracksExistingAndReportsAbsent(t *testing.T) {
+	repo := setupTrackAgentsTestRepo(t)
+	if err := os.Mkdir(filepath.Join(repo, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "CLAUDE.md"), []byte("instructions\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	output := runCLI(t, "track", "--agents")
+	if !strings.Contains(output, "Agent paths found: .claude, CLAUDE.md") {
+		t.Fatalf("output = %q, want found agent paths", output)
+	}
+	if !strings.Contains(output, "Agent path skipped-absent: .cursor/") {
+		t.Fatalf("output = %q, want skipped .cursor/", output)
+	}
+
+	paths := readTrackedPaths(t, filepath.Join(repo, ".monodev", "stores", "agents", "track.json"))
+	if len(paths) != 2 || !containsString(paths, ".claude") || !containsString(paths, "CLAUDE.md") {
+		t.Fatalf("tracked paths = %v, want exactly .claude and CLAUDE.md", paths)
+	}
+}
+
+func TestTrackAgentsCommand_UnionsExplicitPaths(t *testing.T) {
+	repo := setupTrackAgentsTestRepo(t)
+	if err := os.Mkdir(filepath.Join(repo, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "extra_file.py"), []byte("print('hi')\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runCLI(t, "track", "--agents", "extra_file.py")
+	paths := readTrackedPaths(t, filepath.Join(repo, ".monodev", "stores", "agents", "track.json"))
+	if len(paths) != 2 || !containsString(paths, ".claude") || !containsString(paths, "extra_file.py") {
+		t.Fatalf("tracked paths = %v, want .claude and extra_file.py", paths)
+	}
+}
+
+func TestTrackAgentsCommand_SurvivesCommitAndApplyInSecondWorkspace(t *testing.T) {
+	repo := setupTrackAgentsTestRepo(t)
+	if err := os.Mkdir(filepath.Join(repo, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "CLAUDE.md"), []byte("instructions\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runCLI(t, "track", "--agents")
+	runCLI(t, "commit", "--all")
+
+	secondWorkspace := filepath.Join(repo, "second-workspace")
+	if err := os.Mkdir(secondWorkspace, 0755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, secondWorkspace)
+	runCLI(t, "checkout", "agents")
+	runCLI(t, "apply")
+
+	if _, err := os.Stat(filepath.Join(secondWorkspace, ".claude")); err != nil {
+		t.Fatalf("applied .claude directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(secondWorkspace, "CLAUDE.md")); err != nil {
+		t.Fatalf("applied CLAUDE.md: %v", err)
+	}
+}
+
+func TestTrackAgentsCommand_NoMatchesSucceedsWithoutTracking(t *testing.T) {
+	repo := setupTrackAgentsTestRepo(t)
+	output := runCLI(t, "track", "--agents")
+	if !strings.Contains(output, "No agent context paths found") {
+		t.Fatalf("output = %q, want clear no-match message", output)
+	}
+	if !strings.Contains(output, "No paths tracked") {
+		t.Fatalf("output = %q, want no-tracking message", output)
+	}
+
+	paths := readTrackedPaths(t, filepath.Join(repo, ".monodev", "stores", "agents", "track.json"))
+	if len(paths) != 0 {
+		t.Fatalf("tracked paths = %v, want none", paths)
+	}
+}
+
+func setupTrackAgentsTestRepo(t *testing.T) string {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+	runCLI(t, "init")
+	runCLI(t, "checkout", "--new", "agents")
+	return repo
+}
+
+func readTrackedPaths(t *testing.T, trackPath string) []string {
+	t.Helper()
+	data, err := os.ReadFile(trackPath)
+	if err != nil {
+		t.Fatalf("read track file: %v", err)
+	}
+	var track struct {
+		Tracked []struct {
+			Path string `json:"path"`
+		} `json:"tracked"`
+	}
+	if err := json.Unmarshal(data, &track); err != nil {
+		t.Fatalf("unmarshal track file: %v", err)
+	}
+	paths := make([]string, 0, len(track.Tracked))
+	for _, tracked := range track.Tracked {
+		paths = append(paths, tracked.Path)
+	}
+	return paths
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestApplyCommand_InvalidStore(t *testing.T) {
