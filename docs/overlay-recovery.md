@@ -13,6 +13,10 @@ Each mutating operation writes a journal beside workspace state:
 - `<workspaces>/<workspace-id>.txn/` — backups of overwritten destination trees
   and staged replacements
 
+Journals are keyed by workspace ID, so a linked git worktree's journal is
+independent of the main checkout's — see
+[docs/worktrees.md](worktrees.md).
+
 Dry-run never writes a journal and never mutates the workspace.
 
 ## Phases
