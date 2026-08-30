@@ -6,6 +6,9 @@ import (
 )
 
 const (
+	storeMetaSchemaVersion = 2
+	trackFileSchemaVersion = 2
+
 	// ScopeGlobal indicates a store stored at ~/.monodev/stores/ (or MONODEV_ROOT)
 	ScopeGlobal = "global"
 
@@ -139,7 +142,7 @@ func NewStoreMeta(name string, createdAt time.Time) *StoreMeta {
 		Name:          name,
 		CreatedAt:     createdAt,
 		UpdatedAt:     createdAt,
-		SchemaVersion: 2,
+		SchemaVersion: storeMetaSchemaVersion,
 	}
 }
 
@@ -177,7 +180,7 @@ func ValidateOrigin(origin string) error {
 // NewTrackFile creates a new empty TrackFile.
 func NewTrackFile() *TrackFile {
 	return &TrackFile{
-		SchemaVersion: 2,
+		SchemaVersion: trackFileSchemaVersion,
 		Tracked:       []TrackedPath{},
 		Ignore:        []string{},
 	}

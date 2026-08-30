@@ -60,15 +60,19 @@ func (s *FileStateStore) LoadWorkspace(id string) (*WorkspaceState, error) {
 		return nil, fmt.Errorf("failed to read workspace state: %w", err)
 	}
 
-	var state WorkspaceState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal workspace state: %w", err)
+	migrated, changed, err := MigrateWorkspaceJSON(path, data)
+	if err != nil {
+		return nil, err
 	}
-
-	if state.MigrateDeprecatedStack() {
-		if err := s.SaveWorkspace(id, &state); err != nil {
+	if changed {
+		if err := s.fs.AtomicWrite(path, migrated, 0600); err != nil {
 			return nil, fmt.Errorf("failed to persist migrated workspace state: %w", err)
 		}
+	}
+
+	var state WorkspaceState
+	if err := json.Unmarshal(migrated, &state); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal workspace state: %w", err)
 	}
 
 	return &state, nil
@@ -81,6 +85,8 @@ func (s *FileStateStore) SaveWorkspace(id string, state *WorkspaceState) error {
 		return err
 	}
 
+	state.SchemaVersion = WorkspaceSchemaVersion
+	state.MigrateDeprecatedStack()
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal workspace state: %w", err)

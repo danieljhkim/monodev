@@ -3,6 +3,7 @@ package remote
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,48 @@ func TestDefaultRemoteConfig(t *testing.T) {
 	}
 	if config.UpdatedAt.IsZero() {
 		t.Error("expected non-zero UpdatedAt")
+	}
+}
+
+func TestFileRemoteConfigStore_LoadsLegacyFixtureAndRejectsFutureSchema(t *testing.T) {
+	repoRoot := t.TempDir()
+	store := NewFileRemoteConfigStore(fsops.NewRealFS())
+	path := filepath.Join(repoRoot, ".monodev", RemoteConfigFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(filepath.Join("testdata", "legacy_remote.json"))
+	if err != nil {
+		t.Fatalf("read legacy remote fixture: %v", err)
+	}
+	if err := os.WriteFile(path, fixture, 0600); err != nil {
+		t.Fatalf("write legacy remote fixture: %v", err)
+	}
+	config, err := store.Load(repoRoot)
+	if err != nil {
+		t.Fatalf("Load() legacy fixture: %v", err)
+	}
+	if config.Remote != "upstream" || config.Branch != "monodev/legacy-persist" || config.SchemaVersion != 0 {
+		t.Fatalf("Load() = %#v, want pre-change fixture", config)
+	}
+	if err := store.Save(repoRoot, config); err != nil {
+		t.Fatalf("Save() migrated legacy remote config: %v", err)
+	}
+	if config.SchemaVersion != remoteConfigSchemaVersion {
+		t.Fatalf("SchemaVersion after Save() = %d, want %d", config.SchemaVersion, remoteConfigSchemaVersion)
+	}
+
+	if err := os.WriteFile(path, []byte(`{"schemaVersion":2}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Load(repoRoot)
+	if err == nil {
+		t.Fatal("Load() error = nil, want future schema refusal")
+	}
+	for _, want := range []string{path, "schemaVersion 2", "supported schemaVersion 1", "upgrade monodev"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Load() error = %q, want %q", err, want)
+		}
 	}
 }
 

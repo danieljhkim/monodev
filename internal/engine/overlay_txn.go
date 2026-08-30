@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	overlayTxnVersion = 1
+	overlayTxnSchemaVersion = 2
 
 	overlayTxnApply   = "apply"
 	overlayTxnUnapply = "unapply"
@@ -36,7 +36,7 @@ const (
 //
 // See docs/overlay-recovery.md for the operator-facing restart path.
 type overlayTxn struct {
-	Version       int                   `json:"version"`
+	SchemaVersion int                   `json:"schemaVersion"`
 	Kind          string                `json:"kind"`
 	WorkspaceID   string                `json:"workspaceId"`
 	WorkspaceRoot string                `json:"workspaceRoot"`
@@ -80,6 +80,7 @@ func (e *Engine) overlayTxnPaths(id string) (journalPath, txnDir string, err err
 }
 
 func (e *Engine) writeOverlayTxn(journalPath string, txn *overlayTxn) error {
+	txn.SchemaVersion = overlayTxnSchemaVersion
 	data, err := json.MarshalIndent(txn, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal overlay transaction: %w", err)
@@ -98,11 +99,60 @@ func (e *Engine) loadOverlayTxn(journalPath string) (*overlayTxn, error) {
 	if len(data) == 0 {
 		return nil, os.ErrNotExist
 	}
+	migrated, changed, err := migrateOverlayTxnJSON(journalPath, data)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		if err := e.fs.AtomicWrite(journalPath, migrated, 0600); err != nil {
+			return nil, fmt.Errorf("failed to persist migrated overlay transaction journal: %w", err)
+		}
+	}
 	var txn overlayTxn
-	if err := json.Unmarshal(data, &txn); err != nil {
+	if err := json.Unmarshal(migrated, &txn); err != nil {
 		return nil, fmt.Errorf("failed to parse overlay transaction journal: %w", err)
 	}
 	return &txn, nil
+}
+
+// migrateOverlayTxnJSON converts the pre-schemaVersion journal header without
+// rebuilding the record, preserving data an older release did not understand.
+func migrateOverlayTxnJSON(journalPath string, data []byte) ([]byte, bool, error) {
+	var header struct {
+		SchemaVersion *int `json:"schemaVersion"`
+		Version       *int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return nil, false, fmt.Errorf("cannot read schemaVersion from %s: %w", journalPath, err)
+	}
+	found := 0
+	if header.SchemaVersion != nil {
+		found = *header.SchemaVersion
+	} else if header.Version != nil {
+		found = *header.Version
+	}
+	if err := state.ValidateSchemaVersion(journalPath, found, overlayTxnSchemaVersion); err != nil {
+		return nil, false, err
+	}
+	if header.SchemaVersion != nil && found == overlayTxnSchemaVersion {
+		return data, false, nil
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, false, fmt.Errorf("cannot migrate %s: %w", journalPath, err)
+	}
+	schemaVersion, err := json.Marshal(overlayTxnSchemaVersion)
+	if err != nil {
+		return nil, false, fmt.Errorf("cannot migrate %s: %w", journalPath, err)
+	}
+	raw["schemaVersion"] = schemaVersion
+	delete(raw, "version")
+	migrated, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return nil, false, fmt.Errorf("cannot migrate %s: %w", journalPath, err)
+	}
+	return migrated, true, nil
 }
 
 func (e *Engine) discardOverlayTxn(journalPath, txnDir string) error {
@@ -202,7 +252,7 @@ func (e *Engine) runOverlayTxn(ctx context.Context, req overlayTxnRequest) error
 	}
 
 	txn := overlayTxn{
-		Version:       overlayTxnVersion,
+		SchemaVersion: overlayTxnSchemaVersion,
 		Kind:          req.kind,
 		WorkspaceID:   req.workspaceID,
 		WorkspaceRoot: req.workspaceRoot,

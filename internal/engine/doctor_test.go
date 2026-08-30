@@ -53,7 +53,7 @@ func TestDoctor_PendingTransactionReportedAndRolledBack(t *testing.T) {
 		t.Fatalf("journal paths: %v", err)
 	}
 	if err := eng.writeOverlayTxn(journalPath, &overlayTxn{
-		Version:       overlayTxnVersion,
+		SchemaVersion: overlayTxnSchemaVersion,
 		Kind:          overlayTxnApply,
 		WorkspaceID:   fx.workspaceID,
 		WorkspaceRoot: fx.repoRoot,

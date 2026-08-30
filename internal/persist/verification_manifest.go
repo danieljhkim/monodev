@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/danieljhkim/monodev/internal/hash"
+	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
 
@@ -67,12 +68,12 @@ func (s *SnapshotManager) Verify(storeID string, persistRoot string, hasher hash
 		return fmt.Errorf("store %q path %s: failed to read verification manifest: %w", storeID, manifestPath, err)
 	}
 
+	if _, err := state.CheckSchemaVersion(manifestPath, data, verificationManifestSchemaVersion); err != nil {
+		return err
+	}
 	var manifest verificationManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return fmt.Errorf("store %q path %s: invalid verification manifest: %w", storeID, manifestPath, err)
-	}
-	if manifest.SchemaVersion != verificationManifestSchemaVersion {
-		return fmt.Errorf("store %q path %s: unsupported verification manifest schema version %d", storeID, manifestPath, manifest.SchemaVersion)
 	}
 	if manifest.HashAlgorithm != verificationHashAlgorithm {
 		return fmt.Errorf("store %q path %s: unsupported verification hash algorithm %q", storeID, manifestPath, manifest.HashAlgorithm)

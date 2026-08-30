@@ -212,6 +212,9 @@ func TestFileStateStore_MigratesLegacyStackOnLoad(t *testing.T) {
 	if !got.Applied {
 		t.Fatal("Applied = false, want true so overlays remain applied")
 	}
+	if got.SchemaVersion != WorkspaceSchemaVersion {
+		t.Fatalf("SchemaVersion = %d, want %d", got.SchemaVersion, WorkspaceSchemaVersion)
+	}
 
 	persisted, err := os.ReadFile(filepath.Join(workspacesDir, workspaceID+".json"))
 	if err != nil {
@@ -229,5 +232,64 @@ func TestFileStateStore_MigratesLegacyStackOnLoad(t *testing.T) {
 	}
 	if onDisk.Paths["shared.txt"].Store != "store-b" {
 		t.Fatalf("persisted shared.txt owner = %#v, want store-b", onDisk.Paths["shared.txt"])
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(persisted, &raw); err != nil {
+		t.Fatalf("unmarshal migrated workspace: %v", err)
+	}
+	if _, exists := raw["stack"]; exists {
+		t.Fatalf("migrated workspace retains retired stack field: %s", persisted)
+	}
+	var extension struct {
+		Keep string `json:"keep"`
+	}
+	if err := json.Unmarshal(raw["legacyExtension"], &extension); err != nil || extension.Keep != "this field" {
+		t.Fatalf("migration dropped unrecognized field: %s", persisted)
+	}
+
+	firstMigration := string(persisted)
+	if _, err := store.LoadWorkspace(workspaceID); err != nil {
+		t.Fatalf("second LoadWorkspace() error = %v", err)
+	}
+	secondMigration, err := os.ReadFile(filepath.Join(workspacesDir, workspaceID+".json"))
+	if err != nil {
+		t.Fatalf("read workspace after second migration: %v", err)
+	}
+	if string(secondMigration) != firstMigration {
+		t.Fatalf("workspace migration is not idempotent:\nfirst:  %s\nsecond: %s", firstMigration, secondMigration)
+	}
+	got.ActiveStore = "rewritten-store"
+	if err := store.SaveWorkspace(workspaceID, got); err != nil {
+		t.Fatalf("save migrated workspace: %v", err)
+	}
+	persistedAfterSave, err := os.ReadFile(filepath.Join(workspacesDir, workspaceID+".json"))
+	if err != nil {
+		t.Fatalf("read saved workspace: %v", err)
+	}
+	var savedRaw map[string]json.RawMessage
+	if err := json.Unmarshal(persistedAfterSave, &savedRaw); err != nil {
+		t.Fatalf("unmarshal saved workspace: %v", err)
+	}
+	if err := json.Unmarshal(savedRaw["legacyExtension"], &extension); err != nil || extension.Keep != "this field" {
+		t.Fatalf("save dropped unrecognized field after migration: %s", persistedAfterSave)
+	}
+}
+
+func TestFileStateStoreRejectsFutureSchemaVersion(t *testing.T) {
+	workspacesDir := t.TempDir()
+	workspaceID := "future-workspace"
+	path := filepath.Join(workspacesDir, workspaceID+".json")
+	if err := os.WriteFile(path, []byte(`{"schemaVersion":3}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewFileStateStore(fsops.NewRealFS(), workspacesDir).LoadWorkspace(workspaceID)
+	if err == nil {
+		t.Fatal("LoadWorkspace() error = nil, want future schema refusal")
+	}
+	for _, want := range []string{path, "schemaVersion 3", "supported schemaVersion 2", "upgrade monodev"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("LoadWorkspace() error = %q, want %q", err, want)
+		}
 	}
 }

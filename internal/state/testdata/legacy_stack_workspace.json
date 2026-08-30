@@ -8,6 +8,7 @@
     {"store": "active-store", "type": "copy"}
   ],
   "activeStore": "active-store",
+  "legacyExtension": {"keep": "this field"},
   "paths": {
     "a.txt": {
       "store": "store-a",

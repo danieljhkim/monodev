@@ -180,7 +180,7 @@ func storeListContains(t *testing.T, raw, id string) bool {
 
 func gitPorcelain(t *testing.T, dir string) string {
 	t.Helper()
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := exec.Command("git", "status", "--porcelain", "--untracked-files=all")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
