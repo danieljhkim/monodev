@@ -91,5 +91,6 @@ Use -n to create a new store if it doesn't exist.`,
 
 func init() {
 	checkoutCmd.Flags().BoolP("new", "n", false, "Create a new store")
+	checkoutCmd.Flags().String("scope", "", "Store scope (global or component; defaults to component in a git repo, otherwise global)")
 	checkoutCmd.Flags().String("description", "", "Store description")
 }

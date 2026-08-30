@@ -9,10 +9,11 @@ clone's location on disk does not.
 
 The fingerprint is chosen in this order:
 
-1. **Durable repo ID**, when present. `monodev init` writes
-   `.monodev/repo-id`. Remote-less repos also persist an ID at
-   `<git-common-dir>/monodev/repo-id` on first use. A durable ID wins over
-   remotes, so later remote edits do not change identity.
+1. **Durable repo ID**, when present. The first command that needs a state
+   root (or `monodev init`) writes `.monodev/repo-id`. Remote-less repos
+   also persist an ID at `<git-common-dir>/monodev/repo-id` on first use.
+   A durable ID wins over remotes, so later remote edits do not change
+   identity.
 2. **Normalized remote URL**, when no durable ID exists.
    `origin` is used when it is configured. Otherwise the first name reported
    by `git remote` is used.
@@ -53,8 +54,8 @@ Examples that share a fingerprint:
 is used. Additional remotes (for example `upstream`) do not participate.
 
 An org rename or a move to an unrelated URL still changes the remote-based
-fingerprint. After `monodev init` (or any durable repo ID), remote churn does
-not change identity.
+fingerprint. After a durable repo ID exists (first use, or `monodev init`),
+remote churn does not change identity.
 
 ## Moved clones
 
@@ -62,9 +63,10 @@ Because the absolute path is not part of a git repo's fingerprint, copying or
 moving a clone keeps the same workspace IDs. Workspace JSON still records
 `absolutePath` for display; that field is updated on the next load.
 
-Two independent clones of the same remote that have not been initialized share
-workspace files under `~/.monodev/workspaces/` when they use the same relative
-path. `monodev init` gives each clone its own durable ID.
+Two independent clones of the same remote that have not yet persisted a
+durable repo ID share workspace files under `~/.monodev/workspaces/` when
+they use the same relative path. First use (or `monodev init`) gives each
+clone its own durable ID.
 
 ## Legacy files
 

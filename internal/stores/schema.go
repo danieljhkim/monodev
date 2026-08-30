@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	// ScopeGlobal indicates a store stored at ~/.monodev/stores/
+	// ScopeGlobal indicates a store stored at ~/.monodev/stores/ (or MONODEV_ROOT)
 	ScopeGlobal = "global"
 
 	// ScopeComponent indicates a store stored at repo_root/.monodev/stores/
