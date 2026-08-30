@@ -34,7 +34,6 @@ func TestWorktree_SharedStoreAppliesOutsideMainCheckout(t *testing.T) {
 		StoreID: "dev-overlay",
 		Name:    "Dev overlay",
 		Scope:   stores.ScopeGlobal,
-		Owner:   "tester",
 	}); err != nil {
 		t.Fatalf("CreateStore: %v", err)
 	}
@@ -101,7 +100,6 @@ func TestWorktree_AppliedLedgerIsIndependentPerWorktree(t *testing.T) {
 		StoreID: "dev-overlay",
 		Name:    "Dev overlay",
 		Scope:   stores.ScopeGlobal,
-		Owner:   "tester",
 	}); err != nil {
 		t.Fatalf("CreateStore: %v", err)
 	}

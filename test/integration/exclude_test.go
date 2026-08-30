@@ -50,7 +50,7 @@ func newExcludeFixture(t *testing.T, workspacePath string) excludeFixture {
 	fs := fsops.NewRealFS()
 	storeRepo := stores.NewFileStoreRepo(fs, paths.Stores)
 	storeID := "exclude-store"
-	if err := storeRepo.Create(storeID, stores.NewStoreMeta(storeID, stores.ScopeGlobal, time.Now())); err != nil {
+	if err := storeRepo.Create(storeID, stores.NewStoreMeta(storeID, time.Now())); err != nil {
 		t.Fatalf("create store: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(storeRepo.OverlayRoot(storeID), "Makefile"), []byte("all:\n\t@true\n"), 0600); err != nil {

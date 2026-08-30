@@ -167,11 +167,11 @@ func TestCreateStore_ComponentScope_NoRepoContext(t *testing.T) {
 func TestListStores_BothScopes(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	globalRepo.storeIDs["global-store"] = true
-	globalRepo.metas["global-store"] = stores.NewStoreMeta("global-store", stores.ScopeGlobal, time.Now())
+	globalRepo.metas["global-store"] = stores.NewStoreMeta("global-store", time.Now())
 
 	componentRepo := newScopedMockStoreRepo()
 	componentRepo.storeIDs["comp-store"] = true
-	componentRepo.metas["comp-store"] = stores.NewStoreMeta("comp-store", stores.ScopeComponent, time.Now())
+	componentRepo.metas["comp-store"] = stores.NewStoreMeta("comp-store", time.Now())
 
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
@@ -196,7 +196,7 @@ func TestListStores_BothScopes(t *testing.T) {
 func TestListStores_GlobalOnly(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	globalRepo.storeIDs["g1"] = true
-	globalRepo.metas["g1"] = stores.NewStoreMeta("g1", stores.ScopeGlobal, time.Now())
+	globalRepo.metas["g1"] = stores.NewStoreMeta("g1", time.Now())
 
 	eng := newScopedTestEngine(globalRepo, nil)
 
@@ -216,11 +216,11 @@ func TestListStores_GlobalOnly(t *testing.T) {
 func TestDescribeStore_BothScopes(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	globalRepo.storeIDs["shared"] = true
-	globalRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeGlobal, time.Now())
+	globalRepo.metas["shared"] = stores.NewStoreMeta("shared", time.Now())
 
 	componentRepo := newScopedMockStoreRepo()
 	componentRepo.storeIDs["shared"] = true
-	componentRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeComponent, time.Now())
+	componentRepo.metas["shared"] = stores.NewStoreMeta("shared", time.Now())
 
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
@@ -257,32 +257,41 @@ func TestDescribeStore_NotFound(t *testing.T) {
 func TestDeleteStore_Ambiguous(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	globalRepo.storeIDs["shared"] = true
-	globalRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeGlobal, time.Now())
+	globalRepo.metas["shared"] = stores.NewStoreMeta("shared", time.Now())
 
 	componentRepo := newScopedMockStoreRepo()
 	componentRepo.storeIDs["shared"] = true
-	componentRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeComponent, time.Now())
+	componentRepo.metas["shared"] = stores.NewStoreMeta("shared", time.Now())
 
 	stateStore := newMockStateStore()
 	eng := newScopedTestEngineWithState(globalRepo, componentRepo, stateStore)
 
-	_, err := eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+	result, err := eng.DeleteStore(context.Background(), &DeleteStoreRequest{
 		StoreID: "shared",
 		Force:   true,
 	})
-	if err == nil {
-		t.Fatal("expected error when store exists in both scopes without scope specified")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Deleted {
+		t.Error("expected the preferred (component) store to be deleted")
+	}
+	if componentRepo.storeIDs["shared"] {
+		t.Error("expected component store to be deleted when ID is ambiguous")
+	}
+	if !globalRepo.storeIDs["shared"] {
+		t.Error("expected global store to remain when ID is ambiguous")
 	}
 }
 
 func TestDeleteStore_WithScope(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	globalRepo.storeIDs["shared"] = true
-	globalRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeGlobal, time.Now())
+	globalRepo.metas["shared"] = stores.NewStoreMeta("shared", time.Now())
 
 	componentRepo := newScopedMockStoreRepo()
 	componentRepo.storeIDs["shared"] = true
-	componentRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeComponent, time.Now())
+	componentRepo.metas["shared"] = stores.NewStoreMeta("shared", time.Now())
 
 	stateStore := newMockStateStore()
 	eng := newScopedTestEngineWithState(globalRepo, componentRepo, stateStore)
@@ -314,7 +323,7 @@ func TestUseStore_SearchesBothScopes(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	componentRepo := newScopedMockStoreRepo()
 	componentRepo.storeIDs["comp-only"] = true
-	componentRepo.metas["comp-only"] = stores.NewStoreMeta("comp-only", stores.ScopeComponent, time.Now())
+	componentRepo.metas["comp-only"] = stores.NewStoreMeta("comp-only", time.Now())
 
 	stateStore := newMockStateStore()
 	eng := newScopedTestEngineWithState(globalRepo, componentRepo, stateStore)
@@ -475,9 +484,15 @@ func TestResolveStoreRepo_Ambiguous(t *testing.T) {
 
 	eng := newScopedTestEngine(globalRepo, componentRepo)
 
-	_, _, err := eng.storeResolver.resolveStoreRepo("shared", "")
-	if err == nil {
-		t.Fatal("expected error for ambiguous store")
+	repo, scope, err := eng.storeResolver.resolveStoreRepo("shared", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if scope != stores.ScopeComponent {
+		t.Errorf("expected component scope for ambiguous ID, got %s", scope)
+	}
+	if repo != componentRepo {
+		t.Error("expected component repo for ambiguous ID")
 	}
 }
 
@@ -505,11 +520,11 @@ func TestResolveStoreRepo_WithExplicitScope(t *testing.T) {
 func TestMultiStoreRepo_RoutesByID(t *testing.T) {
 	repo1 := newScopedMockStoreRepo()
 	repo1.storeIDs["store-a"] = true
-	repo1.metas["store-a"] = stores.NewStoreMeta("store-a", stores.ScopeGlobal, time.Now())
+	repo1.metas["store-a"] = stores.NewStoreMeta("store-a", time.Now())
 
 	repo2 := newScopedMockStoreRepo()
 	repo2.storeIDs["store-b"] = true
-	repo2.metas["store-b"] = stores.NewStoreMeta("store-b", stores.ScopeComponent, time.Now())
+	repo2.metas["store-b"] = stores.NewStoreMeta("store-b", time.Now())
 
 	mapping := map[string]stores.StoreRepo{
 		"store-a": repo1,
@@ -522,8 +537,8 @@ func TestMultiStoreRepo_RoutesByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if meta.Scope != stores.ScopeGlobal {
-		t.Errorf("expected global scope for store-a, got %s", meta.Scope)
+	if meta.Name != "store-a" {
+		t.Errorf("expected store-a meta, got %s", meta.Name)
 	}
 
 	// Check store-b routes to repo2
@@ -531,19 +546,23 @@ func TestMultiStoreRepo_RoutesByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if meta.Scope != stores.ScopeComponent {
-		t.Errorf("expected component scope for store-b, got %s", meta.Scope)
+	if meta.Name != "store-b" {
+		t.Errorf("expected store-b meta, got %s", meta.Name)
 	}
 }
 
 func TestStoreResolverMultiRepoForStoresPrefersComponent(t *testing.T) {
 	globalRepo := newScopedMockStoreRepo()
 	globalRepo.storeIDs["shared"] = true
-	globalRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeGlobal, time.Now())
+	globalMeta := stores.NewStoreMeta("shared", time.Now())
+	globalMeta.Description = "global"
+	globalRepo.metas["shared"] = globalMeta
 
 	componentRepo := newScopedMockStoreRepo()
 	componentRepo.storeIDs["shared"] = true
-	componentRepo.metas["shared"] = stores.NewStoreMeta("shared", stores.ScopeComponent, time.Now())
+	componentMeta := stores.NewStoreMeta("shared", time.Now())
+	componentMeta.Description = "component"
+	componentRepo.metas["shared"] = componentMeta
 
 	resolver := newEngineStoreResolver(globalRepo, globalRepo, componentRepo)
 	multiRepo, err := resolver.multiRepoForStores([]string{"shared"})
@@ -555,8 +574,8 @@ func TestStoreResolverMultiRepoForStoresPrefersComponent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if meta.Scope != stores.ScopeComponent {
-		t.Errorf("expected component repo to be preferred, got %s", meta.Scope)
+	if meta.Description != "component" {
+		t.Errorf("expected component repo to be preferred, got description %q", meta.Description)
 	}
 }
 

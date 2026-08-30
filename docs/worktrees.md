@@ -21,9 +21,10 @@ path (typically the repo root), share:
   main checkout once; every worktree can apply it by name. Component-scoped
   stores are the exception: they live under `<repo-root>/.monodev/stores/`,
   which is part of the working tree itself, so each worktree gets its own
-  (empty, until you commit into it) copy. Use a global-scope store
-  (`--scope global`, or no `.monodev/` directory in the repo) for anything
-  you want a new worktree to pick up for free.
+  (empty, until you commit into it) copy. Use a global-scope store (the
+  default when the repo has no `.monodev/` directory) for anything you want
+  a new worktree to pick up for free. After `monodev init`, new stores are
+  created in the component location instead.
 
 They do **not** share:
 
@@ -41,16 +42,16 @@ Track and commit a dev-only file once, from wherever you normally work:
 
 ```bash
 cd ~/src/myrepo
-monodev checkout -n dev-overlay --scope global
+monodev checkout -n dev-overlay
 monodev track .env.local
 monodev commit
 monodev apply
 ```
 
-`--scope global` matters here: it is the default only when the repo has no
-`.monodev/` directory yet. Pass it explicitly once you have run `monodev
-init` (which creates one for the durable repo ID), or the store defaults to
-component scope and is not shared across worktrees — see below.
+Create the store *before* `monodev init` if you want it in the global
+location (`~/.monodev/stores/`), which is shared across worktrees. After
+`monodev init`, new stores default to component scope under
+`<repo>/.monodev/stores/` and are not shared — see below.
 
 Spin up a worktree for a parallel agent run — inside the repo, or anywhere
 else on disk:

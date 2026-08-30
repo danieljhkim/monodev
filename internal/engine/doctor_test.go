@@ -162,7 +162,7 @@ func TestDoctor_LedgerEntryForDeletedStoreIsPrunedByFix(t *testing.T) {
 	fs := fsops.NewRealFS()
 
 	storeRepo := stores.NewFileStoreRepo(fs, storesDir)
-	if err := storeRepo.Create("keep-store", stores.NewStoreMeta("keep", "global", time.Now())); err != nil {
+	if err := storeRepo.Create("keep-store", stores.NewStoreMeta("keep", time.Now())); err != nil {
 		t.Fatalf("create store: %v", err)
 	}
 

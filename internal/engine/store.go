@@ -38,17 +38,12 @@ type CreateStoreRequest struct {
 	// Name is the human-readable name
 	Name string
 
-	// Scope is the store scope ("global", "component")
+	// Scope is the store location ("global", "component"). Empty uses the
+	// resolver default (component when a repo-local .monodev exists, else global).
 	Scope string
 
 	// Description is an optional description
 	Description string
-
-	// Owner identifies who owns the store
-	Owner string
-
-	// TaskID links the store to an external task
-	TaskID string
 }
 
 // UpdateStoreRequest represents a request to update store metadata.
@@ -65,8 +60,6 @@ type UpdateStoreRequest struct {
 
 	// Optional fields — nil means "do not change"
 	Description *string
-	Owner       *string
-	TaskID      *string
 }
 
 // StoreDetails contains detailed information about a store.
@@ -80,8 +73,9 @@ type StoreDetails struct {
 
 // ScopedStoreDetails contains detailed information about a store in a specific scope.
 type ScopedStoreDetails struct {
-	// Scope is where the store is located ("global" or "component")
-	Scope string
+	// Scope is where the store is located ("global" or "component").
+	// Omitted from JSON: location is an internal routing concern, not store metadata.
+	Scope string `json:"-"`
 
 	// Meta is the store metadata
 	Meta *stores.StoreMeta
@@ -189,13 +183,8 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	defer unlockStore()
 
 	// Create store metadata
-	meta := stores.NewStoreMeta(req.Name, scope, e.clock.Now())
+	meta := stores.NewStoreMeta(req.Name, e.clock.Now())
 	meta.Description = req.Description
-	meta.Owner = req.Owner
-	if meta.Owner == "" {
-		meta.Owner = e.gitRepo.Username(req.CWD)
-	}
-	meta.TaskID = req.TaskID
 
 	// Validate metadata
 	if err := meta.Validate(); err != nil {
@@ -321,12 +310,6 @@ func (e *Engine) UpdateStore(ctx context.Context, req *UpdateStoreRequest) error
 	// Apply non-nil fields
 	if req.Description != nil {
 		meta.Description = *req.Description
-	}
-	if req.Owner != nil {
-		meta.Owner = *req.Owner
-	}
-	if req.TaskID != nil {
-		meta.TaskID = *req.TaskID
 	}
 
 	// Validate

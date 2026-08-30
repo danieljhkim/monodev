@@ -168,7 +168,7 @@ func writeClientStoreVersion(t *testing.T, client *realRemoteClient, storeID, ve
 		t.Fatal(err)
 	}
 	if !exists {
-		meta := &stores.StoreMeta{Name: "Remote Store", Description: "transport test", Scope: "local"}
+		meta := &stores.StoreMeta{Name: "Remote Store", Description: "transport test"}
 		if err := client.storeRepo.Create(storeID, meta); err != nil {
 			t.Fatalf("create store failed: %v", err)
 		}
@@ -228,7 +228,6 @@ func TestPushPull_RoundTrip(t *testing.T) {
 	meta := &stores.StoreMeta{
 		Name:        "Test Store",
 		Description: "A test store",
-		Scope:       "local",
 	}
 	if err := storeRepo.Create(storeID, meta); err != nil {
 		t.Fatalf("failed to create store: %v", err)

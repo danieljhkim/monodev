@@ -52,7 +52,7 @@ func (m *trackStoreRepo) Exists(id string) (bool, error)                 { retur
 func (m *trackStoreRepo) Create(id string, meta *stores.StoreMeta) error { return nil }
 func (m *trackStoreRepo) LoadMeta(id string) (*stores.StoreMeta, error) {
 	now := time.Now()
-	return &stores.StoreMeta{Name: id, Scope: "global", CreatedAt: now, UpdatedAt: now}, nil
+	return &stores.StoreMeta{Name: id, CreatedAt: now, UpdatedAt: now}, nil
 }
 func (m *trackStoreRepo) SaveMeta(id string, meta *stores.StoreMeta) error { return nil }
 func (m *trackStoreRepo) LoadTrack(id string) (*stores.TrackFile, error) {

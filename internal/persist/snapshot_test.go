@@ -49,7 +49,7 @@ func createTestStore(t *testing.T, repo stores.StoreRepo, storeID string) {
 	t.Helper()
 
 	// Create store
-	meta := stores.NewStoreMeta("Test Store", "global", time.Now())
+	meta := stores.NewStoreMeta("Test Store", time.Now())
 	if err := repo.Create(storeID, meta); err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}

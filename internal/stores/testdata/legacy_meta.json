@@ -1,0 +1,10 @@
+{
+  "name": "legacy-store",
+  "scope": "global",
+  "description": "written by the pre-removal release",
+  "createdAt": "2024-01-15T10:30:00Z",
+  "updatedAt": "2024-06-01T00:00:00Z",
+  "schemaVersion": 2,
+  "owner": "alice",
+  "taskId": "TASK-123"
+}

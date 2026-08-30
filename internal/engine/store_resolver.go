@@ -155,7 +155,15 @@ func (r *engineStoreResolver) resolveStoreRepo(storeID, scope string) (stores.St
 	case 1:
 		return locations[0].Repo, locations[0].Scope, nil
 	default:
-		return nil, "", fmt.Errorf("store '%s' exists in both global and component scopes; specify --scope to disambiguate", storeID)
+		// Prefer component when the same ID exists in both locations. This
+		// matches defaultScope() and multiRepoForStores now that --scope is
+		// no longer a CLI flag.
+		for _, loc := range locations {
+			if loc.Scope == stores.ScopeComponent {
+				return loc.Repo, loc.Scope, nil
+			}
+		}
+		return locations[0].Repo, locations[0].Scope, nil
 	}
 }
 

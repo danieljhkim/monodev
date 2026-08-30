@@ -19,7 +19,7 @@ func TestSyncer_PushWorkspaceReference(t *testing.T) {
 		defer cleanup()
 
 		storeID := "test-store"
-		meta := stores.NewStoreMeta("Test Store", "global", time.Now())
+		meta := stores.NewStoreMeta("Test Store", time.Now())
 		if err := storeRepo.Create(storeID, meta); err != nil {
 			t.Fatalf("failed to create store: %v", err)
 		}
@@ -211,7 +211,7 @@ func TestSyncer_PullWorkspaceReferenceRestoresPortableLocalState(t *testing.T) {
 	savePullRemoteConfig(t, repoRoot, configStore)
 
 	for _, storeID := range []string{"stack-store", "active-store"} {
-		if err := storeRepo.Create(storeID, stores.NewStoreMeta(storeID, "global", time.Now())); err != nil {
+		if err := storeRepo.Create(storeID, stores.NewStoreMeta(storeID, time.Now())); err != nil {
 			t.Fatalf("create store %q: %v", storeID, err)
 		}
 		if err := os.WriteFile(filepath.Join(storeRepo.OverlayRoot(storeID), "portable.txt"), []byte(storeID), 0644); err != nil {
@@ -324,7 +324,7 @@ func TestSyncer_PullWorkspaceReferenceFailsClosed(t *testing.T) {
 			repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
 			defer cleanup()
 			savePullRemoteConfig(t, repoRoot, configStore)
-			if err := storeRepo.Create("active-store", stores.NewStoreMeta("active", "global", time.Now())); err != nil {
+			if err := storeRepo.Create("active-store", stores.NewStoreMeta("active", time.Now())); err != nil {
 				t.Fatal(err)
 			}
 
