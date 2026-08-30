@@ -220,11 +220,13 @@ See each sub-command's help for details on how to use the generated script.`,
 	commitCmd.GroupID = "store-operations"
 	trackCmd.GroupID = "store-operations"
 	untrackCmd.GroupID = "store-operations"
+	saveCmd.GroupID = "store-operations"
 	rootCmd.AddCommand(storeCmd)
 	rootCmd.AddCommand(checkoutCmd)
 	rootCmd.AddCommand(commitCmd)
 	rootCmd.AddCommand(trackCmd)
 	rootCmd.AddCommand(untrackCmd)
+	rootCmd.AddCommand(saveCmd)
 
 	rootCmd.AddCommand(stackCmd)
 
@@ -233,10 +235,12 @@ See each sub-command's help for details on how to use the generated script.`,
 	remoteCmd.GroupID = "remote-persistence"
 	pushCmd.GroupID = "remote-persistence"
 	pullCmd.GroupID = "remote-persistence"
+	syncCmd.GroupID = "remote-persistence"
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(remoteCmd)
 	rootCmd.AddCommand(pushCmd)
 	rootCmd.AddCommand(pullCmd)
+	rootCmd.AddCommand(syncCmd)
 }
 
 // Execute executes the root command.

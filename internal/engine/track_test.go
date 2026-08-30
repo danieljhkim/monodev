@@ -31,6 +31,9 @@ func (m *trackGitRepo) GetFingerprintComponents(root string) (string, string, er
 	return "", "", nil
 }
 func (m *trackGitRepo) Username(root string) string { return "user" }
+func (m *trackGitRepo) IsIgnored(cwd string, relPaths []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
 
 type trackStoreRepo struct {
 	tracks      map[string]*stores.TrackFile
