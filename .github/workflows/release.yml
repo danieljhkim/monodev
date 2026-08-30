@@ -83,6 +83,15 @@ jobs:
       - name: Smoke test version on native runner
         run: ./dist/monodev version
 
+      - name: Ensure zsh is available on Linux
+        if: matrix.goos == 'linux'
+        shell: bash
+        run: |
+          if ! command -v zsh >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y zsh
+          fi
+
       - name: Validate generated documentation
         shell: bash
         run: |
