@@ -376,6 +376,54 @@ func TestApplyCommand_InvalidStore(t *testing.T) {
 	}
 }
 
+func TestDoctorCommand_HealthyWorkspace(t *testing.T) {
+	workspaceDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	oldDir, _ := os.Getwd()
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
+
+	rootCmd.SetArgs([]string{"doctor"})
+	var bufOut, bufErr bytes.Buffer
+	rootCmd.SetOut(&bufOut)
+	rootCmd.SetErr(&bufErr)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("doctor on a healthy workspace should exit zero, got error: %v", err)
+	}
+}
+
+func TestDoctorCommand_JSONOutput(t *testing.T) {
+	workspaceDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	oldDir, _ := os.Getwd()
+	_ = os.Chdir(workspaceDir)
+	defer func() {
+		_ = os.Chdir(oldDir)
+	}()
+
+	rootCmd.SetArgs([]string{"doctor", "--json"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("doctor --json on a healthy workspace should exit zero, got error: %v", err)
+	}
+
+	output := bytes.TrimSpace(buf.Bytes())
+	if len(output) == 0 {
+		return
+	}
+	var v interface{}
+	if err := json.Unmarshal(output, &v); err != nil {
+		t.Errorf("expected valid JSON output, got error: %v, output: %q", err, output)
+	}
+}
+
 func TestUnapplyCommand_NoState(t *testing.T) {
 	workspaceDir, cleanup := setupTestEnv(t)
 	defer cleanup()

@@ -230,6 +230,20 @@ monodev workspace describe <workspace-id>
 monodev workspace rm [workspace-id]
 ```
 
+### Diagnostics
+
+`monodev doctor` checks monodev's on-disk state for drift and interrupted transactions: pending overlay transaction journals (see [docs/overlay-recovery.md](docs/overlay-recovery.md)), orphaned backup directories, ledger entries owned by a deleted store, workspaces whose checkout no longer exists, stale lock files, remote persistence misconfiguration, and drift between `.git/info/exclude` and the workspace ledger. It exits non-zero when problems remain, so it can be used in scripts and CI.
+
+```bash
+# report drift and interrupted transactions without changing anything
+monodev doctor
+
+# apply the safe repairs: roll back or complete a pending transaction,
+# prune ledger entries for deleted stores, remove orphaned backups,
+# and reconcile the managed exclude block
+monodev doctor --fix
+```
+
 ### Remote persistence
 
 Share stores across machines and teams using Git-based remote persistence. Stores are pushed to a separate orphan branch (`monodev/persist` by default) to keep them isolated from your main repository history.

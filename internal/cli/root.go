@@ -205,12 +205,14 @@ See each sub-command's help for details on how to use the generated script.`,
 	statusCmd.GroupID = "workspace-lifecycle"
 	workspaceCmd.GroupID = "workspace-lifecycle"
 	diffCmd.GroupID = "workspace-lifecycle"
+	doctorCmd.GroupID = "workspace-lifecycle"
 	rootCmd.AddCommand(applyCmd)
 	rootCmd.AddCommand(unapplyCmd)
 	rootCmd.AddCommand(clearCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(diffCmd)
+	rootCmd.AddCommand(doctorCmd)
 
 	// Store Operations commands
 	storeCmd.GroupID = "store-operations"
