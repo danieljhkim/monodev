@@ -1,0 +1,103 @@
+schemaVersion: 1
+name: release-prep
+description: Guarded monodev release-preparation probe
+enabled: false
+schedule:
+  every_minutes: 180
+template:
+  title: Check whether the next monodev release is ready to prepare
+  description: |
+    You are the release-preparation probe for monodev. This is a report-first
+    gate. It may read Orbit tasks, Git history, tags, and RELEASING.md, and
+    only after eligibility may create or update exactly one canonical release
+    task. During gating it must never edit repository files or release state.
+
+    ## 1. Deterministic unfinished-work gate
+
+    Query all tasks in `backlog`, `in-progress`, and `review` through the Orbit
+    task surface. Sort every non-exempt blocking task ID lexicographically
+    before reporting it. Exempt a task only when its tags contain the exact
+    provenance tag `auto-task:release-prep`; do not exempt `release`,
+    `release-prep`, or any other `auto-task:<name>` tag.
+
+    If any non-exempt task exists, write the complete sorted blocking ID list
+    and the blocked outcome to this probe's `execution_summary`, then stop
+    successfully. Do not create or update a release task, change task status,
+    write files or release metadata, commit, tag, push, publish, or ask for
+    human approval. A later scheduler slot must be able to retry this gate.
+
+    ## 2. Deterministic no-release gate
+
+    Find the latest reachable release tag using:
+
+    ```sh
+    git tag --merged HEAD --list 'v*' --sort=-version:refname | head -n 1
+    ```
+
+    If no reachable `v*` tag exists, record that no baseline is available in
+    `execution_summary` and stop without release changes. Otherwise survey
+    `<latest-tag>..HEAD` as RELEASING.md prescribes, using `git log --no-merges`.
+    If that range contains no commits, record the exact tag and "nothing to
+    release" in `execution_summary` and stop without creating or updating a
+    release task or changing repository or release state.
+
+    ## 3. Eligible preparation handoff
+
+    When both gates pass, record evidence in `execution_summary`: the sorted
+    task query and empty blocker result; latest reachable tag; surveyed
+    non-merge commit IDs and subjects; referenced `DANI-<number>` task IDs;
+    candidate semver bump; and every breaking-change candidate with the
+    commit/task evidence that caused the flag. Under monodev's pre-1.0 policy,
+    propose a patch for non-breaking work and a minor for any breaking-change
+    candidate. This is not a human-confirmed classification.
+
+    Locate open tasks with the exact title `Prepare v<X.Y.Z> release` and the
+    `release` tag. Select the lexicographically smallest matching task ID if
+    more than one exists; never create a second canonical task. If none exists,
+    create one `chore` carrying the `release` tag, candidate version, survey
+    evidence, and explicit instruction to follow RELEASING.md. Its only
+    repository modification selector is `file:CHANGELOG.md`, because monodev's
+    binary version is derived from the release tag rather than a committed
+    Cargo or npm manifest. If a canonical task exists, update only that task
+    with the fresh candidate and evidence. Report its ID and any duplicate
+    candidates in this probe's `execution_summary`.
+
+    The handoff ends after the survey and canonical-task creation or update.
+    It must not edit CHANGELOG.md or any repository file; commit, tag, push,
+    publish, create a GitHub Release, change task approval/status, or request
+    or record human confirmation of breaking-change classification. Those
+    actions belong only to the later human-approved release task.
+
+    ## Deterministic validation scenarios
+
+    - With another unfinished task, report its sorted ID list and make no
+      release-state or repository changes; only exact
+      `auto-task:release-prep` instances are excluded.
+    - With no other unfinished task and no commits after the latest reachable
+      `v*` tag, report that tag and "nothing to release" without release
+      changes.
+    - With an eligible commit range, record the survey, candidate bump, and
+      breaking candidates, then create or update exactly one canonical
+      `release` task.
+
+    Repeated passes reuse the open release-prep probe through `skip_if_open`
+    and reuse the one canonical release task rather than creating duplicates.
+  acceptance_criteria:
+  - The unfinished-work gate reports sorted blocking task IDs and exempts only tasks carrying the exact auto-task:release-prep provenance tag.
+  - An unfinished-work, no-baseline, or no-release pass changes no repository or release state and completes with evidence in execution_summary.
+  - An eligible pass records the latest reachable v* tag, no-merge survey, referenced task IDs, candidate semver bump, and breaking-change candidates with evidence.
+  - An eligible pass creates or updates exactly one canonical Prepare v<X.Y.Z> release task carrying the release tag, pointing to RELEASING.md, and using only file:CHANGELOG.md as a repository modification selector.
+  - The handoff stops before edits, commits, tags, pushes, publication, task approval/status changes, or human confirmation of breaking-change classification.
+  - Repeated passes do not duplicate the open probe or canonical release-preparation task.
+  task_type: chore
+  tags:
+  - release-prep
+  - no-diff-expected
+  priority: high
+  crew: luna
+  status: backlog
+dedupe: skip_if_open
+created_by: codex
+created_at: 2026-08-30T06:42:55Z
+updated_by: codex
+updated_at: 2026-08-30T06:42:55Z
