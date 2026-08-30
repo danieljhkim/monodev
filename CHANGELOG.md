@@ -11,6 +11,8 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-30
+
 ### Breaking Changes
 - Removed `--owner`, `--task-id`, and `--scope` from `checkout -n`, `store update`, `store ls`, and `store rm`. Using a removed flag now errors with a message that names the flag as removed, rather than cobra's generic unknown-flag text.
 - Store metadata no longer persists `owner`, `taskId`, or `scope`. Existing `meta.json` files that still contain those keys remain readable; the extra keys are ignored on load and omitted on the next write.
