@@ -63,3 +63,13 @@ func TestPrintPushResult_DryRunWorkspaceReferenceOutput(t *testing.T) {
 		t.Fatalf("dry run should not claim the workspace reference was pushed, got:\n%s", output)
 	}
 }
+
+func TestPushCommandRegistersAllowSecretsFlag(t *testing.T) {
+	flag := pushCmd.Flags().Lookup("allow-secrets")
+	if flag == nil {
+		t.Fatal("push command does not register --allow-secrets")
+	}
+	if flag.DefValue != "false" {
+		t.Fatalf("--allow-secrets default = %q, want false", flag.DefValue)
+	}
+}

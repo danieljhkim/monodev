@@ -27,6 +27,11 @@ type PushRequest struct {
 
 	// Force indicates whether to force push (overwrite remote changes)
 	Force bool
+
+	// AllowSecrets permits a deliberate push even when the plaintext persistence
+	// payload contains a detected secret. It should only be used after reviewing
+	// the finding because the persistence branch is visible to its collaborators.
+	AllowSecrets bool
 }
 
 // PushResult contains the result of a push operation.
