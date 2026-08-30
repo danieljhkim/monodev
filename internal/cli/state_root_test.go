@@ -65,7 +65,7 @@ func TestExistingHomeStoresRemainReachable(t *testing.T) {
 	chdir(t, repo)
 
 	out := runCLI(t, "store", "ls", "--json")
-	if !storeListContains(t, out, "legacy-home", stores.ScopeGlobal) {
+	if !storeListContains(t, out, "legacy-home") {
 		t.Fatalf("existing ~/.monodev store was silently unreachable; store ls --json = %s", out)
 	}
 
@@ -157,22 +157,21 @@ func seedHomeStore(t *testing.T, home, id string) {
 		t.Fatal(err)
 	}
 	repo := stores.NewFileStoreRepo(fsops.NewRealFS(), storesDir)
-	if err := repo.Create(id, stores.NewStoreMeta(id, stores.ScopeGlobal, time.Now())); err != nil {
+	if err := repo.Create(id, stores.NewStoreMeta(id, time.Now())); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func storeListContains(t *testing.T, raw, id, scope string) bool {
+func storeListContains(t *testing.T, raw, id string) bool {
 	t.Helper()
 	var listed []struct {
-		ID    string
-		Scope string
+		ID string
 	}
 	if err := json.Unmarshal([]byte(raw), &listed); err != nil {
 		t.Fatalf("store ls JSON: %v\n%s", err, raw)
 	}
 	for _, store := range listed {
-		if store.ID == id && store.Scope == scope {
+		if store.ID == id {
 			return true
 		}
 	}
