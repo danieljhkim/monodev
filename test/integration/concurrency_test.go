@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -97,6 +98,103 @@ func TestConcurrentWorkspaceAndStoreMutationsSerializeAcrossProcesses(t *testing
 		}
 		if data, err := os.ReadFile(filepath.Join(storeRepo.OverlayRoot(storeID), path)); err != nil || string(data) != writer {
 			t.Errorf("store overlay %s = %q, %v", path, data, err)
+		}
+	}
+}
+
+// TestConcurrentApplyAcrossLinkedWorktreesDoesNotContend applies the same
+// shared store from two linked git worktrees at once. Because each worktree
+// resolves to its own workspace ID (and therefore its own applied-overlay
+// ledger), the two Applies only need a shared (read) lock on the common
+// store and must not trip the exclusive per-workspace lock against each
+// other or surface a spurious resource-lock-contention error.
+func TestConcurrentApplyAcrossLinkedWorktreesDoesNotContend(t *testing.T) {
+	root := t.TempDir()
+	mainDir := filepath.Join(root, "repo")
+	if err := os.MkdirAll(mainDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, mainDir, "init")
+	runGit(t, mainDir, "config", "user.email", "test@example.com")
+	runGit(t, mainDir, "config", "user.name", "Test User")
+	runGit(t, mainDir, "commit", "--allow-empty", "-m", "init")
+
+	workspacesDir := filepath.Join(root, "workspaces")
+	storesDir := filepath.Join(root, "stores")
+	fs := fsops.NewRealFS()
+	newEngine := func() *engine.Engine {
+		return engine.New(
+			gitx.NewRealGitRepo(),
+			stores.NewFileStoreRepo(fs, storesDir),
+			state.NewFileStateStore(fs, workspacesDir),
+			fs,
+			hash.NewSHA256Hasher(),
+			&clock.RealClock{},
+			config.Paths{
+				Root:       root,
+				Stores:     storesDir,
+				Workspaces: workspacesDir,
+				Config:     filepath.Join(root, "config.yaml"),
+			},
+		)
+	}
+
+	ctx := context.Background()
+	setupEng := newEngine()
+	if err := setupEng.CreateStore(ctx, &engine.CreateStoreRequest{
+		CWD:     mainDir,
+		StoreID: "shared-overlay",
+		Name:    "Shared overlay",
+		Scope:   stores.ScopeGlobal,
+		Owner:   "tester",
+	}); err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	devFile := filepath.Join(mainDir, "dev.cfg")
+	if err := os.WriteFile(devFile, []byte("mode=dev\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setupEng.Track(ctx, &engine.TrackRequest{CWD: mainDir, Paths: []string{"dev.cfg"}}); err != nil {
+		t.Fatalf("Track: %v", err)
+	}
+	if _, err := setupEng.Commit(ctx, &engine.CommitRequest{CWD: mainDir, All: true}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	worktreeA := filepath.Join(root, "wt-a")
+	worktreeB := filepath.Join(root, "wt-b")
+	runGit(t, mainDir, "worktree", "add", worktreeA, "-b", "wt-a-branch")
+	runGit(t, mainDir, "worktree", "add", worktreeB, "-b", "wt-b-branch")
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, dir := range []string{worktreeA, worktreeB} {
+		wg.Add(1)
+		go func(cwd string) {
+			defer wg.Done()
+			_, err := newEngine().Apply(ctx, &engine.ApplyRequest{
+				CWD:      cwd,
+				Mode:     "copy",
+				StoreIDs: []string{"shared-overlay"},
+			})
+			errs <- err
+		}(dir)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("concurrent Apply across worktrees failed: %v", err)
+		}
+	}
+
+	for _, dir := range []string{worktreeA, worktreeB} {
+		got, err := os.ReadFile(filepath.Join(dir, "dev.cfg"))
+		if err != nil {
+			t.Fatalf("expected dev.cfg applied in %s: %v", dir, err)
+		}
+		if string(got) != "mode=dev\n" {
+			t.Errorf("%s dev.cfg = %q, want %q", dir, got, "mode=dev\n")
 		}
 	}
 }

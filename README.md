@@ -86,6 +86,7 @@ A **workspace** represents a specific directory within a repository where overla
   - the relative path within the repo
 - Stored at: `.monodev/workspaces/<workspace-id>.json`
 - See [docs/workspace-identity.md](docs/workspace-identity.md) for the full rule, including multiple remotes, moved clones, and repair.
+- Running parallel coding agents in `git worktree`s of the same repo? See [docs/worktrees.md](docs/worktrees.md) for what's shared (stores) versus per-worktree (the applied-overlay ledger).
 
 > **In short:** stores define *what* dev artifacts exist, and workspaces define *where* and *when* they are applied.
 
