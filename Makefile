@@ -1,4 +1,4 @@
-.PHONY: help build install install-user go-install clean test format all test-integration test-coverage lint vet deps
+.PHONY: help build release-artifacts install install-user go-install clean test format all test-integration test-coverage lint vet deps
 
 # Default target
 .DEFAULT_GOAL := help
@@ -9,6 +9,18 @@ BUILD_DIR := bin
 GO_FILES := $(shell find . -name '*.go' -not -path './vendor/*')
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
+# Release artifact variables (can be overridden for cross-platform builds)
+RELEASE_DIR ?= dist
+GOOS ?=
+GOARCH ?=
+RELEASE_GO_ENV := CGO_ENABLED=0
+ifneq ($(strip $(GOOS)),)
+RELEASE_GO_ENV += GOOS=$(GOOS)
+endif
+ifneq ($(strip $(GOARCH)),)
+RELEASE_GO_ENV += GOARCH=$(GOARCH)
+endif
+
 # Installation variables (can be overridden)
 DESTDIR ?=
 PREFIX ?= /usr/local
@@ -16,6 +28,7 @@ INSTALL_DIR := $(DESTDIR)$(PREFIX)/bin
 
 # Go build flags
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+RELEASE_LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 
 ##@ General
 
@@ -31,6 +44,14 @@ build: ## Build the Go binary
 	@mkdir -p $(BUILD_DIR)
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) cmd/monodev/main.go
 	@echo "✓ Built $(BUILD_DIR)/$(BINARY_NAME)"
+
+release-artifacts: ## Build the release binary and generate shell completions and man pages
+	@echo "Building release artifacts for $(VERSION)..."
+	@rm -rf "$(RELEASE_DIR)"
+	@mkdir -p "$(RELEASE_DIR)/completions" "$(RELEASE_DIR)/man"
+	$(RELEASE_GO_ENV) go build $(RELEASE_LDFLAGS) -trimpath -buildvcs=false -o "$(RELEASE_DIR)/$(BINARY_NAME)" ./cmd/monodev
+	env -u GOOS -u GOARCH -u GOARM go run ./cmd/monodev-docs --output "$(RELEASE_DIR)" --version "$(VERSION)"
+	@echo "✓ Generated $(RELEASE_DIR)/completions and $(RELEASE_DIR)/man"
 
 install: build ## Build and install to $(PREFIX)/bin (default: /usr/local/bin). Override with: make install PREFIX=/custom/path
 	@echo "Installing $(BINARY_NAME) to $(INSTALL_DIR)..."
