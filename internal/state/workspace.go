@@ -250,9 +250,9 @@ func (ws *WorkspaceState) MigrateDeprecatedStack() bool {
 	}
 
 	seen := make(map[string]bool)
-	// Preallocate from one input only; adding the two lengths can overflow int
-	// before make uses the result as an allocation size.
-	next := make([]AppliedStore, 0, len(ws.Stack))
+	// Do not use lengths from deserialized state as an allocation size. Append
+	// grows the result as validated owners are discovered.
+	next := make([]AppliedStore, 0)
 	appendOwner := func(id, typ string) {
 		if id == "" || seen[id] {
 			return
