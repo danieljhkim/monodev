@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "assetKind": "auto_task",
   "assets": {
+    "code-review": "30b9a032c1f0491b55c806caae1005cccefca3e13e5eaf2462562fe047e3266a",
     "friction-curation": "08bbe4472532fe7920c78ee3e6f338da8c9cfead1d329feeaf6bac39d4946bad",
     "qa-sweep": "d77c33b62c37ee81469676b7e7af31e504a84e5bf610646db62688b26f130708",
     "security-review": "2cdd0b9b5a69cb118fa2e568c71e7db43d48cd3840d2de7bd90fd3c21cf3b607"

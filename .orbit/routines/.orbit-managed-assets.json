@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "assetKind": "routine",
   "assets": {
     "auto_task_scheduler": "d8288309126866cfbba4b0aabfb54b1f0f396d8796045911a1ada2072ec8e75d",
@@ -7,5 +7,27 @@
     "task_pilot": "1efcec29182703aa462fa3332ba1d218076d59a08fbcc09763e16654fb87c76d",
     "task_triage": "808c09e433e8fa12f4fd7f07583a72b9a451663aac7cfc1328b303865ec4e7ad",
     "worktree_gc": "bbcc6bbebf763429cc917dace891b3ec986cb0faabcda6a1dca21c255a8808d7"
+  },
+  "routineProvenance": {
+    "ship_sweep": {
+      "templateDigest": "416134b342e33f1b2565b88bc2e41b885a39b21c02324f0c8ed79bec74c562d1",
+      "renderedDigest": "8150beb7b4b15d93e8ec6d9e4d4d7800ae437d939b0151c4e3bd91ed03b2863e",
+      "binding": {
+        "name": "ship-sweep-monodev",
+        "hosts": [
+          "Daniels-Mac-mini.local"
+        ]
+      }
+    },
+    "task_triage": {
+      "templateDigest": "21feb397078d47165a0e2a618e8f0dfc97cdbd02c60d0595d71b43b20abd7c5e",
+      "renderedDigest": "808c09e433e8fa12f4fd7f07583a72b9a451663aac7cfc1328b303865ec4e7ad",
+      "binding": {
+        "name": "task-triage-monodev",
+        "hosts": [
+          "Daniels-Mac-mini.local"
+        ]
+      }
+    }
   }
 }
