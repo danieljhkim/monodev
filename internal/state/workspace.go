@@ -250,7 +250,9 @@ func (ws *WorkspaceState) MigrateDeprecatedStack() bool {
 	}
 
 	seen := make(map[string]bool)
-	next := make([]AppliedStore, 0, len(ws.Stack)+len(ws.AppliedStores))
+	// Preallocate from one input only; adding the two lengths can overflow int
+	// before make uses the result as an allocation size.
+	next := make([]AppliedStore, 0, len(ws.Stack))
 	appendOwner := func(id, typ string) {
 		if id == "" || seen[id] {
 			return
