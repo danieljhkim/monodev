@@ -141,7 +141,10 @@ func replaceManagedExcludeBlock(contents, replacement []byte) ([]byte, bool, err
 	}
 
 	if found {
-		updated := make([]byte, 0, len(contents)-end+start+len(replacement))
+		// The existing contents length is already a valid allocation size. Avoid
+		// calculating a replacement size from multiple attacker-controlled lengths
+		// before allocating, since that integer arithmetic can overflow.
+		updated := make([]byte, 0, len(contents))
 		updated = append(updated, contents[:start]...)
 		updated = append(updated, replacement...)
 		updated = append(updated, contents[end:]...)
