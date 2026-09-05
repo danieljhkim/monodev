@@ -1,4 +1,4 @@
-.PHONY: help build release-artifacts install install-user go-install clean test format all test-integration test-coverage lint vet deps
+.PHONY: help build release-artifacts install install-user go-install clean test format all test-integration test-coverage lint vet deps check-workflows
 
 # Default target
 .DEFAULT_GOAL := help
@@ -106,6 +106,14 @@ test-coverage: ## Run unit tests with coverage report
 test-integration: ## Run integration tests
 	@echo "Running integration tests..."
 	go test -v -tags=integration ./test/integration/...
+
+check-workflows: ## Verify workflow actions use immutable commit SHAs
+	@bad=$$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 | xargs -0 awk '/^[[:space:]]*uses:/ { line = $$0; sub(/^[[:space:]]*uses:[[:space:]]*/, "", line); sub(/[[:space:]]*#.*$$/, "", line); count = split(line, parts, "@"); if (count != 2 || parts[2] !~ /^[0-9a-fA-F]+$$/ || length(parts[2]) != 40) print FILENAME ":" FNR ":" $$0 }'); \
+		if [ -n "$$bad" ]; then \
+			echo "Workflow actions must be pinned to 40-character commit SHAs:" >&2; \
+			echo "$$bad" >&2; \
+			exit 1; \
+		fi
 
 ##@ Development
 
