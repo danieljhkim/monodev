@@ -206,6 +206,66 @@ func TestCheckoutCommand_DescriptionRoundTripAndDescribeJSON(t *testing.T) {
 	}
 }
 
+func TestStoreCloneCommand_CreatesIndependentStoreWithoutChangingActiveStore(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+	runCLI(t, "init")
+	runCLI(t, "checkout", "-n", "source")
+
+	sourceFile := filepath.Join(repo, "bin", "tool")
+	if err := os.MkdirAll(filepath.Dir(sourceFile), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourceFile, []byte("#!/bin/sh\necho source\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runCLI(t, "track", "bin/tool", "--role", "script", "--origin", "agent")
+	runCLI(t, "commit", "--all")
+
+	before := runCLI(t, "status", "--json")
+	runCLI(t, "store", "clone", "source", "variant")
+	after := runCLI(t, "status", "--json")
+	var beforeStatus, afterStatus struct {
+		ActiveStore string
+		WorkspaceID string
+	}
+	if err := json.Unmarshal([]byte(before), &beforeStatus); err != nil {
+		t.Fatalf("status before clone JSON: %v\n%s", err, before)
+	}
+	if err := json.Unmarshal([]byte(after), &afterStatus); err != nil {
+		t.Fatalf("status after clone JSON: %v\n%s", err, after)
+	}
+	if afterStatus != beforeStatus {
+		t.Fatalf("clone changed workspace state: before=%#v after=%#v", beforeStatus, afterStatus)
+	}
+
+	sourceOverlay := filepath.Join(repo, ".monodev", "stores", "source", "overlay", "bin", "tool")
+	destinationOverlay := filepath.Join(repo, ".monodev", "stores", "variant", "overlay", "bin", "tool")
+	sourceData, err := os.ReadFile(sourceOverlay)
+	if err != nil {
+		t.Fatalf("ReadFile(source overlay): %v", err)
+	}
+	destinationData, err := os.ReadFile(destinationOverlay)
+	if err != nil {
+		t.Fatalf("ReadFile(destination overlay): %v", err)
+	}
+	if string(destinationData) != string(sourceData) {
+		t.Errorf("destination content = %q, want %q", destinationData, sourceData)
+	}
+	if err := os.WriteFile(destinationOverlay, []byte("#!/bin/sh\necho variant\n"), 0700); err != nil {
+		t.Fatalf("WriteFile(destination overlay): %v", err)
+	}
+	sourceData, err = os.ReadFile(sourceOverlay)
+	if err != nil {
+		t.Fatalf("ReadFile(source overlay after mutation): %v", err)
+	}
+	if string(sourceData) != "#!/bin/sh\necho source\n" {
+		t.Errorf("source content after destination mutation = %q", sourceData)
+	}
+}
+
 func TestCheckoutCommand_InvalidArgs(t *testing.T) {
 	workspaceDir, cleanup := setupTestEnv(t)
 	defer cleanup()
