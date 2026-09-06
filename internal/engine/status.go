@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
@@ -86,7 +85,8 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 				result.TrackedPaths = track.Paths()
 
 				// Compute TrackedPathDetails
-				result.TrackedPathDetails = e.computeTrackedPathDetails(repo, result.ActiveStore, track.Paths(), workspaceState)
+				workspaceRoot := filepath.Join(root, workspacePath)
+				result.TrackedPathDetails = e.computeTrackedPathDetails(repo, result.ActiveStore, track.Paths(), workspaceState, workspaceRoot)
 
 				// Compute ActiveStoreStatus
 				result.ActiveStoreStatus = e.computeActiveStoreStatus(track.Paths(), result.TrackedPathDetails)
@@ -142,7 +142,7 @@ func (e *Engine) computeAppliedStoreDetails(workspaceState *state.WorkspaceState
 }
 
 // computeTrackedPathDetails computes detailed info for tracked paths.
-func (e *Engine) computeTrackedPathDetails(repo stores.StoreRepo, activeStoreID string, trackedPaths []string, workspaceState *state.WorkspaceState) []TrackedPathInfo {
+func (e *Engine) computeTrackedPathDetails(repo stores.StoreRepo, activeStoreID string, trackedPaths []string, workspaceState *state.WorkspaceState, workspaceRoot string) []TrackedPathInfo {
 	var details []TrackedPathInfo
 
 	overlayRoot := repo.OverlayRoot(activeStoreID)
@@ -181,7 +181,7 @@ func (e *Engine) computeTrackedPathDetails(repo stores.StoreRepo, activeStoreID 
 		}
 
 		// Check if modified by comparing workspace and store overlay
-		pathInfo.IsModified = e.isPathModified(trackedPath, overlayRoot, pathKindMap[trackedPath])
+		pathInfo.IsModified = e.isPathModified(workspaceRoot, trackedPath, overlayRoot, pathKindMap[trackedPath])
 
 		details = append(details, pathInfo)
 	}
@@ -190,20 +190,13 @@ func (e *Engine) computeTrackedPathDetails(repo stores.StoreRepo, activeStoreID 
 }
 
 // isPathModified checks if a tracked path is modified in the workspace compared to the store overlay.
-func (e *Engine) isPathModified(trackedPath, overlayRoot, kind string) bool {
-	// Get workspace root
-	cwd, _ := os.Getwd()
-	root, _, _, err := e.DiscoverWorkspace(cwd)
-	if err != nil {
-		return false
-	}
-
-	workspacePath := filepath.Join(root, trackedPath)
+func (e *Engine) isPathModified(workspaceRoot, trackedPath, overlayRoot, kind string) bool {
+	workspacePath := filepath.Join(workspaceRoot, trackedPath)
 	storePath := filepath.Join(overlayRoot, trackedPath)
 
 	if kind == "dir" {
 		// For directories, check if any files within are modified
-		dirFiles, err := e.compareDirPath(root, overlayRoot, workspacePath, storePath, trackedPath, false)
+		dirFiles, err := e.compareDirPath(workspaceRoot, overlayRoot, workspacePath, storePath, trackedPath, false)
 		if err != nil {
 			return false
 		}
