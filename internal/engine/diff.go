@@ -79,16 +79,17 @@ func (e *Engine) Diff(ctx context.Context, req *DiffRequest) (*DiffResult, error
 
 	// Get overlay root path
 	overlayRoot := repo.OverlayRoot(storeID)
+	workspaceRoot := filepath.Join(root, workspacePath)
 
 	// Compare each tracked path
 	files := make([]DiffFileInfo, 0, len(trackFile.Tracked))
 	for _, tracked := range trackFile.Tracked {
-		workspacePath := filepath.Join(root, tracked.Path)
+		workspacePath := filepath.Join(workspaceRoot, tracked.Path)
 		storePath := filepath.Join(overlayRoot, tracked.Path)
 
 		if tracked.Kind == "dir" {
 			// For directories, walk and compare all files within
-			dirFiles, err := e.compareDirPath(root, overlayRoot, workspacePath, storePath, tracked.Path, req.ShowContent)
+			dirFiles, err := e.compareDirPath(workspaceRoot, overlayRoot, workspacePath, storePath, tracked.Path, req.ShowContent)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compare directory %s: %w", tracked.Path, err)
 			}
