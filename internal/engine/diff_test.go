@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -114,6 +115,146 @@ func TestGenerateUnifiedDiff_AddedFile(t *testing.T) {
 		if !strings.Contains(diff, want) {
 			t.Fatalf("diff missing %q:\n%s", want, diff)
 		}
+	}
+}
+
+func TestGenerateUnifiedDiff_PreservesFinalNewlineChanges(t *testing.T) {
+	tests := []struct {
+		name          string
+		oldData       []byte
+		newData       []byte
+		wantAdditions int
+		wantDeletions int
+		wantOldMarker bool
+		wantNewMarker bool
+	}{
+		{
+			name:          "removed final newline",
+			oldData:       []byte("hello\n"),
+			newData:       []byte("hello"),
+			wantAdditions: 1,
+			wantDeletions: 1,
+			wantNewMarker: true,
+		},
+		{
+			name:          "added final newline",
+			oldData:       []byte("hello"),
+			newData:       []byte("hello\n"),
+			wantAdditions: 1,
+			wantDeletions: 1,
+			wantOldMarker: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diff, additions, deletions := generateUnifiedDiff("test.txt", tt.oldData, tt.newData, "modified")
+			if additions != tt.wantAdditions || deletions != tt.wantDeletions {
+				t.Fatalf("line stats = +%d/-%d, want +%d/-%d; diff:\n%s", additions, deletions, tt.wantAdditions, tt.wantDeletions, diff)
+			}
+			if !strings.Contains(diff, "-hello\n") || !strings.Contains(diff, "+hello\n") {
+				t.Fatalf("diff should contain replacement lines:\n%s", diff)
+			}
+			marker := "\\ No newline at end of file\n"
+			if strings.Count(diff, marker) != 1 {
+				t.Fatalf("marker count = %d, want 1; diff:\n%s", strings.Count(diff, marker), diff)
+			}
+			if tt.wantOldMarker && !strings.Contains(diff, "-hello\n"+marker) {
+				t.Fatalf("missing old-line no-newline marker:\n%s", diff)
+			}
+			if tt.wantNewMarker && !strings.Contains(diff, "+hello\n"+marker) {
+				t.Fatalf("missing new-line no-newline marker:\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGenerateUnifiedDiff_ModifiedUnterminatedLastLine(t *testing.T) {
+	diff, additions, deletions := generateUnifiedDiff(
+		"test.txt",
+		[]byte("first\nold"),
+		[]byte("first\nnew"),
+		"modified",
+	)
+
+	if additions != 1 || deletions != 1 {
+		t.Fatalf("line stats = +%d/-%d, want +1/-1", additions, deletions)
+	}
+	marker := "\\ No newline at end of file\n"
+	if !strings.Contains(diff, "-old\n"+marker) || !strings.Contains(diff, "+new\n"+marker) {
+		t.Fatalf("unterminated last-line markers missing:\n%s", diff)
+	}
+}
+
+func TestGenerateUnifiedDiff_PatchRoundTripPreservesBytes(t *testing.T) {
+	tests := []struct {
+		name    string
+		oldData []byte
+		newData []byte
+	}{
+		{name: "remove final newline", oldData: []byte("hello\n"), newData: []byte("hello")},
+		{name: "add final newline", oldData: []byte("hello"), newData: []byte("hello\n")},
+		{name: "modify unterminated last line", oldData: []byte("first\nold"), newData: []byte("first\nnew")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			runGit := func(args ...string) {
+				t.Helper()
+				cmd := exec.Command("git", args...)
+				cmd.Dir = repo
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v failed: %v\n%s", args, err, output)
+				}
+			}
+			runGit("init", "--quiet")
+			runGit("config", "user.email", "test@example.com")
+			runGit("config", "user.name", "Test")
+
+			filePath := filepath.Join(repo, "test.txt")
+			if err := os.WriteFile(filePath, tt.oldData, 0644); err != nil {
+				t.Fatalf("failed to write old file: %v", err)
+			}
+			runGit("add", "test.txt")
+			runGit("commit", "--quiet", "-m", "initial")
+
+			patchPath := filepath.Join(repo, "change.patch")
+			diff, _, _ := generateUnifiedDiff("test.txt", tt.oldData, tt.newData, "modified")
+			if err := os.WriteFile(patchPath, []byte(diff), 0644); err != nil {
+				t.Fatalf("failed to write patch: %v", err)
+			}
+			runGit("apply", patchPath)
+
+			got, err := os.ReadFile(filePath)
+			if err != nil {
+				t.Fatalf("failed to read patched file: %v", err)
+			}
+			if string(got) != string(tt.newData) {
+				t.Fatalf("patched bytes = %q, want %q", got, tt.newData)
+			}
+		})
+	}
+}
+
+func TestGenerateUnifiedDiff_EmptyAndTerminatedFilesHaveExpectedMarkers(t *testing.T) {
+	tests := []struct {
+		name    string
+		oldData []byte
+		newData []byte
+		markers int
+	}{
+		{name: "empty files", oldData: []byte{}, newData: []byte{}, markers: 0},
+		{name: "terminated files", oldData: []byte("old\n"), newData: []byte("new\n"), markers: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diff, _, _ := generateUnifiedDiff("test.txt", tt.oldData, tt.newData, "modified")
+			if got := strings.Count(diff, "\\ No newline at end of file\n"); got != tt.markers {
+				t.Fatalf("marker count = %d, want %d; diff:\n%s", got, tt.markers, diff)
+			}
+		})
 	}
 }
 

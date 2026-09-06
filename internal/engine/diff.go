@@ -276,10 +276,16 @@ func (e *Engine) comparePath(workspacePath, storePath, relPath, kind string, sho
 }
 
 type lineOp struct {
-	kind byte
-	text string
-	old  int
-	new  int
+	kind       byte
+	text       string
+	hasNewline bool
+	old        int
+	new        int
+}
+
+type diffLine struct {
+	text       string
+	hasNewline bool
 }
 
 func generateUnifiedDiff(relPath string, oldData, newData []byte, status string) (string, int, int) {
@@ -352,21 +358,30 @@ func generateUnifiedDiff(relPath string, oldData, newData []byte, status string)
 		fmt.Fprintf(&b, "@@ -%s +%s @@\n", formatHunkRange(oldStart, oldCount), formatHunkRange(newStart, newCount))
 		for _, op := range hunk.ops {
 			fmt.Fprintf(&b, "%c%s\n", op.kind, op.text)
+			if !op.hasNewline {
+				b.WriteString("\\ No newline at end of file\n")
+			}
 		}
 	}
 
 	return b.String(), additions, deletions
 }
 
-func splitLines(content string) []string {
+func splitLines(content string) []diffLine {
 	if content == "" {
 		return nil
 	}
 
-	lines := strings.Split(content, "\n")
-	// Remove trailing empty segment from terminal newline to align line-based diff output.
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
+	parts := strings.Split(content, "\n")
+	lines := make([]diffLine, 0, len(parts))
+	for i, part := range parts {
+		hasNewline := i < len(parts)-1
+		if part == "" && !hasNewline {
+			// A trailing empty segment represents the newline terminating the
+			// preceding line, rather than an additional empty line.
+			continue
+		}
+		lines = append(lines, diffLine{text: part, hasNewline: hasNewline})
 	}
 	return lines
 }
@@ -378,7 +393,7 @@ func isBinary(data []byte) bool {
 	return bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)
 }
 
-func diffLineOps(oldLines, newLines []string) []lineOp {
+func diffLineOps(oldLines, newLines []diffLine) []lineOp {
 	n := len(oldLines)
 	m := len(newLines)
 	dp := make([][]int, n+1)
@@ -405,10 +420,11 @@ func diffLineOps(oldLines, newLines []string) []lineOp {
 	for i < n || j < m {
 		if i < n && j < m && oldLines[i] == newLines[j] {
 			ops = append(ops, lineOp{
-				kind: ' ',
-				text: oldLines[i],
-				old:  oldLineNo,
-				new:  newLineNo,
+				kind:       ' ',
+				text:       oldLines[i].text,
+				hasNewline: oldLines[i].hasNewline,
+				old:        oldLineNo,
+				new:        newLineNo,
 			})
 			i++
 			j++
@@ -419,10 +435,11 @@ func diffLineOps(oldLines, newLines []string) []lineOp {
 
 		if j < m && (i == n || dp[i][j+1] >= dp[i+1][j]) {
 			ops = append(ops, lineOp{
-				kind: '+',
-				text: newLines[j],
-				old:  oldLineNo,
-				new:  newLineNo,
+				kind:       '+',
+				text:       newLines[j].text,
+				hasNewline: newLines[j].hasNewline,
+				old:        oldLineNo,
+				new:        newLineNo,
 			})
 			j++
 			newLineNo++
@@ -430,10 +447,11 @@ func diffLineOps(oldLines, newLines []string) []lineOp {
 		}
 
 		ops = append(ops, lineOp{
-			kind: '-',
-			text: oldLines[i],
-			old:  oldLineNo,
-			new:  newLineNo,
+			kind:       '-',
+			text:       oldLines[i].text,
+			hasNewline: oldLines[i].hasNewline,
+			old:        oldLineNo,
+			new:        newLineNo,
 		})
 		i++
 		oldLineNo++
