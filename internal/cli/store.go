@@ -13,6 +13,10 @@ var storeCmd = &cobra.Command{
 	Use:   "store",
 	Short: "Manage stores",
 	Long:  `Manage stores for component-scoped development overlays.`,
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
 }
 
 func init() {

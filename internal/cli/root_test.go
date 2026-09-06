@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -135,6 +136,66 @@ func TestOldCommands_NotRegistered(t *testing.T) {
 			// These commands should not be found at the root level
 			if err == nil && subCmd != nil && subCmd.Name() == cmd {
 				t.Errorf("Old command %q should not be registered at root level", cmd)
+			}
+		})
+	}
+}
+
+func TestCommandGroups_RejectUnexpectedArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "store retired command", args: []string{"store", "prune"}},
+		{name: "store unknown command", args: []string{"store", "bogus"}},
+		{name: "workspace unknown command", args: []string{"workspace", "bogus"}},
+		{name: "remote unknown command", args: []string{"remote", "bogus"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetCommandFlags(rootCmd)
+			rootCmd.SetArgs(tt.args)
+			var output bytes.Buffer
+			rootCmd.SetOut(&output)
+			rootCmd.SetErr(&output)
+
+			err := rootCmd.Execute()
+			if err == nil {
+				t.Fatalf("Execute(%q) returned nil; output = %q", tt.args, output.String())
+			}
+			if !strings.Contains(err.Error(), "unknown command") && !strings.Contains(err.Error(), "unexpected argument") {
+				t.Fatalf("Execute(%q) error = %q, want an unknown-command or unexpected-argument error", tt.args, err)
+			}
+		})
+	}
+}
+
+func TestCommandGroups_Help(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "store", args: []string{"store"}},
+		{name: "workspace", args: []string{"workspace"}},
+		{name: "remote", args: []string{"remote"}},
+		{name: "store help", args: []string{"store", "--help"}},
+		{name: "workspace help", args: []string{"workspace", "--help"}},
+		{name: "remote help", args: []string{"remote", "--help"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetCommandFlags(rootCmd)
+			rootCmd.SetArgs(tt.args)
+			var output bytes.Buffer
+			rootCmd.SetOut(&output)
+
+			if err := rootCmd.Execute(); err != nil {
+				t.Fatalf("Execute(%q) error = %v", tt.args, err)
+			}
+			if !strings.Contains(output.String(), "Usage:") {
+				t.Fatalf("Execute(%q) output = %q, want help output", tt.args, output.String())
 			}
 		})
 	}
