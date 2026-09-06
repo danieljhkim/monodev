@@ -3,9 +3,12 @@ package engine
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/danieljhkim/monodev/internal/config"
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -165,5 +168,90 @@ func TestCommit_RepoRootWorkspaceUnchanged(t *testing.T) {
 	wantSrc := "/repo/docs/readme.md"
 	if srcCalled != wantSrc {
 		t.Errorf("Copy called with src=%q, want %q", srcCalled, wantSrc)
+	}
+}
+
+func TestCommit_AllRemovesUntrackedSiblingFromOverlay(t *testing.T) {
+	repoRoot := t.TempDir()
+	overlayRoot := t.TempDir()
+	writeOverlayFile(t, repoRoot, "notes/a")
+	writeOverlayFile(t, overlayRoot, "notes/a")
+	writeOverlayFile(t, overlayRoot, "notes/b")
+
+	track := stores.NewTrackFile()
+	// This is the post-untrack state: notes/a remains tracked while notes/b
+	// remains in the prior overlay snapshot.
+	track.Tracked = []stores.TrackedPath{{Path: "notes/a", Kind: "file"}}
+	stateStore := newMockStateStore()
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	workspaceState := state.NewWorkspaceState("fp1", ".", "copy")
+	workspaceState.ActiveStore = "untrusted-store"
+	stateStore.workspaces[workspaceID] = workspaceState
+
+	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, stateStore)
+	result, err := eng.Commit(context.Background(), &CommitRequest{CWD: repoRoot, All: true})
+	if err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	if want := []string{"notes/b"}; !reflect.DeepEqual(result.Removed, want) {
+		t.Fatalf("Removed = %v, want %v", result.Removed, want)
+	}
+	if _, err := os.Stat(filepath.Join(overlayRoot, "notes", "a")); err != nil {
+		t.Fatalf("tracked file was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(overlayRoot, "notes")); err != nil {
+		t.Fatalf("structural ancestor was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(overlayRoot, "notes", "b")); !os.IsNotExist(err) {
+		t.Fatalf("untracked sibling still exists, stat error = %v", err)
+	}
+}
+
+func TestCleanupOrphanedFiles_RetainsIntentionallyTrackedDirectory(t *testing.T) {
+	overlayRoot := t.TempDir()
+	writeOverlayFile(t, overlayRoot, "notes/a")
+	writeOverlayFile(t, overlayRoot, "notes/nested/b")
+	writeOverlayFile(t, overlayRoot, "untracked/c")
+
+	eng := &Engine{fs: fsops.NewRealFS()}
+	removed, err := eng.cleanupOrphanedFiles(overlayRoot, []stores.TrackedPath{{Path: "notes", Kind: "dir"}}, false)
+	if err != nil {
+		t.Fatalf("cleanupOrphanedFiles() error = %v", err)
+	}
+	if want := []string{"untracked"}; !reflect.DeepEqual(removed, want) {
+		t.Fatalf("removed = %v, want %v", removed, want)
+	}
+	if _, err := os.Stat(filepath.Join(overlayRoot, "notes", "nested", "b")); err != nil {
+		t.Fatalf("tracked directory descendant was removed: %v", err)
+	}
+}
+
+func TestCleanupOrphanedFiles_DryRunMatchesRemovalWithoutMutating(t *testing.T) {
+	overlayRoot := t.TempDir()
+	writeOverlayFile(t, overlayRoot, "notes/a")
+	writeOverlayFile(t, overlayRoot, "notes/b")
+
+	eng := &Engine{fs: fsops.NewRealFS()}
+	tracked := []stores.TrackedPath{{Path: "notes/a", Kind: "file"}}
+	dryRunRemoved, err := eng.cleanupOrphanedFiles(overlayRoot, tracked, true)
+	if err != nil {
+		t.Fatalf("dry-run cleanupOrphanedFiles() error = %v", err)
+	}
+	if want := []string{"notes/b"}; !reflect.DeepEqual(dryRunRemoved, want) {
+		t.Fatalf("dry-run removed = %v, want %v", dryRunRemoved, want)
+	}
+	if _, err := os.Stat(filepath.Join(overlayRoot, "notes", "b")); err != nil {
+		t.Fatalf("dry-run removed a file: %v", err)
+	}
+
+	removed, err := eng.cleanupOrphanedFiles(overlayRoot, tracked, false)
+	if err != nil {
+		t.Fatalf("cleanupOrphanedFiles() error = %v", err)
+	}
+	if !reflect.DeepEqual(removed, dryRunRemoved) {
+		t.Fatalf("removed = %v, dry-run removed = %v", removed, dryRunRemoved)
+	}
+	if _, err := os.Stat(filepath.Join(overlayRoot, "notes", "b")); !os.IsNotExist(err) {
+		t.Fatalf("real cleanup retained orphan, stat error = %v", err)
 	}
 }

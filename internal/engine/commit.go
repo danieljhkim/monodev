@@ -243,16 +243,23 @@ func (e *Engine) commitFilePath(
 // Returns the list of removed paths (relative to overlay root).
 // If dryRun is true, it only identifies orphaned files without removing them.
 func (e *Engine) cleanupOrphanedFiles(overlayRoot string, trackedPaths []stores.TrackedPath, dryRun bool) ([]string, error) {
-	// Build set of tracked paths and all their ancestor directories for quick lookup.
-	// This ensures that parent directories of tracked files (e.g. "test2/" for
-	// tracked path "test2/test1.txt") are not treated as orphans during the walk.
-	trackedSet := make(map[string]bool)
+	// Keep explicit tracked paths separate from structural ancestor directories.
+	// Ancestors must stay so that Walk can reach tracked files, but they must not
+	// confer ownership on their untracked descendants. Only an explicitly
+	// tracked directory owns its descendants.
+	trackedFiles := make(map[string]bool)
+	trackedDirs := make(map[string]bool)
+	structuralDirs := make(map[string]bool)
 	for _, tp := range trackedPaths {
 		cleanPath := filepath.Clean(tp.Path)
-		trackedSet[cleanPath] = true
+		if tp.Kind == "dir" {
+			trackedDirs[cleanPath] = true
+		} else {
+			trackedFiles[cleanPath] = true
+		}
 		// Add all parent directories
 		for dir := filepath.Dir(cleanPath); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
-			trackedSet[dir] = true
+			structuralDirs[dir] = true
 		}
 	}
 
@@ -285,21 +292,15 @@ func (e *Engine) cleanupOrphanedFiles(overlayRoot string, trackedPaths []stores.
 			return fmt.Errorf("failed to get relative path: %w", err)
 		}
 
-		// Check if this path or any of its parents is tracked
-		isTracked := false
-		checkPath := relPath
-		for {
-			if trackedSet[checkPath] {
-				isTracked = true
+		// Explicitly tracked files and structural ancestors are retained at their
+		// own paths. Descendants are retained only when an ancestor was itself
+		// intentionally tracked as a directory.
+		isTracked := trackedFiles[relPath] || trackedDirs[relPath] || structuralDirs[relPath]
+		for parent := filepath.Dir(relPath); !isTracked && parent != "/"; parent = filepath.Dir(parent) {
+			isTracked = trackedDirs[parent]
+			if parent == "." {
 				break
 			}
-
-			// Check parent
-			parent := filepath.Dir(checkPath)
-			if parent == "." || parent == "/" {
-				break
-			}
-			checkPath = parent
 		}
 
 		// If not tracked, mark for removal
