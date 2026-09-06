@@ -109,9 +109,14 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 		}, nil
 	}
 
+	ops, removed, err := e.planManagedPathRemoval(workspaceRoot, workspaceState, ownedPaths, req.Force)
+	if err != nil {
+		return nil, err
+	}
+
 	if req.DryRun {
 		return &UnapplyResult{
-			Removed:     ownedPaths,
+			Removed:     removed,
 			WorkspaceID: workspaceID,
 			Warnings:    warnings,
 			message:     "dry run",
@@ -119,11 +124,6 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	}
 
 	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-
-	ops, removed, err := e.planManagedPathRemoval(workspaceRoot, workspaceState, ownedPaths, req.Force)
-	if err != nil {
 		return nil, err
 	}
 
