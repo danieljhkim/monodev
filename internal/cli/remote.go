@@ -16,6 +16,10 @@ var remoteCmd = &cobra.Command{
 
 The remote configuration is stored repo-locally at .monodev/remote.json
 and specifies which Git remote to use and which branch to use for persistence.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
 }
 
 var remoteUseCmd = &cobra.Command{
