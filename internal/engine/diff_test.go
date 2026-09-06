@@ -20,6 +20,18 @@ type diffStoreRepo struct {
 	overlayRoot string
 }
 
+type statusGitRepo struct {
+	*trackGitRepo
+	requestCWD string
+}
+
+func (r *statusGitRepo) RelPath(root, path string) (string, error) {
+	if filepath.Clean(path) == filepath.Clean(r.requestCWD) {
+		return r.workspacePath, nil
+	}
+	return ".", nil
+}
+
 func (r *diffStoreRepo) OverlayRoot(string) string { return r.overlayRoot }
 
 func newDiffEngine(t *testing.T, repoRoot, workspacePath, overlayRoot string, tracked []stores.TrackedPath) *Engine {
@@ -41,6 +53,34 @@ func newDiffEngine(t *testing.T, repoRoot, workspacePath, overlayRoot string, tr
 
 	return New(
 		&trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: workspacePath},
+		storeRepo,
+		stateStore,
+		fsops.NewRealFS(),
+		hash.NewSHA256Hasher(),
+		&mockClock{},
+		config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: filepath.Dir(overlayRoot), Workspaces: filepath.Join(repoRoot, ".state")},
+	)
+}
+
+func newStatusEngine(t *testing.T, gitRepo *statusGitRepo, repoRoot, workspacePath, overlayRoot string, tracked []stores.TrackedPath) *Engine {
+	t.Helper()
+
+	storeRepo := &diffStoreRepo{
+		trackStoreRepo: newTrackStoreRepo(),
+		overlayRoot:    overlayRoot,
+	}
+	track := stores.NewTrackFile()
+	track.Tracked = tracked
+	storeRepo.tracks["store1"] = track
+
+	stateStore := newMockStateStore()
+	workspaceID := state.ComputeWorkspaceID("fp1", workspacePath)
+	workspaceState := state.NewWorkspaceState("fp1", workspacePath, "copy")
+	workspaceState.ActiveStore = "store1"
+	stateStore.workspaces[workspaceID] = workspaceState
+
+	return New(
+		gitRepo,
 		storeRepo,
 		stateStore,
 		fsops.NewRealFS(),
@@ -370,5 +410,95 @@ func TestDiff_RootWorkspaceStillUsesRepositoryRoot(t *testing.T) {
 	}
 	if len(result.Files) != 1 || result.Files[0].Status != "unchanged" {
 		t.Fatalf("root workspace result = %#v, want one unchanged file", result.Files)
+	}
+}
+
+func TestStatus_UsesSelectedNestedWorkspaceRootForFiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	workspaceRoot := filepath.Join(repoRoot, "nested")
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+
+	// The process cwd is intentionally not the requested nested workspace.
+	writeDiffFixtureFile(t, filepath.Join(repoRoot, "note.txt"), "root version\n")
+	writeDiffFixtureFile(t, filepath.Join(workspaceRoot, "note.txt"), "store version\n")
+	writeDiffFixtureFile(t, filepath.Join(overlayRoot, "note.txt"), "store version\n")
+
+	gitRepo := &statusGitRepo{
+		trackGitRepo: &trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "nested"},
+		requestCWD:   workspaceRoot,
+	}
+	eng := newStatusEngine(t, gitRepo, repoRoot, "nested", overlayRoot, []stores.TrackedPath{{Path: "note.txt", Kind: "file"}})
+
+	result, err := eng.Status(context.Background(), &StatusRequest{CWD: workspaceRoot})
+	if err != nil {
+		t.Fatalf("nested status failed: %v", err)
+	}
+	if len(result.TrackedPathDetails) != 1 || result.TrackedPathDetails[0].IsModified {
+		t.Fatalf("nested unchanged status = %#v, want one unmodified path", result.TrackedPathDetails)
+	}
+
+	writeDiffFixtureFile(t, filepath.Join(workspaceRoot, "note.txt"), "nested edit\n")
+	result, err = eng.Status(context.Background(), &StatusRequest{CWD: workspaceRoot})
+	if err != nil {
+		t.Fatalf("nested edited status failed: %v", err)
+	}
+	if len(result.TrackedPathDetails) != 1 || !result.TrackedPathDetails[0].IsModified {
+		t.Fatalf("nested edited status = %#v, want one modified path", result.TrackedPathDetails)
+	}
+}
+
+func TestStatus_UsesSelectedNestedWorkspaceRootForDirectories(t *testing.T) {
+	repoRoot := t.TempDir()
+	workspaceRoot := filepath.Join(repoRoot, "nested")
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+
+	// Root-only content and a different root version must not affect the
+	// nested workspace's directory status.
+	writeDiffFixtureFile(t, filepath.Join(repoRoot, "config", "note.txt"), "root version\n")
+	writeDiffFixtureFile(t, filepath.Join(repoRoot, "config", "root-only.txt"), "root only\n")
+	writeDiffFixtureFile(t, filepath.Join(workspaceRoot, "config", "note.txt"), "store version\n")
+	writeDiffFixtureFile(t, filepath.Join(overlayRoot, "config", "note.txt"), "store version\n")
+
+	gitRepo := &statusGitRepo{
+		trackGitRepo: &trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "nested"},
+		requestCWD:   workspaceRoot,
+	}
+	eng := newStatusEngine(t, gitRepo, repoRoot, "nested", overlayRoot, []stores.TrackedPath{{Path: "config", Kind: "dir"}})
+
+	result, err := eng.Status(context.Background(), &StatusRequest{CWD: workspaceRoot})
+	if err != nil {
+		t.Fatalf("nested directory status failed: %v", err)
+	}
+	if len(result.TrackedPathDetails) != 1 || result.TrackedPathDetails[0].IsModified {
+		t.Fatalf("nested unchanged directory status = %#v, want one unmodified path", result.TrackedPathDetails)
+	}
+
+	writeDiffFixtureFile(t, filepath.Join(workspaceRoot, "config", "note.txt"), "nested edit\n")
+	result, err = eng.Status(context.Background(), &StatusRequest{CWD: workspaceRoot})
+	if err != nil {
+		t.Fatalf("nested edited directory status failed: %v", err)
+	}
+	if len(result.TrackedPathDetails) != 1 || !result.TrackedPathDetails[0].IsModified {
+		t.Fatalf("nested edited directory status = %#v, want one modified path", result.TrackedPathDetails)
+	}
+}
+
+func TestStatus_RootWorkspaceStillUsesRepositoryRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+	writeDiffFixtureFile(t, filepath.Join(repoRoot, "note.txt"), "store version\n")
+	writeDiffFixtureFile(t, filepath.Join(overlayRoot, "note.txt"), "store version\n")
+
+	gitRepo := &statusGitRepo{
+		trackGitRepo: &trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "."},
+		requestCWD:   repoRoot,
+	}
+	eng := newStatusEngine(t, gitRepo, repoRoot, ".", overlayRoot, []stores.TrackedPath{{Path: "note.txt", Kind: "file"}})
+	result, err := eng.Status(context.Background(), &StatusRequest{CWD: repoRoot})
+	if err != nil {
+		t.Fatalf("root status failed: %v", err)
+	}
+	if len(result.TrackedPathDetails) != 1 || result.TrackedPathDetails[0].IsModified {
+		t.Fatalf("root status = %#v, want one unmodified path", result.TrackedPathDetails)
 	}
 }
