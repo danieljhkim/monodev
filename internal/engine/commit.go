@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
@@ -107,6 +108,12 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	now := e.clock.Now()
 
 	workspaceRoot := filepath.Join(root, workspacePath)
+	ignoredNewPaths, err := e.userIgnoredNewFiles(workspaceRoot, overlayRoot, track.Tracked)
+	if err != nil {
+		// Match discovery's best-effort behavior: a git ignore lookup failure
+		// must not prevent a user from saving otherwise valid tracked content.
+		ignoredNewPaths = nil
+	}
 
 	if req.All {
 		// Commit all tracked paths (CWD-relative)
@@ -120,6 +127,7 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 				result,
 				now,
 				req.DryRun,
+				ignoredNewPaths,
 			); err != nil {
 				return nil, err
 			}
@@ -147,6 +155,7 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 				result,
 				now,
 				req.DryRun,
+				ignoredNewPaths,
 			); err != nil {
 				return nil, err
 			}
@@ -183,6 +192,7 @@ func (e *Engine) commitFilePath(
 	result *CommitResult,
 	now time.Time,
 	dryRun bool,
+	ignoredNewPaths map[string]bool,
 ) error {
 	// Validate path before any file IO
 	if err := e.fs.ValidateRelPath(relPath); err != nil {
@@ -211,25 +221,41 @@ func (e *Engine) commitFilePath(
 		return nil
 	}
 
-	// Copy the file/directory to the store
-	if err := e.fs.Copy(workspaceFilePath, storeFilePath); err != nil {
+	// Copy the file/directory to the store.
+	info, err := e.fs.Lstat(workspaceFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to stat workspace path %s: %w", cleanRelPath, err)
+	}
+	if info.IsDir() {
+		excluded := excludedDescendants(cleanRelPath, ignoredNewPaths)
+		if len(excluded) > 0 {
+			copier, ok := e.fs.(fsops.ExcludingCopier)
+			if !ok {
+				return fmt.Errorf("filesystem does not support filtered directory snapshots")
+			}
+			if err := copier.CopyExcept(workspaceFilePath, storeFilePath, excluded); err != nil {
+				return fmt.Errorf("failed to copy %s to store: %w", cleanRelPath, err)
+			}
+		} else if err := e.fs.Copy(workspaceFilePath, storeFilePath); err != nil {
+			return fmt.Errorf("failed to copy %s to store: %w", cleanRelPath, err)
+		}
+	} else if err := e.fs.Copy(workspaceFilePath, storeFilePath); err != nil {
 		return fmt.Errorf("failed to copy %s to store: %w", cleanRelPath, err)
 	}
 
-	// Refresh copy-mode ownership from the committed workspace tree. Files keep
-	// their existing checksum behavior; directories need the same leaf manifest
-	// Apply records so a subsequent unapply can distinguish committed content
-	// from later local changes.
+	// Refresh copy-mode ownership from the committed snapshot. Files keep their
+	// existing checksum behavior; directories need the same leaf manifest Apply
+	// records so a subsequent unapply can distinguish committed content from
+	// later local changes.
 	checksum := ""
-	info, err := e.fs.Lstat(workspaceFilePath)
 	var contents *state.DirContents
-	if err == nil && info.IsDir() {
-		files, err := e.copyDirFileChecksums(workspaceFilePath)
+	if info.IsDir() {
+		files, err := e.copyDirFileChecksums(storeFilePath)
 		if err != nil {
 			return fmt.Errorf("failed to record copied directory %s contents: %w", cleanRelPath, err)
 		}
 		contents = &state.DirContents{Files: files}
-	} else if err == nil {
+	} else {
 		hash, err := e.hasher.HashFile(workspaceFilePath)
 		if err == nil {
 			checksum = hash
@@ -247,6 +273,39 @@ func (e *Engine) commitFilePath(
 
 	result.Committed = append(result.Committed, cleanRelPath)
 	return nil
+}
+
+func (e *Engine) userIgnoredNewFiles(workspaceRoot, overlayRoot string, trackedPaths []stores.TrackedPath) (map[string]bool, error) {
+	var candidates []string
+	for _, tracked := range trackedPaths {
+		if tracked.Kind != "dir" {
+			continue
+		}
+		dirCandidates, err := e.discoverNewFilesInDir(workspaceRoot, overlayRoot, tracked.Path)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, dirCandidates...)
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	return e.userIgnored(workspaceRoot, candidates)
+}
+
+func excludedDescendants(dir string, ignoredPaths map[string]bool) map[string]bool {
+	if len(ignoredPaths) == 0 {
+		return nil
+	}
+	excluded := make(map[string]bool)
+	for ignored := range ignoredPaths {
+		rel, err := filepath.Rel(dir, ignored)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		excluded[filepath.Clean(rel)] = true
+	}
+	return excluded
 }
 
 // cleanupOrphanedFiles removes files from the overlay directory that are no longer tracked.

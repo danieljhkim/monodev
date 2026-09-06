@@ -11,6 +11,10 @@ import (
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
+type userIgnoreChecker interface {
+	IsUserIgnored(cwd string, relPaths []string) (map[string]bool, error)
+}
+
 // DiscoverNewTrackedRequest requests discovery of files that were created
 // under a tracked directory since the active store was last committed.
 type DiscoverNewTrackedRequest struct {
@@ -90,7 +94,7 @@ func (e *Engine) DiscoverNewTracked(ctx context.Context, req *DiscoverNewTracked
 	}
 	sort.Strings(candidates)
 
-	ignored, err := e.gitRepo.IsIgnored(workspaceRoot, candidates)
+	ignored, err := e.userIgnored(workspaceRoot, candidates)
 	if err != nil {
 		// Best-effort: ignore detection is a convenience, not a correctness
 		// requirement. If it fails (e.g. git unavailable), fall back to
@@ -107,6 +111,13 @@ func (e *Engine) DiscoverNewTracked(ctx context.Context, req *DiscoverNewTracked
 	}
 
 	return &DiscoverNewTrackedResult{NewPaths: newPaths}, nil
+}
+
+func (e *Engine) userIgnored(workspaceRoot string, candidates []string) (map[string]bool, error) {
+	if checker, ok := e.gitRepo.(userIgnoreChecker); ok {
+		return checker.IsUserIgnored(workspaceRoot, candidates)
+	}
+	return e.gitRepo.IsIgnored(workspaceRoot, candidates)
 }
 
 // discoverNewFilesInDir walks a tracked directory in the workspace and

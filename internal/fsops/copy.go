@@ -37,6 +37,49 @@ func (fs *RealFS) Copy(src, dst string) error {
 	return fs.copyFile(src, dst, srcInfo.Mode(), ".")
 }
 
+// CopyExcept copies a directory like Copy, except that source-relative paths
+// in excluded are omitted from the staged snapshot. The destination is only
+// replaced after the filtered copy completes successfully.
+func (fs *RealFS) CopyExcept(src, dst string, excluded map[string]bool) error {
+	if len(excluded) == 0 {
+		return fs.Copy(src, dst)
+	}
+
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		return fmt.Errorf("failed to stat source: %w", err)
+	}
+	if srcInfo.Mode()&os.ModeSymlink != 0 {
+		return unsafeSymlinkError(".")
+	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("CopyExcept requires a directory source: %q", src)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+		return fmt.Errorf("failed to create parent directory: %w", err)
+	}
+
+	staged, err := os.MkdirTemp(filepath.Dir(dst), ".monodev-copy-*")
+	if err != nil {
+		return fmt.Errorf("failed to create staged copy: %w", err)
+	}
+	stagedReady := true
+	defer func() {
+		if stagedReady {
+			_ = os.RemoveAll(staged)
+		}
+	}()
+
+	if err := fs.copyDirContentsExcept(src, staged, filepath.Clean(src), excluded); err != nil {
+		return err
+	}
+	if err := replacePath(dst, staged); err != nil {
+		return err
+	}
+	stagedReady = false
+	return nil
+}
+
 // copyFile copies a single file from src to dst.
 func (fs *RealFS) copyFile(src, dst string, mode os.FileMode, relPath string) error {
 	// Defensive check: verify source is not a directory
@@ -181,6 +224,46 @@ func (fs *RealFS) copyDirContents(src, dst, root string) error {
 		}
 	}
 
+	return nil
+}
+
+func (fs *RealFS) copyDirContentsExcept(src, dst, root string, excluded map[string]bool) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("failed to read source directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		relPath, err := copyRelPath(root, srcPath)
+		if err != nil {
+			return err
+		}
+		if excluded[filepath.Clean(relPath)] {
+			continue
+		}
+
+		info, err := os.Lstat(srcPath)
+		if err != nil {
+			return fmt.Errorf("failed to get entry info for %q: %w", relPath, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return unsafeSymlinkError(relPath)
+		}
+		if info.IsDir() {
+			if err := os.MkdirAll(dstPath, 0700); err != nil {
+				return fmt.Errorf("failed to create destination directory: %w", err)
+			}
+			if err := fs.copyDirContentsExcept(srcPath, dstPath, root, excluded); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := fs.copyFile(srcPath, dstPath, info.Mode(), relPath); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

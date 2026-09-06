@@ -720,3 +720,33 @@ func TestRealGitRepo_IsIgnored_EmptyInput(t *testing.T) {
 		t.Errorf("expected no ignored paths, got %v", ignored)
 	}
 }
+
+func TestRealGitRepo_IsUserIgnoredExcludesMonodevManagedEntries(t *testing.T) {
+	repoDir := setupGitRepo(t)
+	if err := os.WriteFile(filepath.Join(repoDir, ".gitignore"), []byte("*.log\n"), 0644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoDir, "managed"), 0755); err != nil {
+		t.Fatalf("create managed directory: %v", err)
+	}
+	for _, name := range []string{"managed/new.txt", "user.log"} {
+		if err := os.WriteFile(filepath.Join(repoDir, name), []byte("x"), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	exclude := "# >>> monodev managed block — do not edit <<<\n/managed/\n# <<< monodev managed block <<<\n"
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "info", "exclude"), []byte(exclude), 0644); err != nil {
+		t.Fatalf("write managed exclude: %v", err)
+	}
+
+	ignored, err := NewRealGitRepo().IsUserIgnored(repoDir, []string{"managed/new.txt", "user.log"})
+	if err != nil {
+		t.Fatalf("IsUserIgnored failed: %v", err)
+	}
+	if ignored["managed/new.txt"] {
+		t.Fatalf("managed exclusion treated as user ignore: %v", ignored)
+	}
+	if !ignored["user.log"] {
+		t.Fatalf("user ignore was not reported: %v", ignored)
+	}
+}

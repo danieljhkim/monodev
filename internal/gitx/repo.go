@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -364,6 +365,105 @@ func (g *RealGitRepo) IsIgnored(cwd string, relPaths []string) (map[string]bool,
 		result[filepath.FromSlash(ignored)] = true
 	}
 	return result, nil
+}
+
+// IsUserIgnored is IsIgnored without matches from monodev's managed block in
+// .git/info/exclude. Those exclusions hide already-managed overlays from git;
+// they are not a user request to omit a new file from a saved snapshot.
+func (g *RealGitRepo) IsUserIgnored(cwd string, relPaths []string) (map[string]bool, error) {
+	result := make(map[string]bool, len(relPaths))
+	if len(relPaths) == 0 {
+		return result, nil
+	}
+
+	managedLines, excludePath := g.managedExcludeLines(cwd)
+	cmd := exec.Command("git", "check-ignore", "--verbose", "--stdin", "-z")
+	cmd.Dir = cwd
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open check-ignore stdin: %w", err)
+	}
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start check-ignore: %w", err)
+	}
+	for _, p := range relPaths {
+		if _, err := stdin.Write([]byte(filepath.ToSlash(p) + "\x00")); err != nil {
+			_ = stdin.Close()
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("failed to write check-ignore input: %w", err)
+		}
+	}
+	if err := stdin.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close check-ignore stdin: %w", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return nil, fmt.Errorf("check-ignore failed: %w", err)
+		}
+	}
+
+	fields := strings.Split(strings.TrimSuffix(stdout.String(), "\x00"), "\x00")
+	if len(fields) == 1 && fields[0] == "" {
+		return result, nil
+	}
+	if len(fields)%4 != 0 {
+		return nil, fmt.Errorf("unexpected check-ignore verbose output")
+	}
+	for i := 0; i < len(fields); i += 4 {
+		line, err := strconv.Atoi(fields[i+1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid check-ignore line number %q: %w", fields[i+1], err)
+		}
+		source := fields[i]
+		if !filepath.IsAbs(source) {
+			source = filepath.Join(cwd, source)
+		}
+		if sameFilePath(source, excludePath) && managedLines[line] {
+			continue
+		}
+		result[filepath.FromSlash(fields[i+3])] = true
+	}
+	return result, nil
+}
+
+func sameFilePath(first, second string) bool {
+	if filepath.Clean(first) == filepath.Clean(second) {
+		return true
+	}
+	firstInfo, firstErr := os.Stat(first)
+	secondInfo, secondErr := os.Stat(second)
+	return firstErr == nil && secondErr == nil && os.SameFile(firstInfo, secondInfo)
+}
+
+func (g *RealGitRepo) managedExcludeLines(cwd string) (map[int]bool, string) {
+	gitDir, err := g.CommonGitDir(cwd)
+	if err != nil {
+		return nil, ""
+	}
+	excludePath := filepath.Join(gitDir, "info", "exclude")
+	contents, err := os.ReadFile(excludePath)
+	if err != nil {
+		return nil, filepath.Clean(excludePath)
+	}
+
+	lines := make(map[int]bool)
+	inManagedBlock := false
+	for index, line := range strings.Split(string(contents), "\n") {
+		switch strings.TrimSuffix(line, "\r") {
+		case "# >>> monodev managed block — do not edit <<<":
+			inManagedBlock = true
+		case "# <<< monodev managed block <<<":
+			inManagedBlock = false
+		default:
+			if inManagedBlock {
+				lines[index+1] = true
+			}
+		}
+	}
+	return lines, filepath.Clean(excludePath)
 }
 
 // FakeGitRepo implements GitRepo with predetermined values for testing.
