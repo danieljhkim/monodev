@@ -172,7 +172,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	}); err != nil {
 		return nil, err
 	}
-	plan.Warnings = appendExcludeWarning(plan.Warnings, e.syncManagedExcludes(root, workspacePath, finalState))
+	plan.Warnings = appendExcludeWarning(plan.Warnings, e.syncManagedExcludes(ctx, root, workspaceID, workspacePath, finalState))
 
 	return &ApplyResult{
 		Plan:            plan,

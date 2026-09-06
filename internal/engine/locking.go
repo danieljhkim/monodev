@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
@@ -44,6 +45,18 @@ func lockWorkspace(ctx context.Context, store state.StateStore, id string, mode 
 
 func (e *Engine) lockWorkspace(ctx context.Context, id string, mode lockfile.Mode) (func(), error) {
 	return lockWorkspace(ctx, e.stateStore, id, mode)
+}
+
+// lockManagedExcludes serializes updates to the one exclude file shared by a
+// repository's linked worktrees. Workspace locks protect individual ledgers;
+// this lock protects the reconciliation of those ledgers into Git's common
+// directory.
+func lockManagedExcludes(ctx context.Context, gitDir string) (func(), error) {
+	lock, err := lockfile.Acquire(ctx, filepath.Join(gitDir, "info", "exclude.monodev.lock"), lockfile.Exclusive, lockfile.DefaultTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("lock managed excludes: %w", err)
+	}
+	return func() { _ = lock.Close() }, nil
 }
 
 func (e *Engine) lockWorkspaces(ctx context.Context, requests ...workspaceLockRequest) (func(), error) {

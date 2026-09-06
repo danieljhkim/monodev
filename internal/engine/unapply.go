@@ -151,11 +151,11 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	}); err != nil {
 		return nil, err
 	}
-	finalExcludeState := final
+	currentExcludeState := final
 	if deleteState {
-		finalExcludeState = nil
+		currentExcludeState = nil
 	}
-	warnings = appendExcludeWarning(warnings, e.syncManagedExcludes(root, workspacePath, finalExcludeState))
+	warnings = appendExcludeWarning(warnings, e.syncManagedExcludes(ctx, root, workspaceID, workspacePath, currentExcludeState))
 
 	return &UnapplyResult{
 		Removed:     removed,
