@@ -183,6 +183,7 @@ monodev store describe
 monodev store describe <store-id>
 monodev store update --description "details"
 monodev store update <store-id> --description "details"
+monodev store clone <source> <destination>
 monodev store rm <store-id>
 monodev store rm <store-id> --force
 monodev store rm <store-id> --dry-run
@@ -190,6 +191,10 @@ monodev store rm <store-id> --dry-run
 
 `describe` / `update` without an id use the active store. `rm --force` (`-f`)
 skips the in-use prompt. Deleting a store does not unapply workspace files.
+`clone` copies the source store's committed overlay and tracking metadata into
+a new destination store with its own identity and independent contents. The
+destination must not already exist; the command refuses without overwriting
+it. Cloning does not activate the destination or change the workspace.
 
 ---
 
