@@ -233,3 +233,197 @@ func TestSyncCommand_NoRemoteConfiguredNamesRemoteUse(t *testing.T) {
 		t.Fatalf("error = %v, want it to name 'monodev remote use'", execErr)
 	}
 }
+
+// TestSyncCommand_ScopesRemoteChangesToActiveStore proves that sync is safe
+// around unrelated stores. The client has two local stores (active-a and
+// local-b); after syncing active-a, the remote has three stores (active-a plus
+// two producer stores), but local-b is not published and the producer stores
+// are not imported.
+func TestSyncCommand_ScopesRemoteChangesToActiveStore(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "Monodev Sync Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "monodev-sync-test@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "Monodev Sync Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "monodev-sync-test@example.com")
+
+	baseDir := t.TempDir()
+	bareRemote := filepath.Join(baseDir, "remote.git")
+	if err := os.MkdirAll(bareRemote, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runSyncTestGit(t, bareRemote, "init", "--bare")
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+
+	clientRepo := filepath.Join(baseDir, "client")
+	setupSyncClientRepo(t, clientRepo, bareRemote)
+	t.Setenv("HOME", filepath.Join(baseDir, "client-home"))
+	t.Setenv("MONODEV_ROOT", "")
+	if err := os.Chdir(clientRepo); err != nil {
+		t.Fatal(err)
+	}
+	runMonodev(t, "init")
+	runMonodev(t, "remote", "use", "origin")
+	for _, storeID := range []string{"active-a", "local-b"} {
+		if err := os.WriteFile(filepath.Join(clientRepo, storeID+".txt"), []byte(storeID+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runMonodev(t, "checkout", "--new", storeID)
+		runMonodev(t, "track", storeID+".txt")
+	}
+	runMonodev(t, "checkout", "active-a")
+	// Publish active-a once so a second client can add two remote-only stores.
+	// This first sync also exercises the two-local-store boundary.
+	runMonodev(t, "sync")
+
+	// Seed remote-c and remote-d on a second local checkout. It first pulls
+	// active-a to advance its persistence branch, so its explicit pushes are
+	// ordinary fast-forward updates.
+	producerRepo := filepath.Join(baseDir, "producer")
+	setupSyncClientRepo(t, producerRepo, bareRemote)
+	t.Setenv("HOME", filepath.Join(baseDir, "producer-home"))
+	if err := os.Chdir(producerRepo); err != nil {
+		t.Fatal(err)
+	}
+	runMonodev(t, "init")
+	runMonodev(t, "remote", "use", "origin")
+	runMonodev(t, "pull")
+	for _, storeID := range []string{"remote-c", "remote-d"} {
+		if err := os.WriteFile(filepath.Join(producerRepo, storeID+".txt"), []byte(storeID+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runMonodev(t, "checkout", "--new", storeID)
+		runMonodev(t, "track", storeID+".txt")
+		runMonodev(t, "push", storeID)
+	}
+
+	// Advance only client A's local persistence branch before the second sync.
+	// Pulling active-a must not materialize either unrelated remote store.
+	t.Setenv("HOME", filepath.Join(baseDir, "client-home"))
+	if err := os.Chdir(clientRepo); err != nil {
+		t.Fatal(err)
+	}
+	runMonodev(t, "pull", "active-a")
+
+	syncOut := runMonodev(t, "sync")
+	if !strings.Contains(syncOut, "active-a") {
+		t.Fatalf("sync output = %q, want it to name active-a", syncOut)
+	}
+
+	persistedPaths := runSyncTestGit(t, baseDir, "--git-dir", bareRemote, "ls-tree", "-r", "--name-only", "monodev/persist")
+	for _, storeID := range []string{"active-a", "remote-c", "remote-d"} {
+		if !strings.Contains(persistedPaths, "stores/"+storeID+"/") {
+			t.Fatalf("persisted paths = %q, want remote store %q", persistedPaths, storeID)
+		}
+	}
+	if strings.Contains(persistedPaths, "stores/local-b/") {
+		t.Fatalf("sync published unrelated local-b:\n%s", persistedPaths)
+	}
+	for _, storeID := range []string{"remote-c", "remote-d"} {
+		if _, err := os.Stat(filepath.Join(clientRepo, ".monodev", "stores", storeID)); !os.IsNotExist(err) {
+			t.Fatalf("sync imported unrelated remote store %q, stat err = %v", storeID, err)
+		}
+	}
+}
+
+func TestSyncCommand_UsesNestedWorkspaceActiveStore(t *testing.T) {
+	t.Setenv("GIT_AUTHOR_NAME", "Monodev Sync Test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "monodev-sync-test@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "Monodev Sync Test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "monodev-sync-test@example.com")
+
+	baseDir := t.TempDir()
+	bareRemote := filepath.Join(baseDir, "remote.git")
+	if err := os.MkdirAll(bareRemote, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runSyncTestGit(t, bareRemote, "init", "--bare")
+	clientRepo := filepath.Join(baseDir, "client")
+	setupSyncClientRepo(t, clientRepo, bareRemote)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+	t.Setenv("HOME", filepath.Join(baseDir, "client-home"))
+	t.Setenv("MONODEV_ROOT", "")
+	if err := os.Chdir(clientRepo); err != nil {
+		t.Fatal(err)
+	}
+	runMonodev(t, "init")
+	runMonodev(t, "remote", "use", "origin")
+	if err := os.WriteFile(filepath.Join(clientRepo, "root.txt"), []byte("root\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runMonodev(t, "checkout", "--new", "root-store")
+	runMonodev(t, "track", "root.txt")
+
+	nested := filepath.Join(clientRepo, "nested")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "nested.txt"), []byte("nested\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(nested); err != nil {
+		t.Fatal(err)
+	}
+	runMonodev(t, "checkout", "--new", "nested-store")
+	runMonodev(t, "track", "nested.txt")
+	runMonodev(t, "sync")
+
+	persistedPaths := runSyncTestGit(t, baseDir, "--git-dir", bareRemote, "ls-tree", "-r", "--name-only", "monodev/persist")
+	if !strings.Contains(persistedPaths, "stores/nested-store/") {
+		t.Fatalf("persisted paths = %q, want nested-store", persistedPaths)
+	}
+	if strings.Contains(persistedPaths, "stores/root-store/") {
+		t.Fatalf("nested sync published root workspace store:\n%s", persistedPaths)
+	}
+}
+
+func TestSyncCommand_NoActiveStoreFailsBeforeRemoteWrite(t *testing.T) {
+	baseDir := t.TempDir()
+	bareRemote := filepath.Join(baseDir, "remote.git")
+	if err := os.MkdirAll(bareRemote, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runSyncTestGit(t, bareRemote, "init", "--bare")
+	clientRepo := filepath.Join(baseDir, "client")
+	setupSyncClientRepo(t, clientRepo, bareRemote)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+	t.Setenv("HOME", filepath.Join(baseDir, "client-home"))
+	t.Setenv("MONODEV_ROOT", "")
+	if err := os.Chdir(clientRepo); err != nil {
+		t.Fatal(err)
+	}
+	runMonodev(t, "init")
+	runMonodev(t, "remote", "use", "origin")
+
+	root := cli.RootCommand()
+	resetCLIFlags(root)
+	root.SetArgs([]string{"sync"})
+	var execErr error
+	_ = captureMonodevStdout(t, func() {
+		execErr = root.Execute()
+	})
+	if execErr == nil {
+		t.Fatal("expected sync without an active store to fail")
+	}
+	if !strings.Contains(execErr.Error(), "no active store set") {
+		t.Fatalf("sync error = %v, want no-active-store guidance", execErr)
+	}
+
+	showRef := exec.Command("git", "--git-dir", bareRemote, "show-ref", "--verify", "refs/heads/monodev/persist")
+	if err := showRef.Run(); err == nil {
+		t.Fatal("sync without an active store wrote the persistence branch")
+	}
+}
