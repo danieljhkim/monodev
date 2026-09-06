@@ -534,11 +534,12 @@ func (e *Engine) doctorCheckExcludeDrift(ctx context.Context, cwd, root string, 
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
+	var ws *state.WorkspaceState
 	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
 	if err != nil {
 		return nil, err
 	}
-	ws, workspaceID, err := e.loadWorkspaceState(root, repoFingerprint, workspacePath)
+	ws, workspaceID, err = e.loadWorkspaceState(root, repoFingerprint, workspacePath)
 	unlockWorkspace()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load workspace state: %w", err)
@@ -550,7 +551,7 @@ func (e *Engine) doctorCheckExcludeDrift(ctx context.Context, cwd, root string, 
 	}
 	excludePath := filepath.Join(gitDir, "info", "exclude")
 
-	entries, err := e.managedExcludeEntries(workspacePath, ws)
+	entries, err := e.managedExcludeEntriesForGitDir(root, gitDir, workspaceID, workspacePath, ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute managed excludes: %w", err)
 	}
@@ -587,7 +588,7 @@ func (e *Engine) doctorCheckExcludeDrift(ctx context.Context, cwd, root string, 
 			return []DoctorFinding{finding}, nil
 		}
 		defer unlockEx()
-		if err := e.syncManagedExcludes(root, workspacePath, ws); err != nil {
+		if err := e.syncManagedExcludes(ctx, root, workspaceID, workspacePath, ws); err != nil {
 			finding.FixError = err.Error()
 		} else {
 			finding.Fixed = true

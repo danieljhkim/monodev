@@ -99,7 +99,7 @@ func (e *Engine) Eject(ctx context.Context, req *EjectRequest) (*EjectResult, er
 	}); err != nil {
 		return nil, err
 	}
-	warnings = appendExcludeWarning(warnings, e.syncManagedExcludes(root, workspacePath, nil))
+	warnings = appendExcludeWarning(warnings, e.syncManagedExcludes(ctx, root, workspaceID, workspacePath, nil))
 	return ejectResult(workspaceID, paths, req.RemoveFiles, false, warnings), nil
 }
 

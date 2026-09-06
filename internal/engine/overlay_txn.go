@@ -214,9 +214,9 @@ func (e *Engine) recoverWorkspaceOverlay(ctx context.Context, workspaceID, repoR
 		return nil, fmt.Errorf("failed to reload workspace state after recovery: %w", err)
 	}
 	if os.IsNotExist(err) {
-		return appendExcludeWarning(nil, e.syncManagedExcludes(repoRoot, workspacePath, nil)), nil
+		return appendExcludeWarning(nil, e.syncManagedExcludes(ctx, repoRoot, workspaceID, workspacePath, nil)), nil
 	}
-	return appendExcludeWarning(nil, e.syncManagedExcludes(repoRoot, ws.WorkspacePath, ws)), nil
+	return appendExcludeWarning(nil, e.syncManagedExcludes(ctx, repoRoot, workspaceID, ws.WorkspacePath, ws)), nil
 }
 
 func (e *Engine) commitOverlayTxnState(workspaceID string, txn *overlayTxn) error {

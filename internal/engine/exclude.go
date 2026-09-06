@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,16 +17,22 @@ const (
 	managedExcludeEnd   = "# <<< monodev managed block <<<"
 )
 
-// syncManagedExcludes makes the repository-local exclusion block reflect one
-// workspace ledger. It preserves all bytes outside monodev's delimiters.
-func (e *Engine) syncManagedExcludes(repoRoot, workspacePath string, ws *state.WorkspaceState) error {
+// syncManagedExcludes makes the common Git exclusion block reflect every
+// workspace ledger that shares its Git directory. It preserves all bytes
+// outside monodev's delimiters.
+func (e *Engine) syncManagedExcludes(ctx context.Context, repoRoot, workspaceID, workspacePath string, current *state.WorkspaceState) error {
 	gitDir, err := e.gitRepo.CommonGitDir(repoRoot)
 	if err != nil {
 		return err
 	}
+	unlock, err := lockManagedExcludes(ctx, gitDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	excludePath := filepath.Join(gitDir, "info", "exclude")
 
-	entries, err := e.managedExcludeEntries(workspacePath, ws)
+	entries, err := e.managedExcludeEntriesForGitDir(repoRoot, gitDir, workspaceID, workspacePath, current)
 	if err != nil {
 		return err
 	}
@@ -64,6 +71,72 @@ func (e *Engine) syncManagedExcludes(repoRoot, workspacePath string, ws *state.W
 		return fmt.Errorf("failed to write .git/info/exclude: %w", err)
 	}
 	return nil
+}
+
+// managedExcludeEntriesForGitDir collects every persisted workspace whose
+// checkout resolves to gitDir. Comparing Git's resolved common directory,
+// rather than repository fingerprints or paths, keeps linked worktrees and
+// sibling workspaces correct without conflating distinct clones of a remote.
+func (e *Engine) managedExcludeEntriesForGitDir(repoRoot, gitDir, currentWorkspaceID, currentWorkspacePath string, current *state.WorkspaceState) ([]string, error) {
+	entries := make(map[string]struct{})
+	wantGitDir := filepath.Clean(gitDir)
+	currentWorkspaceRoot, err := filepath.Abs(filepath.Join(repoRoot, currentWorkspacePath))
+	if err != nil {
+		return nil, fmt.Errorf("resolve current workspace path: %w", err)
+	}
+	currentRepoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve current repository path: %w", err)
+	}
+	addEntries := func(workspacePath string, ws *state.WorkspaceState) error {
+		workspaceEntries, err := e.managedExcludeEntries(workspacePath, ws)
+		if err != nil {
+			return err
+		}
+		for _, entry := range workspaceEntries {
+			entries[entry] = struct{}{}
+		}
+		return nil
+	}
+	// Include the caller's post-transaction ledger explicitly. Older ledgers
+	// may not have AbsolutePath yet, so relying only on the scan would briefly
+	// drop their contribution during the operation that updates them.
+	if current != nil {
+		if err := addEntries(currentWorkspacePath, current); err != nil {
+			return nil, err
+		}
+	}
+	err = e.forEachWorkspaceState(func(workspaceID string, ws *state.WorkspaceState) error {
+		if ws == nil || !ws.Applied || ws.AbsolutePath == "" || len(ws.Paths) == 0 {
+			return nil
+		}
+		if workspaceID == currentWorkspaceID {
+			return nil
+		}
+		workspaceRoot, err := filepath.Abs(ws.AbsolutePath)
+		if err != nil {
+			return nil
+		}
+		if filepath.Clean(workspaceRoot) == filepath.Clean(currentWorkspaceRoot) ||
+			(filepath.Clean(workspaceRoot) == filepath.Clean(currentRepoRoot) && ws.WorkspacePath == currentWorkspacePath) {
+			return nil
+		}
+		workspaceGitDir, err := e.gitRepo.CommonGitDir(workspaceRoot)
+		if err != nil || filepath.Clean(workspaceGitDir) != wantGitDir {
+			return nil
+		}
+		return addEntries(ws.WorkspacePath, ws)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ordered := make([]string, 0, len(entries))
+	for entry := range entries {
+		ordered = append(ordered, entry)
+	}
+	sort.Strings(ordered)
+	return ordered, nil
 }
 
 func (e *Engine) managedExcludeEntries(workspacePath string, ws *state.WorkspaceState) ([]string, error) {

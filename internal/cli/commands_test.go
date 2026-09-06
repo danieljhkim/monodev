@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -49,6 +50,181 @@ func setupTestEnv(t *testing.T) (string, func()) {
 	}
 
 	return workspaceDir, cleanup
+}
+
+func TestManagedExcludesPreserveOtherWorkspaceAndUserContent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "initial")
+	runCLIInDir(t, repo, "init")
+
+	excludePath := filepath.Join(repo, ".git", "info", "exclude")
+	userExclude := []byte("# user-owned\n/local-cache\n")
+	if err := os.WriteFile(excludePath, userExclude, 0600); err != nil {
+		t.Fatalf("seed user exclude content: %v", err)
+	}
+
+	for _, workspace := range []struct {
+		name  string
+		store string
+		file  string
+	}{
+		{name: "a", store: "store-a", file: "context-a.txt"},
+		{name: "b", store: "store-b", file: "context-b.txt"},
+	} {
+		workspaceDir := filepath.Join(repo, workspace.name)
+		if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+			t.Fatalf("create workspace %s: %v", workspace.name, err)
+		}
+		runCLIInDir(t, workspaceDir, "checkout", "--new", workspace.store)
+		path := filepath.Join(workspaceDir, workspace.file)
+		if err := os.WriteFile(path, []byte(workspace.name+" overlay\n"), 0600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		runCLIInDir(t, workspaceDir, "track", workspace.file)
+		runCLIInDir(t, workspaceDir, "commit", "--all")
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remove source %s: %v", path, err)
+		}
+		runCLIInDir(t, workspaceDir, "apply")
+	}
+
+	requireExcludeContains(t, excludePath, string(userExclude), "/a/context-a.txt", "/b/context-b.txt")
+	if status := gitPorcelain(t, repo); status != "" {
+		t.Fatalf("applied workspace files should be ignored, status = %q", status)
+	}
+
+	runCLIInDir(t, filepath.Join(repo, "b"), "unapply")
+	requireExcludeContains(t, excludePath, string(userExclude), "/a/context-a.txt")
+	requireExcludeNotContains(t, excludePath, "/b/context-b.txt")
+
+	runCLIInDir(t, filepath.Join(repo, "a"), "eject", "--yes")
+	contents, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("read exclude after eject: %v", err)
+	}
+	if string(contents) != string(userExclude) {
+		t.Fatalf("exclude after eject = %q, want user bytes %q", contents, userExclude)
+	}
+}
+
+func TestManagedExcludesSerializeConcurrentLinkedWorktreeApplies(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "initial")
+	linked := filepath.Join(t.TempDir(), "linked")
+	runGit(t, repo, "worktree", "add", "-b", "linked-branch", linked)
+
+	for _, workspace := range []struct {
+		dir   string
+		store string
+		file  string
+	}{
+		{dir: repo, store: "main-store", file: "main-context.txt"},
+		{dir: linked, store: "linked-store", file: "linked-context.txt"},
+	} {
+		runCLIInDir(t, workspace.dir, "init")
+		runCLIInDir(t, workspace.dir, "checkout", "--new", workspace.store)
+		path := filepath.Join(workspace.dir, workspace.file)
+		if err := os.WriteFile(path, []byte(workspace.file+"\n"), 0600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		runCLIInDir(t, workspace.dir, "track", workspace.file)
+		runCLIInDir(t, workspace.dir, "commit", "--all")
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remove source %s: %v", path, err)
+		}
+	}
+
+	binary := filepath.Join(t.TempDir(), "monodev")
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve source root: %v", err)
+	}
+	build := exec.Command("go", "build", "-o", binary, "./cmd/monodev")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build monodev test binary: %v\n%s", err, output)
+	}
+
+	type commandResult struct {
+		dir    string
+		output []byte
+		err    error
+	}
+	results := make(chan commandResult, 2)
+	for _, dir := range []string{repo, linked} {
+		go func(dir string) {
+			cmd := exec.Command(binary, "apply")
+			cmd.Dir = dir
+			output, err := cmd.CombinedOutput()
+			results <- commandResult{dir: dir, output: output, err: err}
+		}(dir)
+	}
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("concurrent apply in %s: %v\n%s", result.dir, result.err, result.output)
+		}
+	}
+
+	for _, dir := range []string{repo, linked} {
+		cmd := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
+		cmd.Dir = dir
+		output, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("resolve common git dir for %s: %v", dir, err)
+		}
+		wantGitDir, err := filepath.EvalSymlinks(filepath.Join(repo, ".git"))
+		if err != nil {
+			t.Fatalf("resolve expected common git dir: %v", err)
+		}
+		if filepath.Clean(strings.TrimSpace(string(output))) != filepath.Clean(wantGitDir) {
+			t.Fatalf("common git dir for %s = %q, want %q", dir, output, wantGitDir)
+		}
+	}
+	requireExcludeContains(t, filepath.Join(repo, ".git", "info", "exclude"), "/main-context.txt", "/linked-context.txt")
+}
+
+func runCLIInDir(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %s: %v", dir, err)
+	}
+	defer func() { _ = os.Chdir(old) }()
+	runCLI(t, args...)
+}
+
+func requireExcludeContains(t *testing.T, path string, want ...string) {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, entry := range want {
+		if !strings.Contains(string(contents), entry) {
+			t.Fatalf("exclude %s missing %q:\n%s", path, entry, contents)
+		}
+	}
+}
+
+func requireExcludeNotContains(t *testing.T, path string, unwanted ...string) {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, entry := range unwanted {
+		if strings.Contains(string(contents), entry) {
+			t.Fatalf("exclude %s unexpectedly contains %q:\n%s", path, entry, contents)
+		}
+	}
 }
 
 func TestStoreLsCommand_NoStores(t *testing.T) {
