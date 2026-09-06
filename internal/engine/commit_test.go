@@ -9,6 +9,7 @@ import (
 
 	"github.com/danieljhkim/monodev/internal/config"
 	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/hash"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -204,6 +205,70 @@ func TestCommit_AllRemovesUntrackedSiblingFromOverlay(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(overlayRoot, "notes", "b")); !os.IsNotExist(err) {
 		t.Fatalf("untracked sibling still exists, stat error = %v", err)
+	}
+}
+
+func TestCommit_DirectoryRefreshesLeafOwnershipManifest(t *testing.T) {
+	repoRoot := t.TempDir()
+	overlayRoot := t.TempDir()
+	writeOverlayFile(t, repoRoot, "config/app.yml")
+	writeOverlayFile(t, repoRoot, "config/nested/job.yml")
+
+	track := stores.NewTrackFile()
+	track.Tracked = []stores.TrackedPath{{Path: "config", Kind: "dir"}}
+	stateStore := newMockStateStore()
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	workspaceState := state.NewWorkspaceState("fp1", ".", "copy")
+	workspaceState.ActiveStore = "active-store"
+	stateStore.workspaces[workspaceID] = workspaceState
+
+	storeRepo := &realOverlayStoreRepo{trackStoreRepo: newTrackStoreRepo(), overlayRoot: overlayRoot}
+	storeRepo.tracks["active-store"] = track
+	hasher := hash.NewSHA256Hasher()
+	eng := New(
+		&trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "."},
+		storeRepo,
+		stateStore,
+		fsops.NewRealFS(),
+		hasher,
+		&mockClock{},
+		config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: filepath.Dir(overlayRoot), Workspaces: filepath.Join(repoRoot, ".state")},
+	)
+
+	commit := func() state.PathOwnership {
+		t.Helper()
+		if _, err := eng.Commit(context.Background(), &CommitRequest{CWD: repoRoot, All: true}); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+		updated, err := stateStore.LoadWorkspace(workspaceID)
+		if err != nil {
+			t.Fatalf("load workspace: %v", err)
+		}
+		ownership, ok := updated.Paths["config"]
+		if !ok {
+			t.Fatal("missing config ownership")
+		}
+		if ownership.Contents == nil {
+			t.Fatal("directory ownership has no leaf manifest")
+		}
+		return ownership
+	}
+
+	first := commit()
+	if len(first.Contents.Files) != 2 {
+		t.Fatalf("first manifest = %#v, want two leaves", first.Contents.Files)
+	}
+	firstAppHash := first.Contents.Files["app.yml"]
+	if firstAppHash == "" || first.Contents.Files["nested/job.yml"] == "" {
+		t.Fatalf("first manifest has missing checksums: %#v", first.Contents.Files)
+	}
+
+	if err := os.WriteFile(filepath.Join(repoRoot, "config", "app.yml"), []byte("changed committed content"), 0600); err != nil {
+		t.Fatalf("rewrite committed directory leaf: %v", err)
+	}
+	second := commit()
+	if second.Contents.Files["app.yml"] == firstAppHash {
+		t.Fatalf("app.yml manifest checksum = %q after recommit, want refreshed value", second.Contents.Files["app.yml"])
 	}
 }
 

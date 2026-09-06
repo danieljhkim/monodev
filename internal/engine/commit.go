@@ -216,10 +216,20 @@ func (e *Engine) commitFilePath(
 		return fmt.Errorf("failed to copy %s to store: %w", cleanRelPath, err)
 	}
 
-	// Compute checksum for files (not directories)
+	// Refresh copy-mode ownership from the committed workspace tree. Files keep
+	// their existing checksum behavior; directories need the same leaf manifest
+	// Apply records so a subsequent unapply can distinguish committed content
+	// from later local changes.
 	checksum := ""
 	info, err := e.fs.Lstat(workspaceFilePath)
-	if err == nil && !info.IsDir() {
+	var contents *state.DirContents
+	if err == nil && info.IsDir() {
+		files, err := e.copyDirFileChecksums(workspaceFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to record copied directory %s contents: %w", cleanRelPath, err)
+		}
+		contents = &state.DirContents{Files: files}
+	} else if err == nil {
 		hash, err := e.hasher.HashFile(workspaceFilePath)
 		if err == nil {
 			checksum = hash
@@ -232,6 +242,7 @@ func (e *Engine) commitFilePath(
 		Type:      "copy",
 		Timestamp: now,
 		Checksum:  checksum,
+		Contents:  contents,
 	}
 
 	result.Committed = append(result.Committed, cleanRelPath)
