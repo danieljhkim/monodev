@@ -492,6 +492,41 @@ func TestRealFS_Copy(t *testing.T) {
 	})
 }
 
+func TestRealFS_CopyExceptReplacesDirectoryWithoutExcludedDescendants(t *testing.T) {
+	fs := &RealFS{}
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "src")
+	dst := filepath.Join(tmpDir, "dst")
+	if err := os.MkdirAll(filepath.Join(src, "nested"), 0755); err != nil {
+		t.Fatalf("create source directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "kept.txt"), []byte("kept"), 0644); err != nil {
+		t.Fatalf("write kept source: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "nested", "ignored.log"), []byte("ignored"), 0644); err != nil {
+		t.Fatalf("write ignored source: %v", err)
+	}
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		t.Fatalf("create destination directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dst, "stale.txt"), []byte("stale"), 0644); err != nil {
+		t.Fatalf("write stale destination: %v", err)
+	}
+
+	if err := fs.CopyExcept(src, dst, map[string]bool{filepath.Join("nested", "ignored.log"): true}); err != nil {
+		t.Fatalf("CopyExcept failed: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "kept.txt")); err != nil || string(got) != "kept" {
+		t.Fatalf("kept snapshot = %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "nested", "ignored.log")); !os.IsNotExist(err) {
+		t.Fatalf("excluded descendant persisted, stat error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "stale.txt")); !os.IsNotExist(err) {
+		t.Fatalf("stale destination content survived replacement, stat error = %v", err)
+	}
+}
+
 func TestRealFS_CopyWithinRoot_AllowsNestedDestinationAndReplacesFinalSymlink(t *testing.T) {
 	fs := NewRealFS()
 	root := t.TempDir()

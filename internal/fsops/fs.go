@@ -56,6 +56,13 @@ type FS interface {
 	ValidateIdentifier(id string) error
 }
 
+// ExcludingCopier optionally supports atomically copying a directory while
+// omitting selected source-relative descendants. Commit uses this to keep
+// user-ignored files that were never saved out of a directory snapshot.
+type ExcludingCopier interface {
+	CopyExcept(src, dst string, excluded map[string]bool) error
+}
+
 // RootFS is the mutation surface used for applying overlays. Implementations
 // operate relative to an opened workspace root so destination ancestors cannot
 // be redirected by symlinks between planning and execution.
