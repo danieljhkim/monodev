@@ -483,6 +483,92 @@ func TestUnapply_CopiedDirectoryDriftFailsWithoutForce(t *testing.T) {
 	}
 }
 
+func TestUnapply_DryRunCopiedDirectoryMatchesValidationAndRemoval(t *testing.T) {
+	t.Run("clean overlay previews the real removal", func(t *testing.T) {
+		fx := setupCopiedDirectoryFixture(t, "active-store", false)
+
+		dryResult, err := fx.eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot, DryRun: true})
+		if err != nil {
+			t.Fatalf("dry-run Unapply: %v", err)
+		}
+		if !slices.Equal(dryResult.Removed, []string{"scripts"}) {
+			t.Fatalf("dry-run Removed = %v, want [scripts]", dryResult.Removed)
+		}
+		if _, err := os.Stat(fx.scriptsDir); err != nil {
+			t.Fatalf("dry-run removed copied directory: %v", err)
+		}
+		if ws, err := fx.stateStore.LoadWorkspace(fx.workspaceID); err != nil {
+			t.Fatalf("load workspace after dry-run: %v", err)
+		} else if _, ok := ws.Paths["scripts"]; !ok {
+			t.Fatal("dry-run removed scripts from workspace state")
+		}
+
+		realResult, err := fx.eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot})
+		if err != nil {
+			t.Fatalf("real Unapply: %v", err)
+		}
+		if !slices.Equal(dryResult.Removed, realResult.Removed) {
+			t.Fatalf("dry-run Removed = %v, real Removed = %v", dryResult.Removed, realResult.Removed)
+		}
+	})
+
+	t.Run("drifted overlay reports the real validation error", func(t *testing.T) {
+		fx := setupCopiedDirectoryFixture(t, "active-store", false)
+		writeCopiedDirFile(t, filepath.Join(fx.scriptsDir, "notes.txt"), "user work\n")
+
+		dryResult, dryErr := fx.eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot, DryRun: true})
+		if dryResult != nil {
+			t.Fatalf("dry-run result = %#v, want nil", dryResult)
+		}
+		assertCopiedDirDriftError(t, dryErr, "scripts/notes.txt", "added")
+
+		realResult, realErr := fx.eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot})
+		if realResult != nil {
+			t.Fatalf("real result = %#v, want nil", realResult)
+		}
+		if dryErr.Error() != realErr.Error() {
+			t.Fatalf("dry-run error = %q, real error = %q", dryErr, realErr)
+		}
+		if _, err := os.Stat(fx.scriptsDir); err != nil {
+			t.Fatalf("drifted copied directory changed after validation: %v", err)
+		}
+		if ws, err := fx.stateStore.LoadWorkspace(fx.workspaceID); err != nil {
+			t.Fatalf("load workspace after validation: %v", err)
+		} else if _, ok := ws.Paths["scripts"]; !ok {
+			t.Fatal("validation removed scripts from workspace state")
+		}
+	})
+
+	t.Run("force previews removal without mutation", func(t *testing.T) {
+		fx := setupCopiedDirectoryFixture(t, "active-store", false)
+		writeCopiedDirFile(t, filepath.Join(fx.scriptsDir, "notes.txt"), "user work\n")
+
+		dryResult, err := fx.eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot, DryRun: true, Force: true})
+		if err != nil {
+			t.Fatalf("force dry-run Unapply: %v", err)
+		}
+		if !slices.Equal(dryResult.Removed, []string{"scripts"}) {
+			t.Fatalf("force dry-run Removed = %v, want [scripts]", dryResult.Removed)
+		}
+		if _, err := os.Stat(fx.scriptsDir); err != nil {
+			t.Fatalf("force dry-run removed copied directory: %v", err)
+		}
+		if ws, err := fx.stateStore.LoadWorkspace(fx.workspaceID); err != nil {
+			t.Fatalf("load workspace after force dry-run: %v", err)
+		} else if _, ok := ws.Paths["scripts"]; !ok {
+			t.Fatal("force dry-run removed scripts from workspace state")
+		}
+
+		realResult, err := fx.eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot, Force: true})
+		if err != nil {
+			t.Fatalf("real force Unapply: %v", err)
+		}
+		if !slices.Equal(dryResult.Removed, realResult.Removed) {
+			t.Fatalf("force dry-run Removed = %v, real Removed = %v", dryResult.Removed, realResult.Removed)
+		}
+	})
+}
+
 func TestUnapply_UnchangedCopiedDirectoryRemovesCompletely(t *testing.T) {
 	repoRoot := t.TempDir()
 	overlayRoot := filepath.Join(t.TempDir(), "overlay")
