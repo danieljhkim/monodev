@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
@@ -44,6 +45,20 @@ type CreateStoreRequest struct {
 
 	// Description is an optional description
 	Description string
+}
+
+// CloneStoreRequest represents a request to copy a saved store without making
+// either store active in a workspace.
+type CloneStoreRequest struct {
+	// SourceID is the existing store to copy.
+	SourceID string
+
+	// DestinationID is the new, independent store ID.
+	DestinationID string
+
+	// Scope optionally specifies where to find the source store. Empty uses the
+	// resolver's normal source lookup rules.
+	Scope string
 }
 
 // UpdateStoreRequest represents a request to update store metadata.
@@ -211,6 +226,117 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	}
 
 	return nil
+}
+
+// CloneStore creates an independent copy of a saved store without changing
+// workspace state or selecting the new store as active.
+func (e *Engine) CloneStore(ctx context.Context, req *CloneStoreRequest) (err error) {
+	if req == nil {
+		return fmt.Errorf("clone store request is required")
+	}
+	if err := e.fs.ValidateIdentifier(req.DestinationID); err != nil {
+		return fmt.Errorf("invalid destination store ID: %w", err)
+	}
+
+	repo, _, err := e.storeResolver.resolveStoreRepo(req.SourceID, req.Scope)
+	if err != nil {
+		return err
+	}
+
+	lockRequests := []storeLockRequest{{repo: repo, id: req.SourceID, mode: lockfile.Shared}}
+	for _, candidate := range []stores.StoreRepo{e.storeResolver.global, e.storeResolver.component, e.storeResolver.fallback} {
+		if candidate != nil {
+			lockRequests = append(lockRequests, storeLockRequest{repo: candidate, id: req.DestinationID, mode: lockfile.Exclusive})
+		}
+	}
+	unlockStores, err := e.lockStores(ctx, lockRequests...)
+	if err != nil {
+		return err
+	}
+	defer unlockStores()
+
+	destinations, err := e.storeResolver.findStore(req.DestinationID)
+	if err != nil {
+		return fmt.Errorf("failed to check destination store: %w", err)
+	}
+	if len(destinations) > 0 {
+		return fmt.Errorf("store already exists: %s", req.DestinationID)
+	}
+
+	sourceMeta, err := repo.LoadMeta(req.SourceID)
+	if err != nil {
+		return fmt.Errorf("failed to load source store metadata: %w", err)
+	}
+	sourceTrack, err := repo.LoadTrack(req.SourceID)
+	if err != nil {
+		return fmt.Errorf("failed to load source store tracking metadata: %w", err)
+	}
+
+	sourceOverlay := repo.OverlayRoot(req.SourceID)
+	destinationOverlay := repo.OverlayRoot(req.DestinationID)
+	if sourceOverlay == "" || destinationOverlay == "" {
+		return fmt.Errorf("invalid source or destination store ID")
+	}
+	// Preflight the source before creating any destination files. RealFS.Copy
+	// performs this validation too; doing it here preserves all-or-nothing store
+	// creation when a source contains an unsafe entry.
+	if err := fsops.ValidateCopySource(sourceOverlay); err != nil {
+		return fmt.Errorf("source store cannot be cloned: %w", err)
+	}
+
+	now := e.clock.Now()
+	destinationMeta := stores.NewStoreMeta(req.DestinationID, now)
+	destinationMeta.Description = sourceMeta.Description
+	if err := destinationMeta.Validate(); err != nil {
+		return fmt.Errorf("invalid destination store metadata: %w", err)
+	}
+
+	cleanup := func(cause error) error {
+		// Create can fail after making a store directory, so cleanup is also
+		// required for a failed create.
+		if cleanupErr := repo.Delete(req.DestinationID); cleanupErr != nil {
+			return fmt.Errorf("%w; additionally failed to remove partial destination store: %v", cause, cleanupErr)
+		}
+		return cause
+	}
+
+	if err := repo.Create(req.DestinationID, destinationMeta); err != nil {
+		return cleanup(fmt.Errorf("failed to create destination store: %w", err))
+	}
+
+	if err := e.fs.Copy(sourceOverlay, destinationOverlay); err != nil {
+		return cleanup(fmt.Errorf("failed to copy source store overlay: %w", err))
+	}
+	if err := repo.SaveTrack(req.DestinationID, cloneTrackFile(sourceTrack)); err != nil {
+		return cleanup(fmt.Errorf("failed to save destination store tracking metadata: %w", err))
+	}
+
+	return nil
+}
+
+func cloneTrackFile(source *stores.TrackFile) *stores.TrackFile {
+	if source == nil {
+		return stores.NewTrackFile()
+	}
+
+	clone := *source
+	clone.Tracked = append([]stores.TrackedPath(nil), source.Tracked...)
+	clone.Ignore = append([]string(nil), source.Ignore...)
+	for i := range clone.Tracked {
+		if required := source.Tracked[i].Required; required != nil {
+			value := *required
+			clone.Tracked[i].Required = &value
+		}
+		if createdAt := source.Tracked[i].CreatedAt; createdAt != nil {
+			value := *createdAt
+			clone.Tracked[i].CreatedAt = &value
+		}
+		if updatedAt := source.Tracked[i].UpdatedAt; updatedAt != nil {
+			value := *updatedAt
+			clone.Tracked[i].UpdatedAt = &value
+		}
+	}
+	return &clone
 }
 
 // ListStores returns all available stores from both scopes.
