@@ -143,8 +143,19 @@ func TestManagedExcludesSerializeConcurrentLinkedWorktreeApplies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve source root: %v", err)
 	}
+	goCacheRoot := t.TempDir()
+	goEnv := isolatedGoTestEnv(goCacheRoot)
+	t.Cleanup(func() {
+		clean := exec.Command("go", "clean", "-cache", "-modcache")
+		clean.Dir = root
+		clean.Env = goEnv
+		if output, err := clean.CombinedOutput(); err != nil {
+			t.Errorf("clean isolated Go caches: %v\n%s", err, output)
+		}
+	})
 	build := exec.Command("go", "build", "-o", binary, "./cmd/monodev")
 	build.Dir = root
+	build.Env = goEnv
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build monodev test binary: %v\n%s", err, output)
 	}
@@ -186,6 +197,28 @@ func TestManagedExcludesSerializeConcurrentLinkedWorktreeApplies(t *testing.T) {
 		}
 	}
 	requireExcludeContains(t, filepath.Join(repo, ".git", "info", "exclude"), "/main-context.txt", "/linked-context.txt")
+}
+
+func isolatedGoTestEnv(cacheRoot string) []string {
+	overrides := map[string]struct{}{
+		"GOCACHE":    {},
+		"GOMODCACHE": {},
+		"GOPATH":     {},
+	}
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if _, overridden := overrides[key]; ok && overridden {
+			continue
+		}
+		env = append(env, entry)
+	}
+	env = append(env,
+		"GOCACHE="+filepath.Join(cacheRoot, "build"),
+		"GOMODCACHE="+filepath.Join(cacheRoot, "mod"),
+		"GOPATH="+filepath.Join(cacheRoot, "go"),
+	)
+	return env
 }
 
 func runCLIInDir(t *testing.T, dir string, args ...string) {
