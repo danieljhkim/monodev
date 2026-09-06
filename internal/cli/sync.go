@@ -24,7 +24,9 @@ var syncCmd = &cobra.Command{
 It commits all tracked paths, pushes the result to the configured remote,
 then pulls to bring in anything changed elsewhere - resolving the commit
 then push then pull ordering so you don't have to know it. Configure a
-remote first with 'monodev remote use <name>'.`,
+remote first with 'monodev remote use <name>'. Sync affects only the active
+store for the current workspace; use 'monodev push' or 'monodev pull' without
+store IDs to synchronize every store.`,
 	Args: cobra.NoArgs,
 	RunE: runSync,
 }
@@ -59,6 +61,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
+	activeStoreID, _, err := eng.GetActiveStoreID(ctx, cwd)
+	if err != nil {
+		return fmt.Errorf("failed to resolve active store for sync: %w", err)
+	}
 
 	commitResult, err := eng.Commit(ctx, &engine.CommitRequest{CWD: cwd, All: true})
 	if err != nil {
@@ -72,6 +78,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	pushResult, err := syncer.PushStore(ctx, &sync.PushRequest{
 		RepoRoot:     repoRoot,
+		StoreIDs:     []string{activeStoreID},
 		AllowSecrets: syncAllowSecrets,
 	})
 	if err != nil {
@@ -80,6 +87,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	pullResult, err := syncer.PullStore(ctx, &sync.PullRequest{
 		RepoRoot: repoRoot,
+		StoreIDs: []string{activeStoreID},
 	})
 	if err != nil {
 		return err
