@@ -47,7 +47,10 @@ stores in argument order. Later stores take precedence on path conflicts.`,
 		if err != nil {
 			if result != nil && result.Plan != nil && result.Plan.HasConflicts() {
 				if jsonOutput {
-					return outputJSON(result)
+					if outputErr := outputJSON(result); outputErr != nil {
+						return outputErr
+					}
+					return err
 				}
 				PrintSection("Conflicts Detected")
 				for _, conflict := range result.Plan.Conflicts {

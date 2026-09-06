@@ -478,6 +478,119 @@ func TestApplyCommand_InvalidStore(t *testing.T) {
 	}
 }
 
+func TestApplyCommand_JSONConflictReturnsError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+	runCLI(t, "checkout", "-n", "source")
+
+	storeFile := filepath.Join(repo, "Makefile")
+	if err := os.WriteFile(storeFile, []byte("store\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runCLI(t, "track", "Makefile")
+	runCLI(t, "commit", "--all")
+
+	workspace := filepath.Join(repo, "conflict-workspace")
+	if err := os.Mkdir(workspace, 0755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, workspace)
+	runCLI(t, "checkout", "source")
+	destination := filepath.Join(workspace, "Makefile")
+	if err := os.WriteFile(destination, []byte("user\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		args []string
+		json bool
+	}{
+		{name: "json apply", args: []string{"apply", "--json"}, json: true},
+		{name: "plain apply", args: []string{"apply"}},
+		{name: "json dry run", args: []string{"apply", "--json", "--dry-run"}, json: true},
+		{name: "plain dry run", args: []string{"apply", "--dry-run"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetCommandFlags(rootCmd)
+			rootCmd.SetArgs(tt.args)
+			var execErr error
+			output := captureStdout(t, func() {
+				execErr = rootCmd.Execute()
+			})
+			if execErr == nil {
+				t.Fatal("expected conflict to return an error")
+			}
+			if !strings.Contains(execErr.Error(), "conflicts detected") {
+				t.Fatalf("error = %q, want conflict failure", execErr)
+			}
+
+			if tt.json {
+				var result struct {
+					Plan struct {
+						Conflicts []struct {
+							Path   string
+							Reason string
+						} `json:"Conflicts"`
+					} `json:"Plan"`
+					Applied []any `json:"Applied"`
+				}
+				if err := json.Unmarshal([]byte(output), &result); err != nil {
+					t.Fatalf("conflict output is not valid JSON: %v\n%s", err, output)
+				}
+				if len(result.Plan.Conflicts) != 1 || result.Plan.Conflicts[0].Path != "Makefile" || result.Plan.Conflicts[0].Reason == "" {
+					t.Fatalf("JSON conflicts = %#v, want useful Makefile conflict", result.Plan.Conflicts)
+				}
+				if len(result.Applied) != 0 {
+					t.Fatalf("JSON applied = %#v, want empty", result.Applied)
+				}
+			}
+
+			after, err := os.ReadFile(destination)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatalf("destination changed after refused apply: got %q, want %q", after, before)
+			}
+		})
+	}
+
+	resetCommandFlags(rootCmd)
+	rootCmd.SetArgs([]string{"apply", "--force", "--json"})
+	var applyErr error
+	output := captureStdout(t, func() {
+		applyErr = rootCmd.Execute()
+	})
+	if applyErr != nil {
+		t.Fatalf("forced JSON apply error = %v", applyErr)
+	}
+	var result struct {
+		Applied []any `json:"Applied"`
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("successful apply output is not valid JSON: %v\n%s", err, output)
+	}
+	if len(result.Applied) == 0 {
+		t.Fatalf("successful JSON applied = %#v, want applied operations", result.Applied)
+	}
+	after, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != "store\n" {
+		t.Fatalf("destination after forced apply = %q, want store content", after)
+	}
+}
+
 func TestDoctorCommand_HealthyWorkspace(t *testing.T) {
 	workspaceDir, cleanup := setupTestEnv(t)
 	defer cleanup()
