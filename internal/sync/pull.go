@@ -149,7 +149,9 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 }
 
 func appendUniqueStores(storeIDs []string, additional []string, activeStore string) []string {
-	seen := make(map[string]struct{}, len(storeIDs)+len(additional)+1)
+	// Do not use the combined input lengths as a map allocation hint: their
+	// addition can overflow before make receives the size.
+	seen := make(map[string]struct{})
 	for _, storeID := range storeIDs {
 		seen[storeID] = struct{}{}
 	}
