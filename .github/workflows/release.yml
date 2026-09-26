@@ -17,7 +17,7 @@ on:
         default: false
 
 permissions:
-  contents: write # create GitHub Releases + upload assets
+  contents: read
 
 jobs:
   build-release:
@@ -133,6 +133,8 @@ jobs:
     name: Assemble release
     needs: build-release
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create GitHub Releases + upload assets
     outputs:
       version: ${{ steps.meta.outputs.version }}
       darwin_arm64_sha256: ${{ steps.meta.outputs.darwin_arm64_sha256 }}
