@@ -188,9 +188,6 @@ template:
   - github.run.logs
   - github.pr.list
   priority: high
-  # The portable system lane is seeded per machine and compatibility-aliased
-  # for configs written before that crew existed.
-  crew: system
   status: backlog
 dedupe: skip_if_open
 created_by: system

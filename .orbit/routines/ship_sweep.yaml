@@ -14,8 +14,6 @@ description: >
   Disabled by default; set enabled to true in this versioned definition to
   opt this workspace into scheduled shipment.
 enabled: true
-hosts:
-  - Daniels-Mac-mini.local
 trigger:
   cron: "10 * * * *"
   missed_run: skip

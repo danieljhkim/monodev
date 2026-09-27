@@ -2,31 +2,48 @@
   "schemaVersion": 2,
   "assetKind": "routine",
   "assets": {
-    "auto_task_scheduler": "d8288309126866cfbba4b0aabfb54b1f0f396d8796045911a1ada2072ec8e75d",
+    "ci_failure_sweep": "b7e074810d436ff9e74f8605206f0647e4e84e016b6d2db30880cd90d8a44ea5",
+    "dependabot_alert_sweep": "05062632c664087a4cf43173d0e466fd16459bfeca8124cd9017dc7d7dcb1b82",
     "ship_sweep": "8150beb7b4b15d93e8ec6d9e4d4d7800ae437d939b0151c4e3bd91ed03b2863e",
-    "task_pilot": "1efcec29182703aa462fa3332ba1d218076d59a08fbcc09763e16654fb87c76d",
-    "task_triage": "808c09e433e8fa12f4fd7f07583a72b9a451663aac7cfc1328b303865ec4e7ad",
-    "worktree_gc": "bbcc6bbebf763429cc917dace891b3ec986cb0faabcda6a1dca21c255a8808d7"
+    "task_pilot": "d7795e712d648644553cf7b4ef4d23bcc52217e60e773aecf15e2e0576940fca",
+    "worktree_gc": "1bbb6bca36365c80d9f1bc1f180368dc238533cccb12e54105eca1ae7032ffd4"
   },
   "routineProvenance": {
+    "ci_failure_sweep": {
+      "templateDigest": "6df59a489a126748609f96594ddf9d9c0a2ce57862c7ee4b70a715137155a421",
+      "renderedDigest": "b7e074810d436ff9e74f8605206f0647e4e84e016b6d2db30880cd90d8a44ea5",
+      "binding": {
+        "name": "ci-failure-sweep-monodev"
+      }
+    },
+    "dependabot_alert_sweep": {
+      "templateDigest": "da691ec375f100347b657c0221c2b55c35eafbe498a247676743e9e30650a716",
+      "renderedDigest": "05062632c664087a4cf43173d0e466fd16459bfeca8124cd9017dc7d7dcb1b82",
+      "binding": {
+        "name": "dependabot-alert-sweep-monodev"
+      }
+    },
     "ship_sweep": {
       "templateDigest": "416134b342e33f1b2565b88bc2e41b885a39b21c02324f0c8ed79bec74c562d1",
       "renderedDigest": "8150beb7b4b15d93e8ec6d9e4d4d7800ae437d939b0151c4e3bd91ed03b2863e",
       "binding": {
-        "name": "ship-sweep-monodev",
-        "hosts": [
-          "Daniels-Mac-mini.local"
-        ]
+        "name": "ship-sweep-monodev"
       }
     },
-    "task_triage": {
-      "templateDigest": "21feb397078d47165a0e2a618e8f0dfc97cdbd02c60d0595d71b43b20abd7c5e",
-      "renderedDigest": "808c09e433e8fa12f4fd7f07583a72b9a451663aac7cfc1328b303865ec4e7ad",
+    "task_pilot": {
+      "templateDigest": "d62349c4e7719f861a5695f1f5e6c466289ebc5ff606bf6c2db88b6dcd00baac",
+      "renderedDigest": "d7795e712d648644553cf7b4ef4d23bcc52217e60e773aecf15e2e0576940fca",
       "binding": {
-        "name": "task-triage-monodev",
-        "hosts": [
-          "Daniels-Mac-mini.local"
-        ]
+        "name": "task-pilot-monodev",
+        "ownerMachine": "hm_ba054a1a8fbfb914",
+        "branch": "main"
+      }
+    },
+    "worktree_gc": {
+      "templateDigest": "17a1fe2182a607f6391c5d73b958c3a1cfb83288811a199702da110b5b32fb0c",
+      "renderedDigest": "1bbb6bca36365c80d9f1bc1f180368dc238533cccb12e54105eca1ae7032ffd4",
+      "binding": {
+        "name": "worktree-gc-monodev"
       }
     }
   }

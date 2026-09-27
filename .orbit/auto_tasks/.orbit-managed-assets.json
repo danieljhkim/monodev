@@ -2,11 +2,14 @@
   "schemaVersion": 1,
   "assetKind": "auto_task",
   "assets": {
-    "code-review": "02955b94dd2176395ab8af131ef05d05b148ea2a2ddb42ef8a9f58703b425d8a",
-    "delivery-code-review": "9f67e270711b6b346abc289eec8cd4effef01f7792f6cdae97269ad40ad8999c",
-    "delivery-qa": "9a5ec9690a3bf2db43233416fb91c460c37bed97580e37144fc40b63fdf21abf",
-    "friction-curation": "08bbe4472532fe7920c78ee3e6f338da8c9cfead1d329feeaf6bac39d4946bad",
-    "qa-sweep": "d77c33b62c37ee81469676b7e7af31e504a84e5bf610646db62688b26f130708",
-    "security-review": "2cdd0b9b5a69cb118fa2e568c71e7db43d48cd3840d2de7bd90fd3c21cf3b607"
+    "backlog-hygiene": "6b50860d11a788ad88132b884af6f754e238564e92179f808e7f7e3616141aa6",
+    "code-review": "34e14b96473668c1230e7944a3e5414a7872f4129157bf133d36ae1e535e34c0",
+    "delivery-code-review": "4b65eae185555222feca8c41d48503c946796471233000ec192e8bd7fcecd9fd",
+    "delivery-qa": "f06f2c8a6fbdc1392d2cb2bcc74b5c9afb2101deb15cba85798d0ab67fac4ce3",
+    "doc-duties": "0a5021f09bd55755370cbdfc4b576fe8ab92941a983f7bc617d85550f6cfa11a",
+    "friction-curation": "bf018204c0179db80185a2104f682d2aef3bea8e96374693e0ce72e05053bb5f",
+    "qa-sweep": "c1d9a3eaa361508afc526be901278b81fb0cf659997e1395e39a2f4bbcbf8092",
+    "run-failure-patterns": "44cd5e19e362853e374c56f5f5ca3d5dc7db3f3aa29c2af2e8ccda2b493cd5f1",
+    "security-review": "4d178776b4b7d175eb7f4e21e3ea5635958098d73a044075ead7a459f2cb5ec6"
   }
 }

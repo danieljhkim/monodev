@@ -92,7 +92,6 @@ template:
   - release-prep
   - no-diff-expected
   priority: high
-  crew: luna
   status: backlog
 dedupe: skip_if_open
 created_by: codex
