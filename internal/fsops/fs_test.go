@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -593,6 +595,254 @@ func TestRealFS_RootConfinedFinalPathOperationsDoNotFollowSymlinks(t *testing.T)
 	target, err := os.Readlink(filepath.Join(root, "nested", "link"))
 	if err != nil || target != outside {
 		t.Fatalf("created symlink target = %q, error = %v; want %q", target, err, outside)
+	}
+}
+
+func TestRealFS_DirectoryCopyRejectsNestedDestination(t *testing.T) {
+	fs := NewRealFS()
+	for _, method := range []string{"Copy", "CopyExcept", "CopyWithinRoot"} {
+		t.Run(method+"/missing-parent", func(t *testing.T) {
+			base := t.TempDir()
+			src := filepath.Join(base, "src")
+			writeCopyFixture(t, filepath.Join(src, "nested", "file.txt"), "original")
+			before := directorySnapshot(t, base)
+
+			err := copyDirectoryMethod(fs, method, src, filepath.Join(src, "backup", "snapshot"), base)
+			if err == nil || !strings.Contains(err.Error(), "descendant") {
+				t.Fatalf("error = %v, want descendant rejection", err)
+			}
+			if after := directorySnapshot(t, base); after != before {
+				t.Fatalf("tree changed:\n%s", after)
+			}
+		})
+
+		t.Run(method+"/existing-destination", func(t *testing.T) {
+			base := t.TempDir()
+			src := filepath.Join(base, "src")
+			writeCopyFixture(t, filepath.Join(src, "nested", "file.txt"), "original")
+			writeCopyFixture(t, filepath.Join(src, "backup", "keep.txt"), "keep")
+			before := directorySnapshot(t, base)
+
+			err := copyDirectoryMethod(fs, method, src, filepath.Join(src, "backup", "snapshot"), base)
+			if err == nil || !strings.Contains(err.Error(), "descendant") {
+				t.Fatalf("error = %v, want descendant rejection", err)
+			}
+			if after := directorySnapshot(t, base); after != before {
+				t.Fatalf("source or destination changed:\n%s", after)
+			}
+		})
+
+		t.Run(method+"/symlink-ancestor", func(t *testing.T) {
+			base := t.TempDir()
+			src := filepath.Join(base, "src")
+			writeCopyFixture(t, filepath.Join(src, "nested", "file.txt"), "original")
+			requireSymlink(t, src, filepath.Join(base, "alias"))
+			before := directorySnapshot(t, base)
+
+			err := copyDirectoryMethod(fs, method, src, filepath.Join(base, "alias", "backup", "snapshot"), base)
+			if err == nil || !strings.Contains(err.Error(), "descendant") {
+				t.Fatalf("error = %v, want descendant rejection", err)
+			}
+			if after := directorySnapshot(t, base); after != before {
+				t.Fatalf("aliased destination mutated the tree:\n%s", after)
+			}
+		})
+
+		t.Run(method+"/disjoint", func(t *testing.T) {
+			base := t.TempDir()
+			src := filepath.Join(base, "src")
+			writeCopyFixture(t, filepath.Join(src, "nested", "file.txt"), "original")
+
+			if err := copyDirectoryMethod(fs, method, src, filepath.Join(base, "dst"), base); err != nil {
+				t.Fatalf("disjoint copy failed: %v", err)
+			}
+			got, err := os.ReadFile(filepath.Join(base, "dst", "nested", "file.txt"))
+			if err != nil || string(got) != "original" {
+				t.Fatalf("copied content = %q, error = %v", got, err)
+			}
+			if got, err = os.ReadFile(filepath.Join(src, "nested", "file.txt")); err != nil || string(got) != "original" {
+				t.Fatalf("source content = %q, error = %v", got, err)
+			}
+			assertNoStagingEntries(t, base)
+		})
+
+		t.Run(method+"/same-path", func(t *testing.T) {
+			base := t.TempDir()
+			src := filepath.Join(base, "src")
+			writeCopyFixture(t, filepath.Join(src, "nested", "file.txt"), "original")
+			before := directorySnapshot(t, src)
+
+			if err := copyDirectoryMethod(fs, method, src, src, base); err != nil {
+				t.Fatalf("same-path replacement failed: %v", err)
+			}
+			if after := directorySnapshot(t, src); after != before {
+				t.Fatalf("same-path replacement changed source:\n%s", after)
+			}
+			assertNoStagingEntries(t, base)
+		})
+
+		t.Run(method+"/case-alias", func(t *testing.T) {
+			base := t.TempDir()
+			src := filepath.Join(base, "Source")
+			writeCopyFixture(t, filepath.Join(src, "nested", "file.txt"), "original")
+			folded := filepath.Join(base, "source")
+			srcInfo, err := os.Stat(src)
+			foldedInfo, foldedErr := os.Stat(folded)
+			if foldedErr != nil || err != nil || !os.SameFile(srcInfo, foldedInfo) {
+				t.Skip("filesystem preserves directory case")
+			}
+			before := directorySnapshot(t, base)
+
+			err = copyDirectoryMethod(fs, method, src, filepath.Join(folded, "backup"), base)
+			if err == nil || !strings.Contains(err.Error(), "descendant") {
+				t.Fatalf("error = %v, want descendant rejection", err)
+			}
+			if after := directorySnapshot(t, base); after != before {
+				t.Fatalf("case alias mutated the tree:\n%s", after)
+			}
+			if err := copyDirectoryMethod(fs, method, src, folded, base); err != nil {
+				t.Fatalf("case-alias same-path replacement failed: %v", err)
+			}
+			got, readErr := os.ReadFile(filepath.Join(src, "nested", "file.txt"))
+			if readErr != nil || string(got) != "original" {
+				t.Fatalf("case-alias same-path content = %q, error = %v", got, readErr)
+			}
+			assertNoStagingEntries(t, base)
+		})
+	}
+
+	t.Run("platform-alias", func(t *testing.T) {
+		if runtime.GOOS != "darwin" {
+			t.Skip("platform alias fixture is macOS /private")
+		}
+		realBase, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(realBase, "/private/") {
+			t.Skip("temp dir is not under a /private alias")
+		}
+		aliasBase := strings.TrimPrefix(realBase, "/private")
+		src := filepath.Join(realBase, "src")
+		writeCopyFixture(t, filepath.Join(src, "nested", "file.txt"), "original")
+		aliasedSrc := filepath.Join(aliasBase, "src")
+
+		before := directorySnapshot(t, realBase)
+		err = fs.Copy(src, filepath.Join(aliasedSrc, "backup", "snapshot"))
+		if err == nil || !strings.Contains(err.Error(), "descendant") {
+			t.Fatalf("Copy through /var alias error = %v", err)
+		}
+		err = fs.CopyExcept(aliasedSrc, filepath.Join(src, "backup", "snapshot"), map[string]bool{"backup": true})
+		if err == nil || !strings.Contains(err.Error(), "descendant") {
+			t.Fatalf("CopyExcept through /private alias error = %v", err)
+		}
+		err = fs.CopyWithinRoot(aliasBase, filepath.Join("src", "backup", "snapshot"), src)
+		if err == nil || !strings.Contains(err.Error(), "descendant") {
+			t.Fatalf("CopyWithinRoot through /var alias error = %v", err)
+		}
+		if after := directorySnapshot(t, realBase); after != before {
+			t.Fatalf("platform alias copy mutated the tree:\n%s", after)
+		}
+
+		if err := fs.Copy(src, aliasedSrc); err != nil {
+			t.Fatalf("same-path replacement through platform alias failed: %v", err)
+		}
+		got, readErr := os.ReadFile(filepath.Join(src, "nested", "file.txt"))
+		if readErr != nil || string(got) != "original" {
+			t.Fatalf("alias same-path content = %q, error = %v", got, readErr)
+		}
+		assertNoStagingEntries(t, realBase)
+	})
+}
+
+func copyDirectoryMethod(fs *RealFS, method, src, dst, root string) error {
+	switch method {
+	case "Copy":
+		return fs.Copy(src, dst)
+	case "CopyExcept":
+		// Excluding the nested destination must not bypass the guard.
+		rel, err := filepath.Rel(src, dst)
+		excluded := map[string]bool{"ignored": true}
+		if err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			excluded[rel] = true
+			if top, _, ok := strings.Cut(rel, string(filepath.Separator)); ok {
+				excluded[top] = true
+			}
+		}
+		return fs.CopyExcept(src, dst, excluded)
+	case "CopyWithinRoot":
+		rel, err := filepath.Rel(root, dst)
+		if err != nil {
+			return err
+		}
+		return fs.CopyWithinRoot(root, rel, src)
+	default:
+		return errors.New("unknown copy method " + method)
+	}
+}
+
+func writeCopyFixture(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("failed to create parent for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write %s: %v", path, err)
+	}
+}
+
+func directorySnapshot(t *testing.T, root string) string {
+	t.Helper()
+	var lines []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		switch {
+		case entry.Type()&os.ModeSymlink != 0:
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			lines = append(lines, rel+" -> "+target)
+		case entry.IsDir():
+			lines = append(lines, rel+"/")
+		default:
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			lines = append(lines, rel+"="+string(data))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot %s: %v", root, err)
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+func assertNoStagingEntries(t *testing.T, root string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if strings.HasPrefix(entry.Name(), ".monodev-") {
+			t.Fatalf("staging entry created: %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
