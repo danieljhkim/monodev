@@ -692,7 +692,7 @@ func TestEnsureRepoLocalRoot(t *testing.T) {
 }
 
 func TestEnsureRepoLocalRootRejectsUnsafePaths(t *testing.T) {
-	for _, fixture := range []string{"root", "dangling root", "stores", "workspaces", "gitignore", "dangling gitignore", "hard-linked gitignore", "directory gitignore", "repository", "repository ancestor"} {
+	for _, fixture := range []string{"root", "dangling root", "stores", "workspaces", "gitignore", "dangling gitignore", "hard-linked gitignore", "directory gitignore"} {
 		t.Run(fixture, func(t *testing.T) {
 			base, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -722,7 +722,7 @@ func TestEnsureRepoLocalRootRejectsUnsafePaths(t *testing.T) {
 				linkPath, linkTarget = path, target
 			}
 			root := filepath.Join(repo, RepoLocalDirName)
-			if fixture != "root" && fixture != "dangling root" && fixture != "repository" && fixture != "repository ancestor" {
+			if fixture != "root" && fixture != "dangling root" {
 				if err := os.Mkdir(root, 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -746,14 +746,6 @@ func TestEnsureRepoLocalRootRejectsUnsafePaths(t *testing.T) {
 				if err := os.Mkdir(filepath.Join(root, ".gitignore"), 0700); err != nil {
 					t.Fatal(err)
 				}
-			case "repository":
-				alias := filepath.Join(base, "alias")
-				link(repo, alias)
-				repo = alias
-			case "repository ancestor":
-				alias := filepath.Join(base, "alias")
-				link(base, alias)
-				repo = filepath.Join(alias, "repo")
 			}
 
 			if path, err := EnsureRepoLocalRoot(repo); err == nil || path != "" {
@@ -762,11 +754,6 @@ func TestEnsureRepoLocalRootRejectsUnsafePaths(t *testing.T) {
 			if linkPath != "" {
 				if target, err := os.Readlink(linkPath); err != nil || target != linkTarget {
 					t.Fatalf("unsafe link modified: target %q, error %v", target, err)
-				}
-			}
-			if fixture == "repository" || fixture == "repository ancestor" {
-				if _, err := os.Lstat(root); !os.IsNotExist(err) {
-					t.Fatalf("state root created through repository link: %v", err)
 				}
 			}
 			data, err := os.ReadFile(victim)

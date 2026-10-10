@@ -209,11 +209,11 @@ func EnsureRepoLocalRoot(repoRoot string) (string, error) {
 
 	// Preflight existing paths before creating anything: a bad ignore leaf or
 	// child directory must not leave a partially initialized state root.
-	if err := checkRepoLocalEntry(repoFD, RepoLocalDirName, true); err != nil {
+	rootFD, err := openRepoLocalRoot(repoFD)
+	if err != nil {
 		return "", err
 	}
-	rootFD, err := unix.Openat(repoFD, RepoLocalDirName, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-	if errors.Is(err, unix.ENOENT) {
+	if rootFD < 0 {
 		rootFD, err = createRepoLocalDirectory(repoFD, RepoLocalDirName)
 	}
 	if err != nil {
@@ -264,10 +264,77 @@ func EnsureRepoLocalRoot(repoRoot string) (string, error) {
 	return monodevPath, nil
 }
 
+// ValidateRepoLocalRoot checks existing repo-local paths without creating or
+// modifying them. It is used by `monodev init` before its already-initialized
+// check so unsafe symlinks are reported directly, even without --force.
+func ValidateRepoLocalRoot(repoRoot string) error {
+	repoFD, err := openRepoLocalRepository(repoRoot)
+	if err != nil {
+		return fmt.Errorf("failed to open repository root without following symlinks: %w", err)
+	}
+	defer func() { _ = unix.Close(repoFD) }()
+
+	rootFD, err := openRepoLocalRoot(repoFD)
+	if err != nil {
+		return err
+	}
+	if rootFD >= 0 {
+		_ = unix.Close(rootFD)
+	}
+	return nil
+}
+
+// openRepoLocalRoot opens the existing .monodev directory and validates its
+// children. A missing root is reported as fd -1; no files are created.
+func openRepoLocalRoot(repoFD int) (int, error) {
+	if err := checkRepoLocalEntry(repoFD, RepoLocalDirName, true); err != nil {
+		return -1, err
+	}
+	rootFD, err := unix.Openat(repoFD, RepoLocalDirName, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return -1, nil
+	}
+	if err != nil {
+		if errors.Is(err, unix.ELOOP) {
+			return -1, fmt.Errorf("unsafe symlinked repo-local path %s", RepoLocalDirName)
+		}
+		if errors.Is(err, unix.ENOTDIR) {
+			return -1, fmt.Errorf("unsafe repo-local path %s: expected a directory", RepoLocalDirName)
+		}
+		return -1, fmt.Errorf("failed to open repo-local root %s without following symlinks: %w", RepoLocalDirName, err)
+	}
+	for _, name := range []string{"stores", "workspaces", ".gitignore"} {
+		if err := checkRepoLocalEntry(rootFD, name, name != ".gitignore"); err != nil {
+			_ = unix.Close(rootFD)
+			return -1, err
+		}
+	}
+	return rootFD, nil
+}
+
 // Walk every repository ancestor without following links, rather than relying
 // on O_NOFOLLOW on only the final component of a pathname.
 func openRepoLocalRepository(repoRoot string) (int, error) {
-	absRoot, err := filepath.Abs(repoRoot)
+	// Repository roots come from the user's current directory and may be
+	// reached through normal symlinked ancestors such as /tmp on macOS. Resolve
+	// that trusted path first, then keep the descriptor walk no-follow so the
+	// checkout-controlled .monodev subtree remains protected from symlinks.
+	resolvedRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		component := repoRoot
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) && pathErr.Path != "" {
+			component = pathErr.Path
+		}
+		if errors.Is(err, unix.ELOOP) {
+			return -1, fmt.Errorf("unsafe symlinked repository path %s", component)
+		}
+		if errors.Is(err, unix.ENOTDIR) {
+			return -1, fmt.Errorf("unsafe repository path component %s: expected a directory", component)
+		}
+		return -1, fmt.Errorf("failed to resolve repository path %s: %w", component, err)
+	}
+	absRoot, err := filepath.Abs(resolvedRoot)
 	if err != nil {
 		return -1, err
 	}
@@ -275,16 +342,31 @@ func openRepoLocalRepository(repoRoot string) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	currentPath := string(filepath.Separator)
 	for _, part := range strings.Split(strings.TrimPrefix(absRoot, string(filepath.Separator)), string(filepath.Separator)) {
 		if part == "" {
 			continue
 		}
 		nextFD, err := unix.Openat(fd, part, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-		_ = unix.Close(fd)
 		if err != nil {
-			return -1, fmt.Errorf("unsafe or inaccessible repository ancestor %s: %w", part, err)
+			componentPath := filepath.Join(currentPath, part)
+			var stat unix.Stat_t
+			if statErr := unix.Fstatat(fd, part, &stat, unix.AT_SYMLINK_NOFOLLOW); statErr == nil && stat.Mode&unix.S_IFMT == unix.S_IFLNK {
+				_ = unix.Close(fd)
+				return -1, fmt.Errorf("unsafe symlinked repository ancestor %s", componentPath)
+			}
+			_ = unix.Close(fd)
+			if errors.Is(err, unix.ELOOP) {
+				return -1, fmt.Errorf("unsafe symlinked repository ancestor %s", componentPath)
+			}
+			if errors.Is(err, unix.ENOTDIR) {
+				return -1, fmt.Errorf("unsafe repository ancestor %s: expected a directory", componentPath)
+			}
+			return -1, fmt.Errorf("failed to open repository ancestor %s: %w", componentPath, err)
 		}
+		_ = unix.Close(fd)
 		fd = nextFD
+		currentPath = filepath.Join(currentPath, part)
 	}
 	return fd, nil
 }
