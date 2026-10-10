@@ -7,9 +7,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -192,25 +196,125 @@ func NewScopedPaths() (*ScopedPaths, error) {
 }
 
 // EnsureRepoLocalRoot creates <repoRoot>/.monodev/{stores,workspaces} at mode
-// 0700 and writes the `*`-content .gitignore. It is idempotent.
+// 0700 and writes the `*`-content .gitignore. It is idempotent. The repository
+// must already exist; state paths must not be symlinks. Directory handles keep
+// the operations anchored even if a checked path is replaced concurrently.
 func EnsureRepoLocalRoot(repoRoot string) (string, error) {
 	monodevPath := filepath.Join(repoRoot, RepoLocalDirName)
-	dirs := []string{
-		monodevPath,
-		filepath.Join(monodevPath, "stores"),
-		filepath.Join(monodevPath, "workspaces"),
+	repoFD, err := openRepoLocalRepository(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("failed to open repository root without following symlinks: %w", err)
 	}
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return "", fmt.Errorf("failed to create directory %s: %w", dir, err)
+	defer func() { _ = unix.Close(repoFD) }()
+
+	// Preflight existing paths before creating anything: a bad ignore leaf or
+	// child directory must not leave a partially initialized state root.
+	if err := checkRepoLocalEntry(repoFD, RepoLocalDirName, true); err != nil {
+		return "", err
+	}
+	rootFD, err := unix.Openat(repoFD, RepoLocalDirName, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if errors.Is(err, unix.ENOENT) {
+		rootFD, err = createRepoLocalDirectory(repoFD, RepoLocalDirName)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to open repo-local root without following symlinks: %w", err)
+	}
+	defer func() { _ = unix.Close(rootFD) }()
+
+	for _, name := range []string{"stores", "workspaces", ".gitignore"} {
+		if err := checkRepoLocalEntry(rootFD, name, name != ".gitignore"); err != nil {
+			return "", err
 		}
 	}
+	for _, name := range []string{"stores", "workspaces"} {
+		fd, err := createRepoLocalDirectory(rootFD, name)
+		if err != nil {
+			return "", fmt.Errorf("failed to create repo-local directory %s: %w", name, err)
+		}
+		_ = unix.Close(fd)
+	}
 
-	gitignorePath := filepath.Join(monodevPath, ".gitignore")
-	if err := os.WriteFile(gitignorePath, []byte(RepoLocalGitignore), 0600); err != nil {
-		return "", fmt.Errorf("failed to create .gitignore: %w", err)
+	// Do not truncate until the opened inode is known to be a regular file
+	// with no hard-link aliases. O_NONBLOCK avoids blocking on a raced FIFO.
+	fd, err := unix.Openat(rootFD, ".gitignore", unix.O_WRONLY|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
+	if err != nil {
+		return "", fmt.Errorf("failed to open .gitignore without following symlinks: %w", err)
+	}
+	f := os.NewFile(uintptr(fd), filepath.Join(monodevPath, ".gitignore"))
+	defer func() { _ = f.Close() }()
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return "", fmt.Errorf("failed to inspect .gitignore: %w", err)
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Nlink != 1 {
+		return "", fmt.Errorf("unsafe repo-local .gitignore: expected a regular file without hard-link aliases")
+	}
+	if err := f.Chmod(0600); err != nil {
+		return "", fmt.Errorf("failed to set .gitignore permissions: %w", err)
+	}
+	if err := f.Truncate(0); err != nil {
+		return "", fmt.Errorf("failed to truncate .gitignore: %w", err)
+	}
+	if _, err := f.WriteString(RepoLocalGitignore); err != nil {
+		return "", fmt.Errorf("failed to write .gitignore: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("failed to close .gitignore: %w", err)
 	}
 	return monodevPath, nil
+}
+
+// Walk every repository ancestor without following links, rather than relying
+// on O_NOFOLLOW on only the final component of a pathname.
+func openRepoLocalRepository(repoRoot string) (int, error) {
+	absRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return -1, err
+	}
+	fd, err := unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY, 0)
+	if err != nil {
+		return -1, err
+	}
+	for _, part := range strings.Split(strings.TrimPrefix(absRoot, string(filepath.Separator)), string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		nextFD, err := unix.Openat(fd, part, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+		_ = unix.Close(fd)
+		if err != nil {
+			return -1, fmt.Errorf("unsafe or inaccessible repository ancestor %s: %w", part, err)
+		}
+		fd = nextFD
+	}
+	return fd, nil
+}
+
+func checkRepoLocalEntry(parentFD int, name string, directory bool) error {
+	var stat unix.Stat_t
+	if err := unix.Fstatat(parentFD, name, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect repo-local %s: %w", name, err)
+	}
+	if stat.Mode&unix.S_IFMT == unix.S_IFLNK {
+		return fmt.Errorf("unsafe symlinked repo-local path %s", name)
+	}
+	if directory {
+		if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
+			return fmt.Errorf("unsafe repo-local path %s: expected a directory", name)
+		}
+	} else if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Nlink != 1 {
+		return fmt.Errorf("unsafe repo-local path %s: expected a regular file without hard-link aliases", name)
+	}
+	return nil
+}
+
+func createRepoLocalDirectory(parentFD int, name string) (int, error) {
+	if err := unix.Mkdirat(parentFD, name, 0700); err != nil && !errors.Is(err, unix.EEXIST) {
+		return -1, err
+	}
+	return unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 }
 
 // EnsureScopedPaths resolves scoped paths and auto-creates the repo-local
@@ -222,6 +326,13 @@ func EnsureScopedPaths() (*ScopedPaths, error) {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get current directory: %w", err)
+		}
+		// Getwd can retain a PWD alias (notably /var on macOS). Resolve the
+		// current repository location before walking it without following links;
+		// never resolve the checkout-controlled .monodev paths themselves.
+		cwd, err = filepath.EvalSymlinks(cwd)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve current directory: %w", err)
 		}
 		repoRoot, err := discoverGitRoot(cwd)
 		if err != nil {

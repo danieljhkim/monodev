@@ -621,7 +621,12 @@ func TestPaths_EnsureDirectories(t *testing.T) {
 }
 
 func TestEnsureRepoLocalRoot(t *testing.T) {
-	tmpDir := t.TempDir()
+	// macOS temporary directories can use /var -> /private/var. Pass the
+	// physical repository path, as automatic initialization resolves it.
+	tmpDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	path, err := EnsureRepoLocalRoot(tmpDir)
 	if err != nil {
@@ -657,13 +662,230 @@ func TestEnsureRepoLocalRoot(t *testing.T) {
 	if string(data) != RepoLocalGitignore {
 		t.Errorf(".gitignore = %q, want %q", data, RepoLocalGitignore)
 	}
+	info, err = os.Stat(filepath.Join(path, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Errorf(".gitignore mode = %04o, want 0600", got)
+	}
+	// Reinitialization replaces stale contents without leaving a suffix and
+	// restores private ignore-file permissions.
+	if err := os.WriteFile(filepath.Join(path, ".gitignore"), []byte("stale contents longer than the expected ignore file\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(path, ".gitignore"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := EnsureRepoLocalRoot(tmpDir); err != nil {
 		t.Fatalf("EnsureRepoLocalRoot should be idempotent: %v", err)
 	}
+	data, err = os.ReadFile(filepath.Join(path, ".gitignore"))
+	if err != nil || string(data) != RepoLocalGitignore {
+		t.Fatalf("idempotent .gitignore = %q, error = %v", data, err)
+	}
+	info, err = os.Stat(filepath.Join(path, ".gitignore"))
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("idempotent .gitignore permissions: info = %v, error = %v", info, err)
+	}
+}
+
+func TestEnsureRepoLocalRootRejectsUnsafePaths(t *testing.T) {
+	for _, fixture := range []string{"root", "dangling root", "stores", "workspaces", "gitignore", "dangling gitignore", "hard-linked gitignore", "directory gitignore", "repository", "repository ancestor"} {
+		t.Run(fixture, func(t *testing.T) {
+			base, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := filepath.Join(base, "repo")
+			outside := filepath.Join(base, "outside")
+			for _, dir := range []string{repo, outside} {
+				if err := os.Mkdir(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const sentinel = "KEEP USER DATA\n\x00unchanged\n"
+			victim := filepath.Join(outside, "user-data")
+			if err := os.WriteFile(victim, []byte(sentinel), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(victim, 0644); err != nil {
+				t.Fatal(err)
+			}
+			var linkPath, linkTarget string
+			link := func(target, path string) {
+				t.Helper()
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+				linkPath, linkTarget = path, target
+			}
+			root := filepath.Join(repo, RepoLocalDirName)
+			if fixture != "root" && fixture != "dangling root" && fixture != "repository" && fixture != "repository ancestor" {
+				if err := os.Mkdir(root, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch fixture {
+			case "root":
+				link(outside, root)
+			case "dangling root":
+				link(filepath.Join(outside, "missing"), root)
+			case "stores", "workspaces":
+				link(outside, filepath.Join(root, fixture))
+			case "gitignore":
+				link(victim, filepath.Join(root, ".gitignore"))
+			case "dangling gitignore":
+				link(filepath.Join(outside, "missing"), filepath.Join(root, ".gitignore"))
+			case "hard-linked gitignore":
+				if err := os.Link(victim, filepath.Join(root, ".gitignore")); err != nil {
+					t.Fatal(err)
+				}
+			case "directory gitignore":
+				if err := os.Mkdir(filepath.Join(root, ".gitignore"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "repository":
+				alias := filepath.Join(base, "alias")
+				link(repo, alias)
+				repo = alias
+			case "repository ancestor":
+				alias := filepath.Join(base, "alias")
+				link(base, alias)
+				repo = filepath.Join(alias, "repo")
+			}
+
+			if path, err := EnsureRepoLocalRoot(repo); err == nil || path != "" {
+				t.Fatalf("unsafe initialization returned path %q, error %v", path, err)
+			}
+			if linkPath != "" {
+				if target, err := os.Readlink(linkPath); err != nil || target != linkTarget {
+					t.Fatalf("unsafe link modified: target %q, error %v", target, err)
+				}
+			}
+			if fixture == "repository" || fixture == "repository ancestor" {
+				if _, err := os.Lstat(root); !os.IsNotExist(err) {
+					t.Fatalf("state root created through repository link: %v", err)
+				}
+			}
+			data, err := os.ReadFile(victim)
+			if err != nil || string(data) != sentinel {
+				t.Fatalf("outside sentinel changed: %q, error %v", data, err)
+			}
+			info, err := os.Stat(victim)
+			if err != nil || info.Mode().Perm() != 0644 {
+				t.Fatalf("outside sentinel permissions changed: info %v, error %v", info, err)
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil || len(entries) != 1 || entries[0].Name() != "user-data" {
+				t.Fatalf("outside directory changed: %v, error %v", entries, err)
+			}
+			// No sibling state paths should be created before rejecting a link.
+			for _, name := range []string{"stores", "workspaces", ".gitignore"} {
+				if fixture == name || (name == ".gitignore" && strings.HasSuffix(fixture, "gitignore")) {
+					continue
+				}
+				if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
+					t.Fatalf("unexpected state path %s after rejection: %v", name, err)
+				}
+			}
+		})
+	}
 }
 
 func TestEnsureScopedPaths(t *testing.T) {
+	t.Run("initializes from a current-directory alias", func(t *testing.T) {
+		t.Setenv(EnvRoot, "")
+		base := t.TempDir()
+		repo := filepath.Join(base, "repo")
+		if err := os.MkdirAll(filepath.Join(repo, ".git"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		alias := filepath.Join(base, "alias")
+		if err := os.Symlink(repo, alias); err != nil {
+			t.Fatal(err)
+		}
+		oldWd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chdir(oldWd); err != nil {
+				t.Error(err)
+			}
+		})
+		if err := os.Chdir(alias); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PWD", alias)
+		if _, err := EnsureScopedPaths(); err != nil {
+			t.Fatalf("EnsureScopedPaths from current-directory alias: %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(repo, RepoLocalDirName, ".gitignore"))
+		if err != nil || string(data) != RepoLocalGitignore {
+			t.Fatalf("physical repo .gitignore = %q, error %v", data, err)
+		}
+	})
+
+	for _, customRoot := range []bool{false, true} {
+		name := "refuses automatic initialization through a leaf link"
+		if customRoot {
+			name = "custom root skips unsafe repo-local initialization"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(EnvRoot, "")
+			if customRoot {
+				t.Setenv(EnvRoot, t.TempDir())
+			}
+			repo := t.TempDir()
+			if err := os.Mkdir(filepath.Join(repo, ".git"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(repo, RepoLocalDirName)
+			if err := os.Mkdir(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			victim := filepath.Join(t.TempDir(), "user-data")
+			const sentinel = "KEEP USER DATA\n"
+			if err := os.WriteFile(victim, []byte(sentinel), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(victim, filepath.Join(root, ".gitignore")); err != nil {
+				t.Fatal(err)
+			}
+			oldWd, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chdir(oldWd); err != nil {
+					t.Error(err)
+				}
+			})
+			if err := os.Chdir(repo); err != nil {
+				t.Fatal(err)
+			}
+			sp, err := EnsureScopedPaths()
+			if customRoot {
+				if err != nil || sp.Global.Root != os.Getenv(EnvRoot) {
+					t.Fatalf("custom root resolution: paths %v, error %v", sp, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("expected symlink rejection, got paths %v, error %v", sp, err)
+			}
+			data, err := os.ReadFile(victim)
+			if err != nil || string(data) != sentinel {
+				t.Fatalf("outside sentinel changed: %q, error %v", data, err)
+			}
+			for _, name := range []string{"stores", "workspaces"} {
+				if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
+					t.Fatalf("unexpected %s after skipping/refusing initialization: %v", name, err)
+				}
+			}
+		})
+	}
+
 	t.Run("auto-creates repo-local in a git repo", func(t *testing.T) {
 		t.Setenv(EnvRoot, "")
 		tmpDir := t.TempDir()
