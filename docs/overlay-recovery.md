@@ -11,7 +11,8 @@ Each mutating operation writes a journal beside workspace state:
 
 - `<workspaces>/<workspace-id>.txn.json` — durable intent and phase
 - `<workspaces>/<workspace-id>.txn/` — backups of overwritten destination trees
-  and staged replacements
+  and staged replacements. Each operation has its own backup and stage directory,
+  so a directory path cannot replace a nested path staged for another operation.
 
 Journals are keyed by workspace ID, so a linked git worktree's journal is
 independent of the main checkout's — see

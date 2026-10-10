@@ -654,6 +654,170 @@ func TestBuildApplyPlan_EmptyStore(t *testing.T) {
 	}
 }
 
+func TestIsStrictDescendant(t *testing.T) {
+	if !IsStrictDescendant("context/child.txt", "context") {
+		t.Fatal("expected context/child.txt to be inside context")
+	}
+	if IsStrictDescendant("context", "context") {
+		t.Fatal("a path is not a strict descendant of itself")
+	}
+	if IsStrictDescendant("context-extra/file.txt", "context") {
+		t.Fatal("a prefix without a path separator is not a descendant")
+	}
+}
+
+func TestBuildApplyPlan_CopyDirectoryAndDescendantEitherOrder(t *testing.T) {
+	orders := [][]string{{"parent", "child"}, {"child", "parent"}}
+	for _, order := range orders {
+		t.Run(order[0]+"-then-"+order[1], func(t *testing.T) {
+			fs := newMockFS()
+			storeRepo := newMockStoreRepo()
+			workspace := state.NewWorkspaceState("repo1", ".", "copy")
+
+			parent := stores.NewTrackFile()
+			parent.Tracked = []stores.TrackedPath{{Path: "context", Kind: "dir"}}
+			child := stores.NewTrackFile()
+			child.Tracked = []stores.TrackedPath{{Path: "context/child.txt", Kind: "file"}}
+			storeRepo.setTrack("parent", parent)
+			storeRepo.setTrack("child", child)
+			storeRepo.setOverlayRoot("parent", "/stores/parent/overlay")
+			storeRepo.setOverlayRoot("child", "/stores/child/overlay")
+			fs.setExists("/stores/parent/overlay/context", true)
+			fs.setExists("/stores/child/overlay/context/child.txt", true)
+
+			plan, err := BuildApplyPlan(workspace, order, "copy", "/workspace", storeRepo, fs, false)
+			if err != nil {
+				t.Fatalf("BuildApplyPlan: %v", err)
+			}
+			if plan.HasConflicts() {
+				t.Fatalf("conflicts = %+v, want none", plan.Conflicts)
+			}
+			if len(plan.Operations) != 2 {
+				t.Fatalf("operations = %+v, want directory then nested file", plan.Operations)
+			}
+			if plan.Operations[0].RelPath != "context" || plan.Operations[0].Store != "parent" || plan.Operations[0].Type != OpCopy {
+				t.Fatalf("first operation = %+v, want copy context from parent", plan.Operations[0])
+			}
+			if plan.Operations[1].RelPath != "context/child.txt" || plan.Operations[1].Store != "child" || plan.Operations[1].Type != OpCopy {
+				t.Fatalf("second operation = %+v, want copy context/child.txt from child", plan.Operations[1])
+			}
+		})
+	}
+}
+
+func TestBuildApplyPlan_NestedDirectoryInstallsOutsideIn(t *testing.T) {
+	fs := newMockFS()
+	storeRepo := newMockStoreRepo()
+	workspace := state.NewWorkspaceState("repo1", ".", "copy")
+
+	fileTrack := stores.NewTrackFile()
+	fileTrack.Tracked = []stores.TrackedPath{{Path: "context/a/file.txt", Kind: "file"}}
+	midTrack := stores.NewTrackFile()
+	midTrack.Tracked = []stores.TrackedPath{{Path: "context/a", Kind: "dir"}}
+	outerTrack := stores.NewTrackFile()
+	outerTrack.Tracked = []stores.TrackedPath{{Path: "context", Kind: "dir"}}
+	storeRepo.setTrack("file", fileTrack)
+	storeRepo.setTrack("mid", midTrack)
+	storeRepo.setTrack("outer", outerTrack)
+	for _, id := range []string{"file", "mid", "outer"} {
+		storeRepo.setOverlayRoot(id, "/stores/"+id+"/overlay")
+	}
+	fs.setExists("/stores/file/overlay/context/a/file.txt", true)
+	fs.setExists("/stores/mid/overlay/context/a", true)
+	fs.setExists("/stores/outer/overlay/context", true)
+
+	plan, err := BuildApplyPlan(workspace, []string{"file", "outer", "mid"}, "copy", "/workspace", storeRepo, fs, false)
+	if err != nil {
+		t.Fatalf("BuildApplyPlan: %v", err)
+	}
+	got := make([]string, 0, len(plan.Operations))
+	for _, op := range plan.Operations {
+		got = append(got, op.Store+":"+op.RelPath)
+	}
+	want := []string{"outer:context", "mid:context/a", "file:context/a/file.txt"}
+	if len(got) != len(want) {
+		t.Fatalf("operations = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("operations = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestBuildApplyPlan_UnsafeHierarchyConflictsBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mode   string
+		first  stores.TrackedPath
+		second stores.TrackedPath
+		order  []string
+	}{
+		{
+			name:   "file then path inside",
+			mode:   "copy",
+			first:  stores.TrackedPath{Path: "context", Kind: "file"},
+			second: stores.TrackedPath{Path: "context/child.txt", Kind: "file"},
+			order:  []string{"parent", "child"},
+		},
+		{
+			name:   "path inside then file",
+			mode:   "copy",
+			first:  stores.TrackedPath{Path: "context/child.txt", Kind: "file"},
+			second: stores.TrackedPath{Path: "context", Kind: "file"},
+			order:  []string{"child", "parent"},
+		},
+		{
+			name:   "symlink directory then nested file",
+			mode:   "symlink",
+			first:  stores.TrackedPath{Path: "context", Kind: "dir"},
+			second: stores.TrackedPath{Path: "context/child.txt", Kind: "file"},
+			order:  []string{"parent", "child"},
+		},
+		{
+			name:   "nested file then symlink directory",
+			mode:   "symlink",
+			first:  stores.TrackedPath{Path: "context/child.txt", Kind: "file"},
+			second: stores.TrackedPath{Path: "context", Kind: "dir"},
+			order:  []string{"child", "parent"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := newMockFS()
+			storeRepo := newMockStoreRepo()
+			workspace := state.NewWorkspaceState("repo1", ".", tt.mode)
+			first := stores.NewTrackFile()
+			first.Tracked = []stores.TrackedPath{tt.first}
+			second := stores.NewTrackFile()
+			second.Tracked = []stores.TrackedPath{tt.second}
+			storeRepo.setTrack(tt.order[0], first)
+			storeRepo.setTrack(tt.order[1], second)
+			storeRepo.setOverlayRoot(tt.order[0], "/stores/"+tt.order[0]+"/overlay")
+			storeRepo.setOverlayRoot(tt.order[1], "/stores/"+tt.order[1]+"/overlay")
+			fs.setExists("/stores/"+tt.order[0]+"/overlay/"+tt.first.Path, true)
+			fs.setExists("/stores/"+tt.order[1]+"/overlay/"+tt.second.Path, true)
+
+			plan, err := BuildApplyPlan(workspace, tt.order, tt.mode, "/workspace", storeRepo, fs, true)
+			if err != nil {
+				t.Fatalf("BuildApplyPlan: %v", err)
+			}
+			conflict, blocked := plan.FirstBlockingConflict()
+			if !blocked {
+				t.Fatalf("conflicts = %+v, want a blocking hierarchy conflict", plan.Conflicts)
+			}
+			if conflict.Path == "" || conflict.Reason == "" {
+				t.Fatalf("blocking conflict = %+v, want path and reason", conflict)
+			}
+			for _, op := range plan.Operations {
+				if op.RelPath == tt.second.Path && op.Store == tt.order[1] {
+					t.Fatalf("plan included overlapping operation %+v after a blocking conflict", op)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildApplyPlan_PathOwnershipTracking(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()

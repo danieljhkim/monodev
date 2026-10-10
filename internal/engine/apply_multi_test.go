@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -385,4 +386,360 @@ func (r *orderedOverlayStoreRepo) OverlayRoot(id string) string {
 		return root
 	}
 	return r.trackStoreRepo.OverlayRoot(id)
+}
+
+func TestApply_DirectoryAndDescendantEitherOrderAndSelectiveUnapply(t *testing.T) {
+	for _, order := range [][]string{{"parent", "child"}, {"child", "parent"}} {
+		t.Run(strings.Join(order, "-then-"), func(t *testing.T) {
+			repoRoot, eng, stateStore := setupOverlappingStores(t)
+			if _, err := eng.Apply(context.Background(), &ApplyRequest{
+				CWD: repoRoot, Mode: "copy", StoreIDs: order, DryRun: true,
+			}); err != nil {
+				t.Fatalf("dry-run apply: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(repoRoot, "context")); !os.IsNotExist(err) {
+				t.Fatalf("dry-run created context, stat err=%v", err)
+			}
+
+			if _, err := eng.Apply(context.Background(), &ApplyRequest{
+				CWD: repoRoot, Mode: "copy", StoreIDs: order,
+			}); err != nil {
+				t.Fatalf("apply %v: %v", order, err)
+			}
+			assertOverlapApplied(t, repoRoot, stateStore)
+
+			result, err := eng.Unapply(context.Background(), &UnapplyRequest{
+				CWD: repoRoot, StoreIDs: []string{"parent"},
+			})
+			if err != nil {
+				t.Fatalf("unapply parent: %v", err)
+			}
+			if len(result.Removed) != 1 || result.Removed[0] != "context" {
+				t.Fatalf("Removed = %v, want [context]", result.Removed)
+			}
+			assertFileGone(t, filepath.Join(repoRoot, "context", "parent.txt"))
+			assertFileGone(t, filepath.Join(repoRoot, "context", "sub"))
+			assertFileContent(t, filepath.Join(repoRoot, "context", "child.txt"), "from-child")
+			ws := loadHierarchyWorkspace(t, stateStore)
+			if _, ok := ws.Paths["context"]; ok {
+				t.Fatal("ledger still records context after unapply parent")
+			}
+			if ws.Paths["context/child.txt"].Store != "child" {
+				t.Fatalf("child ownership = %+v, want child", ws.Paths["context/child.txt"])
+			}
+			if ids := ws.AppliedStoreIDs(); len(ids) != 1 || ids[0] != "child" {
+				t.Fatalf("AppliedStores = %v, want [child]", ids)
+			}
+
+			if _, err := eng.Unapply(context.Background(), &UnapplyRequest{
+				CWD: repoRoot, StoreIDs: []string{"child"},
+			}); err != nil {
+				t.Fatalf("unapply child: %v", err)
+			}
+			assertFileGone(t, filepath.Join(repoRoot, "context", "child.txt"))
+			ws = loadHierarchyWorkspace(t, stateStore)
+			if _, ok := ws.Paths["context/child.txt"]; ok {
+				t.Fatal("ledger still records context/child.txt after unapply child")
+			}
+		})
+	}
+
+	t.Run("unapply child keeps parent directory", func(t *testing.T) {
+		repoRoot, eng, stateStore := setupOverlappingStores(t)
+		if _, err := eng.Apply(context.Background(), &ApplyRequest{
+			CWD: repoRoot, Mode: "copy", StoreIDs: []string{"child", "parent"},
+		}); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		if _, err := eng.Unapply(context.Background(), &UnapplyRequest{
+			CWD: repoRoot, StoreIDs: []string{"child"},
+		}); err != nil {
+			t.Fatalf("unapply child: %v", err)
+		}
+		assertFileContent(t, filepath.Join(repoRoot, "context", "parent.txt"), "from-parent")
+		assertFileContent(t, filepath.Join(repoRoot, "context", "sub", "extra.txt"), "extra")
+		assertFileGone(t, filepath.Join(repoRoot, "context", "child.txt"))
+		ws := loadHierarchyWorkspace(t, stateStore)
+		ownership := ws.Paths["context"]
+		if ownership.Store != "parent" || ownership.Contents == nil {
+			t.Fatalf("parent ownership = %+v", ownership)
+		}
+		if _, ok := ownership.Contents.Files["child.txt"]; ok {
+			t.Fatalf("parent manifest still lists child.txt: %+v", ownership.Contents.Files)
+		}
+		if _, err := eng.Unapply(context.Background(), &UnapplyRequest{
+			CWD: repoRoot, StoreIDs: []string{"parent"},
+		}); err != nil {
+			t.Fatalf("unapply parent: %v", err)
+		}
+		assertFileGone(t, filepath.Join(repoRoot, "context"))
+	})
+
+	t.Run("legacy manifest including the nested file", func(t *testing.T) {
+		repoRoot, eng, stateStore := setupOverlappingStores(t)
+		if _, err := eng.Apply(context.Background(), &ApplyRequest{
+			CWD: repoRoot, Mode: "copy", StoreIDs: []string{"parent", "child"},
+		}); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		ws := loadHierarchyWorkspace(t, stateStore)
+		childHash, err := hash.NewSHA256Hasher().HashFile(filepath.Join(repoRoot, "context", "child.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ws.Paths["context"].Contents.Files["child.txt"] = childHash
+		if _, err := eng.Unapply(context.Background(), &UnapplyRequest{
+			CWD: repoRoot, StoreIDs: []string{"parent"},
+		}); err != nil {
+			t.Fatalf("unapply parent with legacy manifest: %v", err)
+		}
+		assertFileContent(t, filepath.Join(repoRoot, "context", "child.txt"), "from-child")
+		updated := loadHierarchyWorkspace(t, stateStore)
+		if _, ok := updated.Paths["context"]; ok {
+			t.Fatal("ledger still records parent directory")
+		}
+		if updated.Paths["context/child.txt"].Store != "child" {
+			t.Fatal("child path missing from ledger")
+		}
+	})
+
+	t.Run("parent drift does not remove the nested store", func(t *testing.T) {
+		repoRoot, eng, stateStore := setupOverlappingStores(t)
+		if _, err := eng.Apply(context.Background(), &ApplyRequest{
+			CWD: repoRoot, Mode: "copy", StoreIDs: []string{"parent", "child"},
+		}); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		parentPath := filepath.Join(repoRoot, "context", "parent.txt")
+		if err := os.WriteFile(parentPath, []byte("local edit"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := eng.Unapply(context.Background(), &UnapplyRequest{
+			CWD: repoRoot, StoreIDs: []string{"parent"},
+		})
+		if !errors.Is(err, ErrDrift) {
+			t.Fatalf("unapply parent = %v, want drift", err)
+		}
+		assertFileContent(t, parentPath, "local edit")
+		assertFileContent(t, filepath.Join(repoRoot, "context", "child.txt"), "from-child")
+		ws := loadHierarchyWorkspace(t, stateStore)
+		if ws.Paths["context"].Store != "parent" || ws.Paths["context/child.txt"].Store != "child" {
+			t.Fatalf("ledger changed after refused unapply: %+v", ws.Paths)
+		}
+
+		if _, err := eng.Unapply(context.Background(), &UnapplyRequest{
+			CWD: repoRoot, StoreIDs: []string{"parent"}, Force: true,
+		}); err != nil {
+			t.Fatalf("force unapply parent: %v", err)
+		}
+		assertFileGone(t, parentPath)
+		assertFileContent(t, filepath.Join(repoRoot, "context", "child.txt"), "from-child")
+		ws = loadHierarchyWorkspace(t, stateStore)
+		if _, ok := ws.Paths["context"]; ok {
+			t.Fatal("force unapply left the parent directory in the ledger")
+		}
+		if ws.Paths["context/child.txt"].Store != "child" {
+			t.Fatal("force unapply dropped the child path")
+		}
+	})
+}
+
+func TestApply_UnsafeHierarchyConflictDoesNotMutate(t *testing.T) {
+	t.Run("symlink nested overlap", func(t *testing.T) {
+		repoRoot, eng, stateStore := setupOverlappingStores(t)
+		for _, order := range [][]string{{"parent", "child"}, {"child", "parent"}} {
+			_, err := eng.Apply(context.Background(), &ApplyRequest{
+				CWD: repoRoot, Mode: "symlink", StoreIDs: order, Force: true,
+			})
+			if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "symlink apply cannot share") {
+				t.Fatalf("apply %v error = %v, want blocking symlink conflict", order, err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(repoRoot, "context")); !os.IsNotExist(err) {
+			t.Fatalf("symlink conflict mutated context, stat err=%v", err)
+		}
+		if _, err := stateStore.LoadWorkspace(state.ComputeWorkspaceID("fp1", ".")); !os.IsNotExist(err) {
+			t.Fatalf("symlink conflict persisted workspace state, err=%v", err)
+		}
+	})
+
+	t.Run("file overlapping a nested path", func(t *testing.T) {
+		repoRoot, eng, stateStore := setupFileOverlappingChild(t)
+		for _, order := range [][]string{{"parent", "child"}, {"child", "parent"}} {
+			_, err := eng.Apply(context.Background(), &ApplyRequest{
+				CWD: repoRoot, Mode: "copy", StoreIDs: order, Force: true,
+			})
+			if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "only a copied directory") {
+				t.Fatalf("apply %v error = %v, want blocking file overlap", order, err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(repoRoot, "context")); !os.IsNotExist(err) {
+			t.Fatalf("file overlap mutated context, stat err=%v", err)
+		}
+		if _, err := stateStore.LoadWorkspace(state.ComputeWorkspaceID("fp1", ".")); !os.IsNotExist(err) {
+			t.Fatalf("file overlap persisted workspace state, err=%v", err)
+		}
+	})
+}
+
+func TestUnapply_NonDirectoryOverlapConflictsBeforeMutation(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeCopiedDirFile(t, filepath.Join(repoRoot, "context"), "parent-file")
+	stateStore := newMockStateStore()
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	ws := state.NewWorkspaceState("fp1", ".", "copy")
+	ws.Applied = true
+	ws.Paths["context"] = state.PathOwnership{Store: "parent", Type: "copy", Checksum: ""}
+	ws.Paths["context/child.txt"] = state.PathOwnership{Store: "child", Type: "copy", Checksum: ""}
+	ws.AppliedStores = []state.AppliedStore{{Store: "parent", Type: "copy"}, {Store: "child", Type: "copy"}}
+	stateStore.workspaces[workspaceID] = ws
+	eng := New(
+		&trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "."},
+		newTrackStoreRepo(),
+		stateStore,
+		fsops.NewRealFS(),
+		hash.NewSHA256Hasher(),
+		&mockClock{},
+		config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: filepath.Join(repoRoot, "stores"), Workspaces: filepath.Join(repoRoot, ".state")},
+	)
+
+	_, err := eng.Unapply(context.Background(), &UnapplyRequest{CWD: repoRoot, StoreIDs: []string{"parent"}, Force: true})
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "still owned by child") {
+		t.Fatalf("unapply = %v, want conflict naming the child store", err)
+	}
+	assertFileContent(t, filepath.Join(repoRoot, "context"), "parent-file")
+	updated, loadErr := stateStore.LoadWorkspace(workspaceID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if updated.Paths["context"].Store != "parent" || updated.Paths["context/child.txt"].Store != "child" {
+		t.Fatalf("ledger changed: %+v", updated.Paths)
+	}
+}
+
+func setupOverlappingStores(t *testing.T) (string, *Engine, *mockStateStore) {
+	t.Helper()
+	repoRoot := t.TempDir()
+	storesRoot := t.TempDir()
+	parentRoot := filepath.Join(storesRoot, "parent")
+	childRoot := filepath.Join(storesRoot, "child")
+	writeOverlayBytes(t, parentRoot, filepath.Join("context", "parent.txt"), "from-parent")
+	writeOverlayBytes(t, parentRoot, filepath.Join("context", "sub", "extra.txt"), "extra")
+	writeOverlayBytes(t, childRoot, filepath.Join("context", "child.txt"), "from-child")
+
+	parentTrack := stores.NewTrackFile()
+	parentTrack.Tracked = []stores.TrackedPath{{Path: "context", Kind: "dir"}}
+	childTrack := stores.NewTrackFile()
+	childTrack.Tracked = []stores.TrackedPath{{Path: "context/child.txt", Kind: "file"}}
+	storeRepo := newTrackStoreRepo()
+	storeRepo.tracks["parent"] = parentTrack
+	storeRepo.tracks["child"] = childTrack
+	eng, stateStore := newOrderedApplyEngine(t, repoRoot, storesRoot, storeRepo, map[string]string{
+		"parent": parentRoot,
+		"child":  childRoot,
+	})
+	return repoRoot, eng, stateStore
+}
+
+func setupFileOverlappingChild(t *testing.T) (string, *Engine, *mockStateStore) {
+	t.Helper()
+	repoRoot := t.TempDir()
+	storesRoot := t.TempDir()
+	parentRoot := filepath.Join(storesRoot, "parent")
+	childRoot := filepath.Join(storesRoot, "child")
+	writeOverlayBytes(t, parentRoot, "context", "from-parent")
+	writeOverlayBytes(t, childRoot, filepath.Join("context", "child.txt"), "from-child")
+
+	parentTrack := stores.NewTrackFile()
+	parentTrack.Tracked = []stores.TrackedPath{{Path: "context", Kind: "file"}}
+	childTrack := stores.NewTrackFile()
+	childTrack.Tracked = []stores.TrackedPath{{Path: "context/child.txt", Kind: "file"}}
+	storeRepo := newTrackStoreRepo()
+	storeRepo.tracks["parent"] = parentTrack
+	storeRepo.tracks["child"] = childTrack
+	eng, stateStore := newOrderedApplyEngine(t, repoRoot, storesRoot, storeRepo, map[string]string{
+		"parent": parentRoot,
+		"child":  childRoot,
+	})
+	return repoRoot, eng, stateStore
+}
+
+func newOrderedApplyEngine(t *testing.T, repoRoot, storesRoot string, storeRepo *trackStoreRepo, roots map[string]string) (*Engine, *mockStateStore) {
+	t.Helper()
+	stateStore := newMockStateStore()
+	eng := New(
+		&trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "."},
+		&orderedOverlayStoreRepo{trackStoreRepo: storeRepo, roots: roots},
+		stateStore,
+		fsops.NewRealFS(),
+		hash.NewSHA256Hasher(),
+		&mockClock{},
+		config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: storesRoot, Workspaces: filepath.Join(repoRoot, ".state")},
+	)
+	return eng, stateStore
+}
+
+func writeOverlayBytes(t *testing.T, overlayRoot, relPath, content string) {
+	t.Helper()
+	path := filepath.Join(overlayRoot, relPath)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatalf("mkdir overlay parent: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("write overlay file: %v", err)
+	}
+}
+
+func assertOverlapApplied(t *testing.T, repoRoot string, stateStore *mockStateStore) {
+	t.Helper()
+	assertFileContent(t, filepath.Join(repoRoot, "context", "parent.txt"), "from-parent")
+	assertFileContent(t, filepath.Join(repoRoot, "context", "sub", "extra.txt"), "extra")
+	assertFileContent(t, filepath.Join(repoRoot, "context", "child.txt"), "from-child")
+	ws := loadHierarchyWorkspace(t, stateStore)
+	parent := ws.Paths["context"]
+	child := ws.Paths["context/child.txt"]
+	if parent.Store != "parent" || child.Store != "child" {
+		t.Fatalf("ownership = parent:%+v child:%+v", parent, child)
+	}
+	if parent.Contents == nil {
+		t.Fatal("parent directory has no manifest")
+	}
+	if _, ok := parent.Contents.Files["child.txt"]; ok {
+		t.Fatalf("parent manifest includes child.txt: %+v", parent.Contents.Files)
+	}
+	if parent.Contents.Files["parent.txt"] == "" || parent.Contents.Files["sub/extra.txt"] == "" {
+		t.Fatalf("parent manifest = %+v, want parent.txt and sub/extra.txt", parent.Contents.Files)
+	}
+	ids := append([]string{}, ws.AppliedStoreIDs()...)
+	sort.Strings(ids)
+	if len(ids) != 2 || ids[0] != "child" || ids[1] != "parent" {
+		t.Fatalf("AppliedStores = %v, want parent and child", ws.AppliedStoreIDs())
+	}
+}
+
+func loadHierarchyWorkspace(t *testing.T, stateStore *mockStateStore) *state.WorkspaceState {
+	t.Helper()
+	ws, err := stateStore.LoadWorkspace(state.ComputeWorkspaceID("fp1", "."))
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	return ws
+}
+
+func assertFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if string(got) != want {
+		t.Fatalf("%s = %q, want %q", path, got, want)
+	}
+}
+
+func assertFileGone(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("%s still exists, stat err=%v", path, err)
+	}
 }

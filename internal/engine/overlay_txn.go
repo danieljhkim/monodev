@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
@@ -264,12 +265,12 @@ func (e *Engine) runOverlayTxn(ctx context.Context, req overlayTxnRequest) error
 		return err
 	}
 
-	for _, op := range req.ops {
+	for seq, op := range req.ops {
 		if err := checkContext(ctx); err != nil {
 			_ = e.discardOverlayTxn(journalPath, txnDir)
 			return err
 		}
-		prepared, prepErr := e.prepareOverlayOp(req.workspaceRoot, txnDir, op)
+		prepared, prepErr := e.prepareOverlayOp(req.workspaceRoot, txnDir, seq, op)
 		if prepErr != nil {
 			_ = e.discardOverlayTxn(journalPath, txnDir)
 			return prepErr
@@ -311,7 +312,7 @@ func (e *Engine) runOverlayTxn(ctx context.Context, req overlayTxnRequest) error
 	return e.discardOverlayTxn(journalPath, txnDir)
 }
 
-func (e *Engine) prepareOverlayOp(workspaceRoot, txnDir string, op planner.Operation) (overlayTxnOp, error) {
+func (e *Engine) prepareOverlayOp(workspaceRoot, txnDir string, seq int, op planner.Operation) (overlayTxnOp, error) {
 	if err := e.fs.ValidateRelPath(op.RelPath); err != nil {
 		return overlayTxnOp{}, fmt.Errorf("invalid operation path %q: %w", op.RelPath, err)
 	}
@@ -341,7 +342,9 @@ func (e *Engine) prepareOverlayOp(workspaceRoot, txnDir string, op planner.Opera
 			prepared.BackupIsLink = true
 			prepared.LinkTarget = target
 		} else {
-			prepared.BackupRel = filepath.ToSlash(filepath.Join("backup", op.RelPath))
+			// Index by operation so an ancestor backup cannot replace a
+			// descendant operation's backup tree.
+			prepared.BackupRel = filepath.ToSlash(filepath.Join("backup", strconv.Itoa(seq), op.RelPath))
 			if err := e.backupDest(absDest, filepath.Join(txnDir, filepath.FromSlash(prepared.BackupRel))); err != nil {
 				return overlayTxnOp{}, fmt.Errorf("failed to backup %s: %w", op.RelPath, err)
 			}
@@ -350,7 +353,9 @@ func (e *Engine) prepareOverlayOp(workspaceRoot, txnDir string, op planner.Opera
 
 	switch op.Type {
 	case planner.OpCopy:
-		prepared.StagedRel = filepath.ToSlash(filepath.Join("staged", op.RelPath))
+		// Index by operation so staging a directory cannot delete or rewrite
+		// another operation's staged descendant.
+		prepared.StagedRel = filepath.ToSlash(filepath.Join("staged", strconv.Itoa(seq), op.RelPath))
 		stagedPath := filepath.Join(txnDir, filepath.FromSlash(prepared.StagedRel))
 		if err := e.fs.MkdirAll(filepath.Dir(stagedPath), 0700); err != nil {
 			return overlayTxnOp{}, fmt.Errorf("failed to create staged path for %s: %w", op.RelPath, err)

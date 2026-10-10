@@ -16,6 +16,9 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 - `monodev context [--json]` is the agent session-start command: it reports the active store, or finds this directory's workspace reference locally or on the remote persistence branch, pulls and applies its stores, and lists the `.agents/notes`, `.agents/notes/sessions` and `.agents/scripts` files on disk. It never pushes or forces; no remote or nothing found exits 0 with an empty result.
 - Documented the `.agents/` layout convention for agent notes, session files and scripts.
 
+### Fixed
+- `apply` keeps a copied directory and a nested path from another store, in either order. The nested path stays owned by its store. `unapply` of one store no longer deletes the other store's files or leaves those files marked applied. A path inside a file, or nested paths in symlink mode, conflicts before any change; `--force` does not override that conflict.
+
 ## [0.3.1] — 2026-10-09
 
 v0.3.0 was tagged but never published: its Linux builds failed, so no release
