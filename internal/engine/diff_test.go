@@ -2,9 +2,11 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -500,5 +502,89 @@ func TestStatus_RootWorkspaceStillUsesRepositoryRoot(t *testing.T) {
 	}
 	if len(result.TrackedPathDetails) != 1 || result.TrackedPathDetails[0].IsModified {
 		t.Fatalf("root status = %#v, want one unmodified path", result.TrackedPathDetails)
+	}
+}
+
+func numberedLines(count int, prefix string) string {
+	var b strings.Builder
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&b, "%s %d\n", prefix, i)
+	}
+	return b.String()
+}
+
+func measureAlloc(fn func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	fn()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+func TestGenerateUnifiedDiff_LargeMostlyUnchangedFileIsBounded(t *testing.T) {
+	const lines = 50000
+	oldText := numberedLines(lines, "line")
+	newText := strings.Replace(oldText, "line 25000\n", "line changed\n", 1)
+
+	var diff string
+	var additions, deletions int
+	alloc := measureAlloc(func() {
+		diff, additions, deletions = generateUnifiedDiff("big.txt", []byte(oldText), []byte(newText), "modified")
+	})
+
+	if additions != 1 || deletions != 1 {
+		t.Fatalf("additions/deletions = %d/%d, want 1/1", additions, deletions)
+	}
+	for _, want := range []string{"@@ -24998,7 +24998,7 @@", "-line 25000\n", "+line changed\n"} {
+		if !strings.Contains(diff, want) {
+			t.Fatalf("diff missing %q:\n%s", want, diff)
+		}
+	}
+	// A quadratic table for this input would need ~20 GB.
+	if limit := uint64(64 << 20); alloc > limit {
+		t.Fatalf("allocated %d bytes, want <= %d", alloc, limit)
+	}
+}
+
+func TestGenerateUnifiedDiff_OversizedChangedRegionFallsBackToReplacement(t *testing.T) {
+	const lines = 20000
+	oldText := "head\n" + numberedLines(lines, "old") + "tail\n"
+	newText := "head\n" + numberedLines(lines, "new") + "tail\n"
+
+	var diff string
+	var additions, deletions int
+	alloc := measureAlloc(func() {
+		diff, additions, deletions = generateUnifiedDiff("big.txt", []byte(oldText), []byte(newText), "modified")
+	})
+
+	if additions != lines || deletions != lines {
+		t.Fatalf("additions/deletions = %d/%d, want %d/%d", additions, deletions, lines, lines)
+	}
+	if !strings.Contains(diff, fmt.Sprintf("@@ -1,%d +1,%d @@", lines+2, lines+2)) {
+		t.Fatalf("unexpected hunk header:\n%.200s", diff)
+	}
+	if limit := uint64(128 << 20); alloc > limit {
+		t.Fatalf("allocated %d bytes, want <= %d", alloc, limit)
+	}
+}
+
+func TestDiffLineOps_TrimmedRegionsKeepLineNumbers(t *testing.T) {
+	oldLines := splitLines("a\nb\nc\nd\ne\n")
+	newLines := splitLines("a\nb\nx\nd\ne\n")
+	ops := diffLineOps(oldLines, newLines)
+
+	want := []lineOp{
+		{' ', "a", true, 1, 1}, {' ', "b", true, 2, 2},
+		{'+', "x", true, 3, 3}, {'-', "c", true, 3, 4},
+		{' ', "d", true, 4, 4}, {' ', "e", true, 5, 5},
+	}
+	if len(ops) != len(want) {
+		t.Fatalf("ops = %+v, want %+v", ops, want)
+	}
+	for i := range want {
+		if ops[i] != want[i] {
+			t.Fatalf("ops[%d] = %+v, want %+v", i, ops[i], want[i])
+		}
 	}
 }

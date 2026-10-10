@@ -393,7 +393,62 @@ func isBinary(data []byte) bool {
 	return bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)
 }
 
+// maxLCSCells bounds the dynamic-programming table used to diff the changed
+// region between two files. Larger regions fall back to a whole-region
+// replacement, which is still a valid (if not minimal) diff.
+const maxLCSCells = 4 << 20
+
 func diffLineOps(oldLines, newLines []diffLine) []lineOp {
+	// Trim the common prefix and suffix so the quadratic table only covers the
+	// region that actually changed.
+	prefix := 0
+	for prefix < len(oldLines) && prefix < len(newLines) && oldLines[prefix] == newLines[prefix] {
+		prefix++
+	}
+	suffix := 0
+	for suffix < len(oldLines)-prefix && suffix < len(newLines)-prefix &&
+		oldLines[len(oldLines)-1-suffix] == newLines[len(newLines)-1-suffix] {
+		suffix++
+	}
+
+	oldMid := oldLines[prefix : len(oldLines)-suffix]
+	newMid := newLines[prefix : len(newLines)-suffix]
+
+	ops := make([]lineOp, 0, prefix+suffix+len(oldMid)+len(newMid))
+	for k := 0; k < prefix; k++ {
+		ops = append(ops, lineOp{kind: ' ', text: oldLines[k].text, hasNewline: oldLines[k].hasNewline, old: k + 1, new: k + 1})
+	}
+
+	if (len(oldMid)+1)*(len(newMid)+1) > maxLCSCells {
+		ops = appendReplaceOps(ops, oldMid, newMid, prefix+1, prefix+1)
+	} else {
+		ops = appendLCSOps(ops, oldMid, newMid, prefix+1, prefix+1)
+	}
+
+	oldNo := len(oldLines) - suffix + 1
+	newNo := len(newLines) - suffix + 1
+	for k := 0; k < suffix; k++ {
+		line := oldLines[len(oldLines)-suffix+k]
+		ops = append(ops, lineOp{kind: ' ', text: line.text, hasNewline: line.hasNewline, old: oldNo + k, new: newNo + k})
+	}
+	return ops
+}
+
+// appendReplaceOps emits every old line as deleted followed by every new line
+// as added.
+func appendReplaceOps(ops []lineOp, oldLines, newLines []diffLine, oldLineNo, newLineNo int) []lineOp {
+	for _, line := range oldLines {
+		ops = append(ops, lineOp{kind: '-', text: line.text, hasNewline: line.hasNewline, old: oldLineNo, new: newLineNo})
+		oldLineNo++
+	}
+	for _, line := range newLines {
+		ops = append(ops, lineOp{kind: '+', text: line.text, hasNewline: line.hasNewline, old: oldLineNo, new: newLineNo})
+		newLineNo++
+	}
+	return ops
+}
+
+func appendLCSOps(ops []lineOp, oldLines, newLines []diffLine, oldLineNo, newLineNo int) []lineOp {
 	n := len(oldLines)
 	m := len(newLines)
 	dp := make([][]int, n+1)
@@ -413,9 +468,7 @@ func diffLineOps(oldLines, newLines []diffLine) []lineOp {
 		}
 	}
 
-	ops := make([]lineOp, 0, n+m)
 	i, j := 0, 0
-	oldLineNo, newLineNo := 1, 1
 
 	for i < n || j < m {
 		if i < n && j < m && oldLines[i] == newLines[j] {

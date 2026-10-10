@@ -78,6 +78,7 @@ monodev diff --store-id other-store
 ```
 
 `--patch` (`-p`) unified diff. `--name-only` / `--name-status` names only.
+When the changed region between two versions of a file is very large (millions of line pairs), `--patch` shows that region as a full delete-then-add replacement instead of a minimal diff, to bound memory use.
 `--store-id` (`-s`) selects a store; default is the active store.
 
 ### doctor
