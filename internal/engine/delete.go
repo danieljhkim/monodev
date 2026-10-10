@@ -18,15 +18,16 @@ import (
 // 6. Delete store
 // 7. Return result
 func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*DeleteStoreResult, error) {
-	// Step 1: Resolve store scope
-	repo, _, err := e.storeResolver.resolveStoreRepo(req.StoreID, req.Scope)
+	// Step 1: Resolve the physical store. The scope is part of its identity:
+	// the same store ID can exist in both global and component scopes.
+	repo, resolvedScope, err := e.storeResolver.resolveStoreRepo(req.StoreID, req.Scope)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 2: Dry-run is a read-only, atomic-per-workspace snapshot.
 	if req.DryRun {
-		affectedWorkspaces, err := e.findWorkspacesUsingStore(req.StoreID)
+		affectedWorkspaces, err := e.findWorkspacesUsingStore(req.StoreID, resolvedScope)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find workspaces using store: %w", err)
 		}
@@ -45,7 +46,7 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 	var unlockWorkspaces func()
 	var unlockStore func()
 	for attempt := 0; attempt < 8; attempt++ {
-		affectedWorkspaces, err = e.findWorkspacesUsingStore(req.StoreID)
+		affectedWorkspaces, err = e.findWorkspacesUsingStore(req.StoreID, resolvedScope)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find workspaces using store: %w", err)
 		}
@@ -69,7 +70,7 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 			return nil, err
 		}
 
-		fresh, scanErr := e.findWorkspacesUsingStore(req.StoreID)
+		fresh, scanErr := e.findWorkspacesUsingStore(req.StoreID, resolvedScope)
 		if scanErr != nil {
 			unlockStore()
 			unlockWorkspaces()
@@ -109,7 +110,7 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 
 	// Step 4: Clean workspace references
 	if len(affectedWorkspaces) > 0 {
-		if err := e.cleanWorkspaceReferences(req.StoreID, affectedWorkspaces); err != nil {
+		if err := e.cleanWorkspaceReferences(req.StoreID, resolvedScope, affectedWorkspaces); err != nil {
 			return nil, fmt.Errorf("failed to clean workspace references: %w", err)
 		}
 	}
@@ -127,12 +128,13 @@ func (e *Engine) DeleteStore(ctx context.Context, req *DeleteStoreRequest) (*Del
 	}, nil
 }
 
-// findWorkspacesUsingStore enumerates all workspaces (both scopes) and finds which ones use the given store.
-func (e *Engine) findWorkspacesUsingStore(storeID string) ([]WorkspaceUsage, error) {
+// findWorkspacesUsingStore enumerates all workspaces and finds which ones use
+// the physical store identified by storeID in resolvedScope.
+func (e *Engine) findWorkspacesUsingStore(storeID, resolvedScope string) ([]WorkspaceUsage, error) {
 	var usages []WorkspaceUsage
 
 	if err := e.forEachWorkspaceState(func(workspaceID string, ws *state.WorkspaceState) error {
-		usage := e.checkWorkspaceUsage(ws, storeID, workspaceID)
+		usage := e.checkWorkspaceUsage(ws, storeID, workspaceID, resolvedScope)
 		if usage != nil {
 			usages = append(usages, *usage)
 		}
@@ -144,9 +146,12 @@ func (e *Engine) findWorkspacesUsingStore(storeID string) ([]WorkspaceUsage, err
 	return usages, nil
 }
 
-// checkWorkspaceUsage checks if a workspace uses the given store.
-func (e *Engine) checkWorkspaceUsage(ws *state.WorkspaceState, storeID, workspaceID string) *WorkspaceUsage {
+// checkWorkspaceUsage checks if a workspace uses the given physical store.
+func (e *Engine) checkWorkspaceUsage(ws *state.WorkspaceState, storeID, workspaceID, resolvedScope string) *WorkspaceUsage {
 	ws.MigrateDeprecatedStack()
+	if !storeReferencesMatchScope(ws, storeID, resolvedScope) {
+		return nil
+	}
 	isActive := ws.ActiveStore == storeID
 	inStack := ws.GetAppliedStore(storeID) != nil
 	appliedPathCount := 0
@@ -172,8 +177,21 @@ func (e *Engine) checkWorkspaceUsage(ws *state.WorkspaceState, storeID, workspac
 	return nil
 }
 
-// cleanWorkspaceReferences removes all references to the store from affected workspaces.
-func (e *Engine) cleanWorkspaceReferences(storeID string, affectedWorkspaces []WorkspaceUsage) error {
+// storeReferencesMatchScope reports whether this workspace's references to
+// storeID name the physical store in resolvedScope. Applied-store and path
+// records store only an ID. When that ID is the active store and
+// ActiveStoreScope is set, the scope selects the physical store, so a
+// same-ID store in the other scope is neither reported nor cleaned. Legacy
+// records with an empty scope still match by ID.
+func storeReferencesMatchScope(ws *state.WorkspaceState, storeID, resolvedScope string) bool {
+	if ws.ActiveStore == storeID && ws.ActiveStoreScope != "" {
+		return ws.ActiveStoreScope == resolvedScope
+	}
+	return true
+}
+
+// cleanWorkspaceReferences removes references to the physical store from affected workspaces.
+func (e *Engine) cleanWorkspaceReferences(storeID, resolvedScope string, affectedWorkspaces []WorkspaceUsage) error {
 	for _, usage := range affectedWorkspaces {
 		// Load workspace state
 		ws, workspaceStore, err := e.loadWorkspaceFromScopes(usage.WorkspaceID)
@@ -181,9 +199,13 @@ func (e *Engine) cleanWorkspaceReferences(storeID string, affectedWorkspaces []W
 			return fmt.Errorf("failed to load workspace %s: %w", usage.WorkspaceID, err)
 		}
 		ws.MigrateDeprecatedStack()
+		if !storeReferencesMatchScope(ws, storeID, resolvedScope) {
+			continue
+		}
 
 		if ws.ActiveStore == storeID {
 			ws.ActiveStore = ""
+			ws.ActiveStoreScope = ""
 		}
 
 		ws.Stack = []string{}
