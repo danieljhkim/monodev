@@ -11,8 +11,16 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-10
+
 ### Changed
 - `track --agents` lists absent agent paths on one dimmed line instead of a warning per path.
+- `monodev skill init` refuses to write through symlinked paths instead of following them.
+- The secret scan checks every credential assignment on a line, so a line whose first match was rejected is still scanned for later ones. `sync push` may now reject a line it previously passed.
+
+### Fixed
+- `monodev init` (repo-local) works when a repository ancestor directory is a symlink, instead of failing with a misleading error.
+- `commit`, `save`, `apply` and `unapply` work when the workspace is reached through a symlinked ancestor, instead of failing with a misleading `refusing to copy symlink` error.
 
 ## [0.4.0] — 2026-10-09
 
