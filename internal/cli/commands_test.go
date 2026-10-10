@@ -293,35 +293,36 @@ func TestStoreLsCommand_NoStores(t *testing.T) {
 }
 
 func TestStoreLsCommand_JSONOutput(t *testing.T) {
-	workspaceDir, cleanup := setupTestEnv(t)
-	defer cleanup()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+	runCLI(t, "checkout", "--new", "json-store", "--description", "JSON fixture")
 
-	oldDir, _ := os.Getwd()
-	_ = os.Chdir(workspaceDir)
-	defer func() {
-		_ = os.Chdir(oldDir)
-	}()
-
-	rootCmd.SetArgs([]string{"store", "ls", "--json"})
-	var buf bytes.Buffer
-	rootCmd.SetOut(&buf)
-
-	err := rootCmd.Execute()
+	output, err := executeJSONCommand(t, "store", "ls", "--json")
 	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
+		t.Fatalf("store ls --json: %v\n%s", err, output)
 	}
+	requireStoreListJSON(t, output)
+}
 
-	output := buf.String()
-	// Trim whitespace and newlines
-	output = string(bytes.TrimSpace([]byte(output)))
-	if output == "" {
-		t.Skip("No output to validate (empty stores list)")
-		return
+func requireStoreListJSON(t *testing.T, output string) {
+	t.Helper()
+	if strings.TrimSpace(output) == "" {
+		t.Fatal("expected nonempty store list JSON on stdout")
 	}
-	// Should be valid JSON
-	var v interface{}
-	if err := json.Unmarshal([]byte(output), &v); err != nil {
-		t.Errorf("expected valid JSON output, got error: %v, output: %q", err, output)
+	var result []struct {
+		ID   string
+		Meta struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		}
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("invalid store list JSON: %v\n%s", err, output)
+	}
+	if len(result) != 1 || result[0].ID != "json-store" || result[0].Meta.Name != "json-store" || result[0].Meta.Description != "JSON fixture" {
+		t.Fatalf("store list = %#v, want the json-store fixture and its metadata", result)
 	}
 }
 
@@ -500,31 +501,35 @@ func TestStatusCommand_NoWorkspaceState(t *testing.T) {
 }
 
 func TestStatusCommand_JSONOutput(t *testing.T) {
-	workspaceDir, cleanup := setupTestEnv(t)
-	defer cleanup()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+	runCLI(t, "checkout", "--new", "json-store")
 
-	oldDir, _ := os.Getwd()
-	_ = os.Chdir(workspaceDir)
-	defer func() {
-		_ = os.Chdir(oldDir)
-	}()
-
-	rootCmd.SetArgs([]string{"status", "--json"})
-	var buf bytes.Buffer
-	rootCmd.SetOut(&buf)
-
-	err := rootCmd.Execute()
+	output, err := executeJSONCommand(t, "status", "--json")
 	if err != nil {
-		t.Fatalf("Status command error = %v", err)
+		t.Fatalf("status --json: %v\n%s", err, output)
 	}
-
-	output := buf.String()
-	if output != "" {
-		// If there's output, it should be valid JSON
-		var v interface{}
-		if err := json.Unmarshal([]byte(output), &v); err != nil {
-			t.Errorf("expected valid JSON output, got error: %v", err)
-		}
+	if strings.TrimSpace(output) == "" {
+		t.Fatal("expected nonempty status JSON on stdout")
+	}
+	var result struct {
+		WorkspaceID     string
+		RepoFingerprint string
+		AbsolutePath    string
+		GitURL          string
+		ActiveStore     string
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("invalid status JSON: %v\n%s", err, output)
+	}
+	wantPath, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.WorkspaceID == "" || result.RepoFingerprint == "" || result.AbsolutePath != wantPath || result.GitURL != "https://example.com/monodev.git" || result.ActiveStore != "json-store" {
+		t.Fatalf("status = %#v, want workspace identity, repo path/URL, and active json-store", result)
 	}
 }
 
@@ -976,30 +981,34 @@ func TestDoctorCommand_HealthyWorkspace(t *testing.T) {
 }
 
 func TestDoctorCommand_JSONOutput(t *testing.T) {
-	workspaceDir, cleanup := setupTestEnv(t)
-	defer cleanup()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
 
-	oldDir, _ := os.Getwd()
-	_ = os.Chdir(workspaceDir)
-	defer func() {
-		_ = os.Chdir(oldDir)
-	}()
-
-	rootCmd.SetArgs([]string{"doctor", "--json"})
-	var buf bytes.Buffer
-	rootCmd.SetOut(&buf)
-
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("doctor --json on a healthy workspace should exit zero, got error: %v", err)
+	output, err := executeJSONCommand(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor --json on a healthy workspace: %v\n%s", err, output)
 	}
-
-	output := bytes.TrimSpace(buf.Bytes())
-	if len(output) == 0 {
-		return
+	if strings.TrimSpace(output) == "" {
+		t.Fatal("expected nonempty doctor JSON on stdout")
 	}
-	var v interface{}
-	if err := json.Unmarshal(output, &v); err != nil {
-		t.Errorf("expected valid JSON output, got error: %v, output: %q", err, output)
+	var result struct {
+		Findings json.RawMessage
+		Fixed    *bool
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("invalid doctor JSON: %v\n%s", err, output)
+	}
+	if len(result.Findings) == 0 || result.Fixed == nil || *result.Fixed {
+		t.Fatalf("doctor result = %s, want Findings and Fixed=false", output)
+	}
+	var findings []json.RawMessage
+	if err := json.Unmarshal(result.Findings, &findings); err != nil {
+		t.Fatalf("invalid doctor findings: %v\n%s", err, output)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("healthy workspace has unexpected doctor findings: %s", output)
 	}
 }
 
@@ -1256,33 +1265,18 @@ func assertDocumentedCommandsMatchBinary(t *testing.T, path string) {
 }
 
 func TestGlobalJSONFlag(t *testing.T) {
-	workspaceDir, cleanup := setupTestEnv(t)
-	defer cleanup()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+	runCLI(t, "checkout", "--new", "json-store", "--description", "JSON fixture")
 
-	oldDir, _ := os.Getwd()
-	_ = os.Chdir(workspaceDir)
-	defer func() {
-		_ = os.Chdir(oldDir)
-	}()
-
-	// Test that --json flag works globally
-	rootCmd.SetArgs([]string{"store", "ls", "--json"})
-	var buf bytes.Buffer
-	rootCmd.SetOut(&buf)
-
-	err := rootCmd.Execute()
+	// Put the persistent flag before the subcommand to exercise global parsing.
+	output, err := executeJSONCommand(t, "--json", "store", "ls")
 	if err != nil {
-		t.Fatalf("Command error = %v", err)
+		t.Fatalf("--json store ls: %v\n%s", err, output)
 	}
-
-	output := buf.String()
-	if output != "" {
-		// Should be valid JSON
-		var v interface{}
-		if err := json.Unmarshal([]byte(output), &v); err != nil {
-			t.Errorf("expected valid JSON with --json flag, got error: %v", err)
-		}
-	}
+	requireStoreListJSON(t, output)
 }
 
 func TestCommandHelp(t *testing.T) {
