@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -322,6 +323,123 @@ func TestStoreLsCommand_JSONOutput(t *testing.T) {
 	if err := json.Unmarshal([]byte(output), &v); err != nil {
 		t.Errorf("expected valid JSON output, got error: %v, output: %q", err, output)
 	}
+}
+
+func TestStoreRmCommand_JSONExitStatus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+	runCLI(t, "init")
+	runCLI(t, "checkout", "-n", "active")
+
+	t.Run("missing store returns failure with JSON", func(t *testing.T) {
+		output, execErr := executeJSONCommand(t, "store", "rm", "missing", "--json")
+		if execErr == nil {
+			t.Fatal("expected missing-store deletion to fail")
+		}
+		var result struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatalf("store rm JSON is invalid: %v\n%s", err, output)
+		}
+		if result.Success || result.Error == "" {
+			t.Fatalf("store rm result = %#v, want failure and error", result)
+		}
+	})
+
+	t.Run("in-use store returns failure and remains", func(t *testing.T) {
+		output, execErr := executeJSONCommand(t, "store", "rm", "active", "--json")
+		if execErr == nil {
+			t.Fatal("expected in-use store deletion to fail")
+		}
+		var result struct {
+			Success bool   `json:"success"`
+			Deleted bool   `json:"deleted"`
+			Error   string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatalf("store rm JSON is invalid: %v\n%s", err, output)
+		}
+		if result.Success || result.Deleted || result.Error == "" {
+			t.Fatalf("store rm result = %#v, want failure, not deleted, and error", result)
+		}
+		if _, err := os.Stat(filepath.Join(repo, ".monodev", "stores", "active")); err != nil {
+			t.Fatalf("refused store was not retained: %v", err)
+		}
+	})
+
+	t.Run("successful deletion returns success JSON", func(t *testing.T) {
+		runCLI(t, "checkout", "-n", "to-delete")
+		runCLI(t, "checkout", "active")
+
+		output, execErr := executeJSONCommand(t, "store", "rm", "to-delete", "--json")
+		if execErr != nil {
+			t.Fatalf("store rm returned an error: %v\n%s", execErr, output)
+		}
+		var result struct {
+			Success bool `json:"success"`
+			Deleted bool `json:"deleted"`
+		}
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatalf("store rm JSON is invalid: %v\n%s", err, output)
+		}
+		if !result.Success || !result.Deleted {
+			t.Fatalf("store rm result = %#v, want successful deletion", result)
+		}
+		if _, err := os.Stat(filepath.Join(repo, ".monodev", "stores", "to-delete")); !os.IsNotExist(err) {
+			t.Fatalf("deleted store still exists or could not be checked: %v", err)
+		}
+	})
+
+	t.Run("successful dry run returns success JSON and retains store", func(t *testing.T) {
+		output, execErr := executeJSONCommand(t, "store", "rm", "active", "--dry-run", "--json")
+		if execErr != nil {
+			t.Fatalf("store rm dry-run returned an error: %v\n%s", execErr, output)
+		}
+		var result struct {
+			Success bool `json:"success"`
+			Deleted bool `json:"deleted"`
+			DryRun  bool `json:"dryRun"`
+		}
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatalf("store rm JSON is invalid: %v\n%s", err, output)
+		}
+		if !result.Success || result.Deleted || !result.DryRun {
+			t.Fatalf("store rm result = %#v, want successful dry run", result)
+		}
+		if _, err := os.Stat(filepath.Join(repo, ".monodev", "stores", "active")); err != nil {
+			t.Fatalf("dry-run store was not retained: %v", err)
+		}
+	})
+}
+
+func TestOutputDeleteJSONPropagatesEncoderError(t *testing.T) {
+	encodeErr := errors.New("write failed")
+	if err := outputDeleteJSONTo(errorWriter{err: encodeErr}, nil, errors.New("delete failed")); !errors.Is(err, encodeErr) {
+		t.Fatalf("outputDeleteJSONTo() error = %v, want encoder error %v", err, encodeErr)
+	}
+}
+
+func executeJSONCommand(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	resetCommandFlags(rootCmd)
+	rootCmd.SetArgs(append([]string{}, args...))
+	var execErr error
+	output := captureStdout(t, func() {
+		execErr = rootCmd.Execute()
+	})
+	return output, execErr
+}
+
+type errorWriter struct {
+	err error
+}
+
+func (w errorWriter) Write([]byte) (int, error) {
+	return 0, w.err
 }
 
 func TestStatusCommand_NoWorkspaceState(t *testing.T) {
