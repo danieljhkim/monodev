@@ -11,6 +11,14 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-09
+
+### Breaking Changes
+- `store rm --json` exits non-zero when the deletion is refused or fails. The JSON object still prints to stdout with `"success": false` and an `error` field. Migration: scripts that treated any exit status as success should check the exit code, or keep reading `success`.
+- `apply` stops before changing anything when a store's path sits inside a file, or when nested paths overlap in symlink mode, and `--force` no longer overrides that hierarchy conflict. Other conflicts, such as unmanaged destinations and mode or type mismatches, still honor `--force`. Migration: `unapply` the store that owns the conflicting file or directory, or untrack one of the overlapping paths, then apply again.
+- Overlay transaction journals are written as version 3, which records the workspace ledger scope. Older binaries refuse version 3 journals. Migration: upgrade every machine that shares a workspace before running `apply`, `unapply` or `eject` there; if an interrupted transaction is pending under an older binary, finish its recovery with the older binary before upgrading. See `docs/state-schema-compatibility.md`.
+- `pull` refuses a store whose `meta.json` or `track.json` has a schema newer than this binary supports, and does so before replacing any local store. Migration: upgrade monodev to the version that wrote the store, then pull again.
+
 ### Added
 - `monodev skill init` writes a monodev `SKILL.md` for coding agents to `.claude/skills/monodev/` (Claude Code) and/or `.agents/skills/monodev/` (Agent Skills layout, read by Codex), chosen by which agent directories exist or `--target claude|agents|all`. The skill is tracked in the active store, snapshotted and hidden from git, so `git status` stays clean. Its content is generated from the binary and stamped with the version; `--force` rewrites it after an upgrade. `monodev skill show` prints it.
 - `monodev context [--json]` is the agent session-start command: it reports the active store, or finds this directory's workspace reference locally or on the remote persistence branch, pulls and applies its stores, and lists the `.agents/notes`, `.agents/notes/sessions` and `.agents/scripts` files on disk. It never pushes or forces; no remote or nothing found exits 0 with an empty result.
@@ -18,7 +26,16 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ### Fixed
 - A multi-store `pull` applies every requested store or none. Comparison and verification of all stores run before any local store is replaced, and the replacement is rolled back if a later swap fails, so a failure in one store no longer leaves earlier stores overwritten. The error names the failing store and workspace state is not restored.
-- `apply` keeps a copied directory and a nested path from another store, in either order. The nested path stays owned by its store. `unapply` of one store no longer deletes the other store's files or leaves those files marked applied. A path inside a file, or nested paths in symlink mode, conflicts before any change; `--force` does not override that conflict.
+- `apply` keeps a copied directory and a nested path from another store, in either order. The nested path stays owned by its store. `unapply` of one store no longer deletes the other store's files or leaves those files marked applied.
+- `monodev track` help and `docs/commands.md` now say paths resolve relative to the current workspace directory, not the repository root, and that a path escaping it is rejected.
+- Git exclusions for managed paths are encoded so special characters in filenames select exactly the intended path, `track` rejects paths that cannot be encoded safely, and filenames beginning with two dots are accepted. Exclusions for overlays that are still applied survive `unapply`, switching the active store and `eject` in any workspace that shares the same git directory.
+- Directory copies into their own descendants, symlinked source ancestors and Git metadata aliases on case-insensitive filesystems are refused. A non-force `unapply` refuses when a managed symlink was changed, and legacy symlinks are skipped safely on `commit`.
+- Overlay rollback stays inside the workspace, cleans up only its own temporary files, and restores original file permissions.
+- Workspace and store locks are honored by `pull`, `doctor` and workspace reference deletion; `doctor` rechecks ledger ownership and orphan backups under the lock before pruning or deleting. Component workspace state stays consistent through `apply`, `unapply` and `eject`.
+- `workspace repair` ignores ledgers that belong to other repositories or checkouts. Workspace deletion respects store scope and scope lookup errors are reported instead of writing the wrong state. A null workspace document no longer panics, and a failed store creation no longer leaves an unusable store behind. The store ID `.locks` is reserved.
+- `init --force --json` and `remote show --json` print parseable JSON when they would otherwise add human-only messages, and `--json` output tests capture real stdout.
+- `apply --dry-run` planning no longer migrates persisted legacy state. `diff --patch` bounds memory on very large changed regions, the secret scan catches assignments whose name is the key, and an orphan persistence branch keeps the previous index.
+- `repo-local` initialization does not follow a symlink out of the repository, `help` resolves requested command paths, and the `push` and `brew install` documentation matches current behavior.
 
 ## [0.3.1] — 2026-10-09
 
