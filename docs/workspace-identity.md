@@ -99,7 +99,12 @@ monodev workspace repair
 monodev workspace repair --rebind <workspace-id>
 ```
 
-Repair selects workspace files whose `absolutePath` or `workspacePath` belongs
-to the current repository and whose stored identity no longer matches. Rebind
-writes the record under the current fingerprint and keeps `activeStore`,
+Repair selects workspace files belonging to the current repository whose stored
+identity no longer matches. An existing `absolutePath` must resolve inside the
+current checkout; a path in another checkout is excluded, including with
+`--force`. Records without `absolutePath`, or with a disappeared path after a
+clone move, require a fingerprint matching the current identity or one of its
+recognized remote/legacy migration identities, plus an existing workspace
+directory inside this repository. A matching relative path alone is insufficient.
+Rebind writes the record under the current fingerprint and keeps `activeStore`,
 `appliedStores`, and `paths`.

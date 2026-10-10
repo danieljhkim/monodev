@@ -34,7 +34,7 @@ func (e *Engine) ListOrphanedWorkspaces(ctx context.Context, cwd string) (*ListO
 	}
 
 	if err := e.forEachWorkspaceState(func(workspaceID string, ws *state.WorkspaceState) error {
-		if !workspaceBelongsToRepo(absRoot, ws) {
+		if !e.workspaceBelongsToRepo(absRoot, fingerprint, ws) {
 			return nil
 		}
 		currentID := state.ComputeWorkspaceID(fingerprint, ws.WorkspacePath)
@@ -102,7 +102,7 @@ func (e *Engine) RebindWorkspace(ctx context.Context, req *RebindWorkspaceReques
 			}
 			return nil, fmt.Errorf("failed to load workspace: %w", err)
 		}
-		if !workspaceBelongsToRepo(absRoot, ws) {
+		if !e.workspaceBelongsToRepo(absRoot, fingerprint, ws) {
 			return nil, fmt.Errorf("workspace '%s' does not belong to the current repository", req.WorkspaceID)
 		}
 
@@ -186,22 +186,54 @@ func firstNonNilStore(stores ...state.StateStore) state.StateStore {
 	return nil
 }
 
-func workspaceBelongsToRepo(repoRoot string, ws *state.WorkspaceState) bool {
-	if ws == nil {
-		return false
-	}
-	if ws.AbsolutePath != "" {
-		abs, err := filepath.Abs(ws.AbsolutePath)
-		if err == nil && pathIsInside(repoRoot, abs) {
-			return true
-		}
-	}
-	if ws.WorkspacePath == "" {
+func (e *Engine) workspaceBelongsToRepo(repoRoot, fingerprint string, ws *state.WorkspaceState) bool {
+	if ws == nil || ws.WorkspacePath == "" || filepath.IsAbs(ws.WorkspacePath) {
 		return false
 	}
 	candidate := filepath.Join(repoRoot, ws.WorkspacePath)
+	if !pathIsInside(repoRoot, candidate) {
+		return false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		return false
+	}
+	if ws.AbsolutePath != "" {
+		if !filepath.IsAbs(ws.AbsolutePath) {
+			return false
+		}
+		abs, err := filepath.EvalSymlinks(ws.AbsolutePath)
+		if err == nil {
+			// An existing path outside this checkout is another workspace,
+			// even if its relative path (or remote) also exists here.
+			return pathIsInside(resolvedRoot, abs)
+		}
+		if !os.IsNotExist(err) {
+			return false
+		}
+	}
+
+	// A legacy record without an absolute path, or a moved clone whose old
+	// path is gone, needs identity evidence. A local directory alone cannot
+	// associate a record from a shared state root with this repository.
+	if ws.Repo == "" {
+		return false
+	}
 	info, err := os.Stat(candidate)
-	return err == nil && info.IsDir()
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	resolvedCandidate, err := filepath.EvalSymlinks(candidate)
+	if err != nil || !pathIsInside(resolvedRoot, resolvedCandidate) {
+		return false
+	}
+	storedID := state.ComputeWorkspaceID(ws.Repo, ws.WorkspacePath)
+	for _, id := range e.workspaceIDCandidates(repoRoot, fingerprint, ws.WorkspacePath) {
+		if id == storedID {
+			return true
+		}
+	}
+	return false
 }
 
 func pathIsInside(root, target string) bool {

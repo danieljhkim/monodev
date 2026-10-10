@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -196,6 +197,158 @@ func TestWorkspaceRepair_ListAndRebind(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workspacesDir, orphanID+".json")); !os.IsNotExist(err) {
 		t.Error("orphan file still present after rebind")
+	}
+}
+
+func TestWorkspaceRepair_ExcludesForeignRepositoryLedgers(t *testing.T) {
+	for _, workspacePath := range []string{".", "nested"} {
+		for _, location := range []string{"existing", "missing", "legacy", "symlink", "matching-identity"} {
+			t.Run(workspacePath+"/"+location, func(t *testing.T) {
+				repoDir := setupGitRepoWithRemote(t, "https://github.com/org/current.git")
+				foreignDir := setupGitRepoWithRemote(t, "https://github.com/org/foreign.git")
+				for _, root := range []string{repoDir, foreignDir} {
+					if err := os.MkdirAll(filepath.Join(root, workspacePath), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				eng, stateStore, workspacesDir := setupIdentityEngine(t)
+				fp := mustFingerprint(t, repoDir)
+				foreignFP := mustFingerprint(t, foreignDir)
+				foreignID := state.ComputeWorkspaceID(foreignFP, workspacePath)
+				foreign := state.NewWorkspaceState(foreignFP, workspacePath, "copy")
+				switch location {
+				case "existing":
+					foreign.AbsolutePath = filepath.Join(foreignDir, workspacePath)
+				case "matching-identity":
+					foreign.AbsolutePath = filepath.Join(foreignDir, workspacePath)
+					foreign.Repo = fp
+				case "symlink":
+					link := filepath.Join(repoDir, "foreign-link")
+					if err := os.Symlink(foreignDir, link); err != nil {
+						t.Fatal(err)
+					}
+					foreign.AbsolutePath = filepath.Join(link, workspacePath)
+				case "missing":
+					foreign.AbsolutePath = filepath.Join(foreignDir, "removed", workspacePath)
+				}
+				foreign.ActiveStore = "foreign-store"
+				foreign.Applied = true
+				foreign.AddAppliedStore("foreign-store", "copy")
+				foreign.Paths["owned.txt"] = state.PathOwnership{Store: "foreign-store", Type: "copy", Checksum: "foreign"}
+				if err := stateStore.SaveWorkspace(foreignID, foreign); err != nil {
+					t.Fatal(err)
+				}
+				currentID := state.ComputeWorkspaceID(fp, workspacePath)
+				current := state.NewWorkspaceState(fp, workspacePath, "copy")
+				current.AbsolutePath = filepath.Join(repoDir, workspacePath)
+				current.ActiveStore = "current-store"
+				if err := stateStore.SaveWorkspace(currentID, current); err != nil {
+					t.Fatal(err)
+				}
+				before := make(map[string][]byte)
+				for _, id := range []string{foreignID, currentID} {
+					data, err := os.ReadFile(filepath.Join(workspacesDir, id+".json"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					before[id] = data
+				}
+				assertUnchanged := func() {
+					t.Helper()
+					for id, data := range before {
+						after, err := os.ReadFile(filepath.Join(workspacesDir, id+".json"))
+						if err != nil || !bytes.Equal(data, after) {
+							t.Fatalf("ledger %s changed: error=%v\nbefore=%s\nafter=%s", id, err, data, after)
+						}
+					}
+				}
+				listed, err := eng.ListOrphanedWorkspaces(context.Background(), repoDir)
+				if err != nil || len(listed.Orphans) != 0 {
+					t.Fatalf("ListOrphanedWorkspaces = %+v, %v; want no foreign orphan", listed, err)
+				}
+				assertUnchanged()
+				for _, force := range []bool{false, true} {
+					_, err := eng.RebindWorkspace(context.Background(), &RebindWorkspaceRequest{
+						CWD: repoDir, WorkspaceID: foreignID, Force: force,
+					})
+					if err == nil || !strings.Contains(err.Error(), "does not belong") {
+						t.Fatalf("RebindWorkspace(force=%v) = %v, want foreign-repository refusal", force, err)
+					}
+					assertUnchanged()
+				}
+			})
+		}
+	}
+}
+
+func TestWorkspaceRepair_RecognizesLegacyAndMovedCloneIdentity(t *testing.T) {
+	for _, workspacePath := range []string{".", "nested"} {
+		for _, identity := range []string{"legacy", "remote", "moved"} {
+			t.Run(workspacePath+"/"+identity, func(t *testing.T) {
+				repoDir := setupGitRepoWithRemote(t, "https://github.com/org/repair-identity.git")
+				if err := os.MkdirAll(filepath.Join(repoDir, workspacePath), 0700); err != nil {
+					t.Fatal(err)
+				}
+				absRoot, rawURL, err := gitx.NewRealGitRepo().GetFingerprintComponents(repoDir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				oldFP := gitx.LegacyFingerprint(absRoot, rawURL)
+				oldPath := ""
+				if identity != "legacy" {
+					oldFP = mustFingerprint(t, repoDir)
+					if identity == "moved" {
+						oldPath = filepath.Join(repoDir, workspacePath)
+						movedRoot := filepath.Join(t.TempDir(), "moved")
+						if err := os.Rename(repoDir, movedRoot); err != nil {
+							t.Fatal(err)
+						}
+						repoDir = movedRoot
+					}
+				}
+				// First use adds a durable ID; the saved remote fingerprint remains
+				// verifiable even if the clone's old display path has disappeared.
+				if _, err := gitx.EnsureDurableRepoID(repoDir); err != nil {
+					t.Fatal(err)
+				}
+				fp := mustFingerprint(t, repoDir)
+				eng, stateStore, workspacesDir := setupIdentityEngine(t)
+				oldID := state.ComputeWorkspaceID(oldFP, workspacePath)
+				orphan := state.NewWorkspaceState(oldFP, workspacePath, "copy")
+				orphan.AbsolutePath = oldPath
+				orphan.ActiveStore = "dev-store"
+				orphan.Applied = true
+				orphan.AddAppliedStore("dev-store", "copy")
+				orphan.Paths["owned.txt"] = state.PathOwnership{Store: "dev-store", Type: "copy", Checksum: "owned"}
+				if err := stateStore.SaveWorkspace(oldID, orphan); err != nil {
+					t.Fatal(err)
+				}
+				listed, err := eng.ListOrphanedWorkspaces(context.Background(), repoDir)
+				if err != nil || len(listed.Orphans) != 1 || listed.Orphans[0].WorkspaceID != oldID {
+					t.Fatalf("ListOrphanedWorkspaces = %+v, %v; want verified orphan %s", listed, err, oldID)
+				}
+				result, err := eng.RebindWorkspace(context.Background(), &RebindWorkspaceRequest{CWD: repoDir, WorkspaceID: oldID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				newID := state.ComputeWorkspaceID(fp, workspacePath)
+				if result.NewWorkspaceID != newID {
+					t.Fatalf("new ID = %s, want %s", result.NewWorkspaceID, newID)
+				}
+				rebound, err := stateStore.LoadWorkspace(newID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rebound.Repo != fp || rebound.AbsolutePath != filepath.Join(repoDir, workspacePath) ||
+					rebound.ActiveStore != "dev-store" || !rebound.Applied || len(rebound.AppliedStores) != 1 ||
+					rebound.Paths["owned.txt"].Checksum != "owned" {
+					t.Fatalf("rebound ledger not preserved: %+v", rebound)
+				}
+				if _, err := os.Stat(filepath.Join(workspacesDir, oldID+".json")); !os.IsNotExist(err) {
+					t.Fatalf("old ledger still present: %v", err)
+				}
+			})
+		}
 	}
 }
 
