@@ -103,6 +103,9 @@ func (s *SnapshotManager) DiffAgainstLocalCopy(storeID, persistRoot string, stor
 	if err := s.fs.ValidateIdentifier(storeID); err != nil {
 		return nil, fmt.Errorf("invalid store ID: %w", err)
 	}
+	if err := refuseReservedStoreID(storeID); err != nil {
+		return nil, err
+	}
 
 	localPath, err := overlayStoreDir(storeRepo, storeID)
 	if err != nil {

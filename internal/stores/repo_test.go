@@ -3,6 +3,7 @@ package stores
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -698,4 +699,183 @@ func TestFileStoreRepo_Delete(t *testing.T) {
 			t.Error("Expected error for invalid store ID, got nil")
 		}
 	})
+}
+
+func TestFileStoreRepo_RefusesReservedCoordinationID(t *testing.T) {
+	tmpDir, repo := setupStoresDir(t)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	locksDir := filepath.Join(tmpDir, ".locks")
+	sentinel := filepath.Join(locksDir, "victim.lock")
+	if err := os.MkdirAll(locksDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sentinel, []byte("held"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(sentinel)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	meta := NewStoreMeta("nope", time.Now())
+	track := NewTrackFile()
+	assertReserved := func(err error) {
+		t.Helper()
+		if !errors.Is(err, ErrReservedStoreID) {
+			t.Fatalf("error = %v, want ErrReservedStoreID", err)
+		}
+	}
+
+	for _, id := range []string{".locks", ".LOCKS", ".Locks"} {
+		_, err = repo.Exists(id)
+		assertReserved(err)
+		assertReserved(repo.Create(id, meta))
+		_, err = repo.LoadMeta(id)
+		assertReserved(err)
+		assertReserved(repo.SaveMeta(id, meta))
+		_, err = repo.LoadTrack(id)
+		assertReserved(err)
+		assertReserved(repo.SaveTrack(id, track))
+		if got := repo.OverlayRoot(id); got != "" {
+			t.Fatalf("OverlayRoot(%q) = %q, want empty", id, got)
+		}
+		assertReserved(repo.Delete(id))
+		_, err = repo.StoreLockKey(id)
+		assertReserved(err)
+		_, err = repo.LockStore(context.Background(), id, lockfile.Exclusive)
+		assertReserved(err)
+	}
+
+	ids, err := repo.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if ReservedStoreID(id) {
+			t.Fatalf("List exposed coordination directory %q", id)
+		}
+	}
+
+	after, err := os.Stat(sentinel)
+	if err != nil {
+		t.Fatalf("coordination sentinel missing: %v", err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("coordination sentinel inode changed")
+	}
+	if _, err := os.Stat(filepath.Join(locksDir, "meta.json")); !os.IsNotExist(err) {
+		t.Fatalf("reserved operation wrote meta.json: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(locksDir, "overlay")); !os.IsNotExist(err) {
+		t.Fatalf("reserved operation created overlay: %v", err)
+	}
+}
+
+func TestFileStoreRepo_ReservedIDDoesNotCreateLockDirectory(t *testing.T) {
+	tmpDir, repo := setupStoresDir(t)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	if err := repo.Delete(".locks"); !errors.Is(err, ErrReservedStoreID) {
+		t.Fatalf("Delete error = %v, want ErrReservedStoreID", err)
+	}
+	if _, err := repo.LockStore(context.Background(), ".locks", lockfile.Exclusive); !errors.Is(err, ErrReservedStoreID) {
+		t.Fatalf("LockStore error = %v, want ErrReservedStoreID", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".locks")); !os.IsNotExist(err) {
+		t.Fatalf("reserved operation created .locks: %v", err)
+	}
+}
+
+func TestDeleteReservedLockDirKeepsExclusiveExclusion(t *testing.T) {
+	tmpDir, repo := setupStoresDir(t)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	ctx := context.Background()
+	held, err := repo.LockStore(ctx, "victim", lockfile.Exclusive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Close() }()
+
+	lockPath, err := repo.StoreLockKey("victim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.Delete(".locks"); !errors.Is(err, ErrReservedStoreID) {
+		t.Fatalf("Delete(.locks) error = %v, want ErrReservedStoreID", err)
+	}
+
+	after, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatalf("lock file missing after refused delete: %v", err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("lock inode changed; a later acquire could succeed against a new inode")
+	}
+
+	started := time.Now()
+	_, err = repo.LockStore(ctx, "victim", lockfile.Exclusive)
+	elapsed := time.Since(started)
+	if !errors.Is(err, lockfile.ErrContended) {
+		t.Fatalf("second exclusive lock error = %v, want ErrContended", err)
+	}
+	if elapsed < lockfile.DefaultTimeout/2 || elapsed > lockfile.DefaultTimeout+2*time.Second {
+		t.Fatalf("contention elapsed = %s, want a bounded wait near %s", elapsed, lockfile.DefaultTimeout)
+	}
+}
+
+func TestOrdinaryDotPrefixedStoreID(t *testing.T) {
+	tmpDir, repo := setupStoresDir(t)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	const id = ".editor"
+	if err := repo.Create(id, NewStoreMeta("Editor", time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	exists, err := repo.Exists(id)
+	if err != nil || !exists {
+		t.Fatalf("Exists(%q) = %v, %v, want true, nil", id, exists, err)
+	}
+	ids, err := repo.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, listed := range ids {
+		if listed == id {
+			found = true
+		}
+		if ReservedStoreID(listed) {
+			t.Fatalf("List exposed %q", listed)
+		}
+	}
+	if !found {
+		t.Fatalf("List() = %v, want %s", ids, id)
+	}
+	if got := repo.OverlayRoot(id); got != filepath.Join(tmpDir, id, "overlay") {
+		t.Fatalf("OverlayRoot(%q) = %q", id, got)
+	}
+	if err := repo.Delete(id); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = repo.Exists(id)
+	if err != nil || exists {
+		t.Fatalf("Exists after delete = %v, %v, want false, nil", exists, err)
+	}
+}
+
+func TestWorkspaceIdentifierValidationStillAcceptsLockName(t *testing.T) {
+	fs := fsops.NewRealFS()
+	if err := fs.ValidateIdentifier(".locks"); err != nil {
+		t.Fatalf("ValidateIdentifier(%q) = %v, want nil so workspace IDs stay compatible", ".locks", err)
+	}
+	if err := fs.ValidateIdentifier(".."); err == nil {
+		t.Fatal("ValidateIdentifier(..) succeeded, want traversal rejection")
+	}
 }
