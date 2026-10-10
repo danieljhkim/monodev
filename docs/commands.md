@@ -196,8 +196,10 @@ monodev track --agents
 monodev track path --role script --description "helper" --origin user
 ```
 
-Paths are resolved relative to the repo root. `--agents` tracks existing agent
-context paths and reports absent ones. `--role` (`script`, `docs`, `style`,
+Paths are resolved relative to the current workspace directory (the cwd), not
+the repository root. A path that escapes that directory, or resolves to the
+directory itself, is rejected. `--agents` tracks existing agent context paths
+and reports absent ones. `--role` (`script`, `docs`, `style`,
 `config`, `other`), `--description`, `--origin` (`user`, `agent`, `other`).
 
 ### untrack
