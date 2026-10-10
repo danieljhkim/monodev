@@ -77,6 +77,9 @@ type RootFS interface {
 	CopyWithinRoot(root, relPath, src string) error
 	RemoveAllWithinRoot(root, relPath string) error
 	SymlinkWithinRoot(root, relPath, target string) error
+	// RestoreTreeWithinRoot recreates a transaction backup, including any
+	// nested symlinks, at relPath. An empty owner leaves staged temps untagged.
+	RestoreTreeWithinRoot(root, relPath, src, owner string) error
 }
 
 // OwnedTempRootFS optionally tags root-confined copy temps with an owner so

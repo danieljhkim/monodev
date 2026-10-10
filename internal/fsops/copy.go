@@ -383,6 +383,128 @@ func (fs *RealFS) SymlinkWithinRoot(root, relPath, target string) error {
 	return nil
 }
 
+// RestoreTreeWithinRoot recreates the transaction backup at src at relPath
+// beneath root, replacing whatever occupies relPath. Unlike CopyWithinRoot,
+// symlinks inside the backup are recreated with their recorded targets rather
+// than refused: a backup is monodev's own record of the workspace, and link
+// targets are copied as strings, never followed. Destination ancestors are
+// opened one component at a time with O_NOFOLLOW and the tree is staged and
+// swapped beneath that parent descriptor, so an ancestor replaced after an
+// earlier confined step is refused instead of redirecting the restore outside
+// the workspace. A non-empty owner tags staged temps like CopyWithinRootOwned.
+func (fs *RealFS) RestoreTreeWithinRoot(root, relPath, src, owner string) error {
+	if owner != "" {
+		if err := validateTempOwner(owner); err != nil {
+			return err
+		}
+	}
+	cleanSrc := filepath.Clean(src)
+	srcParent, err := openCopySource(filepath.Dir(cleanSrc))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = srcParent.Close() }()
+	parent, name, closeParent, err := fs.openConfinedParent(root, relPath, true)
+	if err != nil {
+		return err
+	}
+	defer closeParent()
+	return restoreBackupAt(srcParent, filepath.Base(cleanSrc), ".", parent, name, owner)
+}
+
+// restoreBackupAt stages backup entry srcName of srcDir beside dstName in
+// dstParent and swaps it into place. Directories are rebuilt entry by entry
+// inside a staged directory, so nothing is written through a path name.
+func restoreBackupAt(srcDir *os.File, srcName, relPath string, dstParent int, dstName, owner string) error {
+	var st unix.Stat_t
+	if err := unix.Fstatat(int(srcDir.Fd()), srcName, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return fmt.Errorf("failed to inspect backup %q: %w", relPath, err)
+	}
+	if isSymlinkMode(uint32(st.Mode)) {
+		target, err := readlinkAt(int(srcDir.Fd()), srcName)
+		if err != nil {
+			return fmt.Errorf("failed to read backup symlink %q: %w", relPath, err)
+		}
+		return symlinkReplaceAt(target, dstParent, dstName, owner)
+	}
+
+	source, err := openSourceAt(srcDir, srcName, relPath, false)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = source.Close() }()
+	info, err := source.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat backup %q: %w", relPath, err)
+	}
+	if !info.IsDir() {
+		return copyFileAt(source, dstParent, dstName, info.Mode(), owner)
+	}
+
+	entries, err := source.ReadDir(-1)
+	if err != nil {
+		return fmt.Errorf("failed to read backup directory %q: %w", relPath, err)
+	}
+	tmpName, err := mkdirExclusiveAt(dstParent, ownedTempPrefix(copyTempPrefix, owner))
+	if err != nil {
+		return err
+	}
+	success := false
+	defer func() {
+		if !success {
+			_ = removeAllAt(dstParent, tmpName)
+		}
+	}()
+	tmpFD, err := unix.Openat(dstParent, tmpName, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open staged destination directory: %w", err)
+	}
+	defer func() { _ = unix.Close(tmpFD) }()
+
+	for _, entry := range entries {
+		childRel := filepath.Join(relPath, entry.Name())
+		if err := restoreBackupAt(source, entry.Name(), childRel, tmpFD, entry.Name(), owner); err != nil {
+			return err
+		}
+	}
+	if err := replaceAt(dstParent, dstName, tmpName, owner); err != nil {
+		return err
+	}
+	success = true
+	return nil
+}
+
+// symlinkReplaceAt creates a link to target under a reserved temp name in
+// parentFD and swaps it onto name, replacing rather than following any entry
+// already there.
+func symlinkReplaceAt(target string, parentFD int, name, owner string) error {
+	tmpName, err := reserveNameAt(parentFD, ownedTempPrefix(copyTempPrefix, owner))
+	if err != nil {
+		return err
+	}
+	if err := unix.Symlinkat(target, parentFD, tmpName); err != nil {
+		return fmt.Errorf("failed to create destination symlink: %w", err)
+	}
+	if err := replaceAt(parentFD, name, tmpName, owner); err != nil {
+		_ = unix.Unlinkat(parentFD, tmpName, 0)
+		return err
+	}
+	return nil
+}
+
+func readlinkAt(dirFD int, name string) (string, error) {
+	for size := 256; ; size *= 2 {
+		buf := make([]byte, size)
+		n, err := unix.Readlinkat(dirFD, name, buf)
+		if err != nil {
+			return "", err
+		}
+		if n < size {
+			return string(buf[:n]), nil
+		}
+	}
+}
+
 func (fs *RealFS) openConfinedParent(root, relPath string, create bool) (int, string, func(), error) {
 	if err := fs.ValidateRelPath(relPath); err != nil {
 		return -1, "", func() {}, err
