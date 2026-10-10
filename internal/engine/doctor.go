@@ -406,20 +406,40 @@ func (e *Engine) doctorCheckLedgerStores(ctx context.Context, id string, workspa
 		return findings, nil
 	}
 	pruned := state.CloneWorkspaceState(fresh)
-	for _, paths := range missing {
-		for _, relPath := range paths {
+	changed := false
+	// Diagnosis happened before the exclusive lock. A path may now belong to
+	// another store, or its original store may have been recreated in any scope.
+	for _, storeID := range storeIDs {
+		locations, err := e.storeResolver.findStore(storeID)
+		if err != nil {
+			for i := range findings {
+				findings[i].FixError = err.Error()
+			}
+			return findings, nil
+		}
+		if len(locations) != 0 {
+			continue
+		}
+		for _, relPath := range missing[storeID] {
+			ownership, exists := fresh.Paths[relPath]
+			if !exists || ownership.Store != storeID {
+				continue
+			}
 			delete(pruned.Paths, relPath)
+			changed = true
 		}
 	}
-	pruned.PruneAppliedStores()
-	if len(pruned.Paths) == 0 {
-		pruned.Applied = false
-	}
-	if err := workspaceStore.SaveWorkspace(id, pruned); err != nil {
-		for i := range findings {
-			findings[i].FixError = err.Error()
+	if changed {
+		pruned.PruneAppliedStores()
+		if len(pruned.Paths) == 0 {
+			pruned.Applied = false
 		}
-		return findings, nil
+		if err := workspaceStore.SaveWorkspace(id, pruned); err != nil {
+			for i := range findings {
+				findings[i].FixError = err.Error()
+			}
+			return findings, nil
+		}
 	}
 	for i := range findings {
 		findings[i].Fixed = true

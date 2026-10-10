@@ -11,6 +11,7 @@ import (
 	"github.com/danieljhkim/monodev/internal/config"
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/hash"
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -227,6 +228,112 @@ func TestDoctor_LedgerEntryForDeletedStoreIsPrunedByFix(t *testing.T) {
 	}
 	if reloaded.GetAppliedStore("keep-store") == nil {
 		t.Fatal("expected keep-store to remain in AppliedStores")
+	}
+}
+
+// doctorTransitionStateStore models a change after the read-side diagnosis,
+// immediately before doctor acquires the exclusive repair lock.
+type doctorTransitionStateStore struct {
+	*state.FileStateStore
+	beforeRepair func()
+}
+
+func (s *doctorTransitionStateStore) LockWorkspace(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error) {
+	if mode == lockfile.Exclusive && s.beforeRepair != nil {
+		transition := s.beforeRepair
+		s.beforeRepair = nil
+		transition()
+	}
+	return s.FileStateStore.LockWorkspace(ctx, id, mode)
+}
+
+func TestDoctor_LedgerRepairRevalidatesMissingStoreSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		reassigned    bool
+		recreateScope string
+		wantPruned    bool
+	}{
+		{name: "reassigned to existing store", reassigned: true},
+		{name: "store recreated globally", recreateScope: stores.ScopeGlobal},
+		{name: "store recreated in component scope", recreateScope: stores.ScopeComponent},
+		{name: "store still missing", wantPruned: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			storesDir := t.TempDir()
+			workspacesDir := filepath.Join(repoRoot, ".state")
+			fs := fsops.NewRealFS()
+			storeRepo := stores.NewFileStoreRepo(fs, storesDir)
+			componentRepo := stores.NewFileStoreRepo(fs, t.TempDir())
+			if err := storeRepo.Create("keep-store", stores.NewStoreMeta("keep", time.Now())); err != nil {
+				t.Fatalf("create keep store: %v", err)
+			}
+			stateStore := state.NewFileStateStore(fs, workspacesDir)
+			workspaceID := state.ComputeWorkspaceID("fp1", ".")
+			snapshot := state.NewWorkspaceState("fp1", ".", "copy")
+			snapshot.Paths["a.txt"] = state.PathOwnership{Store: "ghost-store", Type: "copy", Checksum: "original"}
+			snapshot.AddAppliedStore("ghost-store", "copy")
+			snapshot.Applied = true
+			if err := stateStore.SaveWorkspace(workspaceID, snapshot); err != nil {
+				t.Fatalf("seed workspace: %v", err)
+			}
+			fresh := state.CloneWorkspaceState(snapshot)
+			transitioned := false
+			repairStore := &doctorTransitionStateStore{FileStateStore: stateStore, beforeRepair: func() {
+				transitioned = true
+				if tc.reassigned {
+					fresh.Paths["a.txt"] = state.PathOwnership{Store: "keep-store", Type: "copy", Checksum: "updated"}
+					fresh.RemoveAppliedStore("ghost-store")
+					fresh.AddAppliedStore("keep-store", "copy")
+					if err := stateStore.SaveWorkspace(workspaceID, fresh); err != nil {
+						t.Fatalf("save reassigned ledger: %v", err)
+					}
+				}
+				if tc.recreateScope != "" {
+					repo := storeRepo
+					if tc.recreateScope == stores.ScopeComponent {
+						repo = componentRepo
+					}
+					if err := repo.Create("ghost-store", stores.NewStoreMeta("recreated", time.Now())); err != nil {
+						t.Fatalf("recreate store: %v", err)
+					}
+				}
+			}}
+			eng := New(
+				&trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "."},
+				storeRepo, repairStore, fs, hash.NewSHA256Hasher(), &mockClock{},
+				config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: storesDir, Workspaces: workspacesDir},
+			)
+			eng.storeResolver = newEngineStoreResolver(storeRepo, storeRepo, componentRepo)
+			findings, err := eng.doctorCheckLedgerStores(context.Background(), workspaceID, repairStore, snapshot, true)
+			if err != nil {
+				t.Fatalf("repair ledger: %v", err)
+			}
+			if !transitioned {
+				t.Fatal("repair did not acquire the exclusive workspace lock")
+			}
+			if len(findings) != 1 || !findings[0].Fixed || findings[0].FixError != "" {
+				t.Fatalf("expected repaired missing-store finding, got %+v", findings)
+			}
+			got, err := stateStore.LoadWorkspace(workspaceID)
+			if err != nil {
+				t.Fatalf("reload workspace: %v", err)
+			}
+			if tc.wantPruned {
+				if len(got.Paths) != 0 || len(got.AppliedStores) != 0 || got.Applied {
+					t.Fatalf("still-missing store ownership was not fully pruned: %+v", got)
+				}
+			} else {
+				if got.Paths["a.txt"] != fresh.Paths["a.txt"] {
+					t.Fatalf("fresh ownership changed: got %+v, want %+v", got.Paths["a.txt"], fresh.Paths["a.txt"])
+				}
+				owner := fresh.Paths["a.txt"].Store
+				if !got.Applied || len(got.AppliedStores) != 1 || got.GetAppliedStore(owner) == nil {
+					t.Fatalf("fresh applied-store protection changed: %+v", got)
+				}
+			}
+		})
 	}
 }
 
