@@ -438,7 +438,9 @@ func restoreBackupAt(srcDir *os.File, srcName, relPath string, dstParent int, ds
 		return fmt.Errorf("failed to stat backup %q: %w", relPath, err)
 	}
 	if !info.IsDir() {
-		return copyFileAt(source, dstParent, dstName, info.Mode(), owner)
+		// A backup records the user's own file, so its permission bits are
+		// restored exactly rather than narrowed like copied store content.
+		return copyFileAt(source, dstParent, dstName, info.Mode().Perm(), owner)
 	}
 
 	entries, err := source.ReadDir(-1)
@@ -466,6 +468,11 @@ func restoreBackupAt(srcDir *os.File, srcName, relPath string, dstParent int, ds
 		if err := restoreBackupAt(source, entry.Name(), childRel, tmpFD, entry.Name(), owner); err != nil {
 			return err
 		}
+	}
+	// Apply the recorded mode only after the children exist: a read-only
+	// directory would refuse them.
+	if err := unix.Fchmod(tmpFD, uint32(info.Mode().Perm())); err != nil {
+		return fmt.Errorf("failed to restore directory permissions for %q: %w", relPath, err)
 	}
 	if err := replaceAt(dstParent, dstName, tmpName, owner); err != nil {
 		return err
@@ -592,11 +599,12 @@ func (fs *RealFS) copyAt(source *os.File, parentFD int, name, relPath, owner str
 	if info.IsDir() {
 		return fs.copyDirAt(source, parentFD, name, relPath, owner)
 	}
-	return copyFileAt(source, parentFD, name, info.Mode(), owner)
+	return copyFileAt(source, parentFD, name, privateFileMode(info.Mode()), owner)
 }
 
-func copyFileAt(srcFile *os.File, parentFD int, name string, mode os.FileMode, owner string) error {
-	tmpName, tmpFD, err := createExclusiveAt(parentFD, ownedTempPrefix(copyTempPrefix, owner), unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, uint32(privateFileMode(mode)))
+// copyFileAt stages srcFile beside name with exactly perm and swaps it in.
+func copyFileAt(srcFile *os.File, parentFD int, name string, perm os.FileMode, owner string) error {
+	tmpName, tmpFD, err := createExclusiveAt(parentFD, ownedTempPrefix(copyTempPrefix, owner), unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, uint32(perm))
 	if err != nil {
 		return err
 	}
@@ -617,7 +625,7 @@ func copyFileAt(srcFile *os.File, parentFD int, name string, mode os.FileMode, o
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("failed to copy file contents: %w", err)
 	}
-	if err := dstFile.Chmod(privateFileMode(mode)); err != nil {
+	if err := dstFile.Chmod(perm); err != nil {
 		return fmt.Errorf("failed to set destination permissions: %w", err)
 	}
 	if err := dstFile.Sync(); err != nil {
