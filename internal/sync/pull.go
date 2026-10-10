@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/persist"
 	"github.com/danieljhkim/monodev/internal/remote"
 )
@@ -81,36 +82,14 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 			return nil, err
 		}
 
-		// Compare the incoming content against the developer's pre-existing
-		// local copy, if any, before touching the working tree. This catches
-		// a remote-side change (tampering or otherwise) that a manifest-based
-		// check alone cannot: the manifest travels with the content it
-		// certifies, so an actor who can push to the persist branch can
-		// rewrite both together and still pass Verify.
-		changedFiles, err := s.snapshotMgr.DiffAgainstLocalCopy(storeID, req.RepoRoot, s.storeRepo, s.hasher)
+		verified, err := s.replaceLocalStore(ctx, req, storeID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to compare store %q against local copy: %w", storeID, err)
+			return nil, err
 		}
-		if len(changedFiles) > 0 && !req.Force {
-			return nil, fmt.Errorf("%w: store %q (changed: %s); rerun with --force to overwrite the local copy", ErrPulledContentChanged, storeID, strings.Join(changedFiles, ", "))
-		}
-
-		// Verify persisted content before copying it into the local store.
-		// Verification always runs; a missing manifest is an explicit,
-		// reported warning rather than a silent pass. Legacy persisted
-		// stores without manifests remain pullable, but they must never be
-		// reported as verified.
-		if err := s.snapshotMgr.Verify(storeID, req.RepoRoot, s.hasher); err != nil {
-			if !errors.Is(err, persist.ErrVerificationManifestMissing) {
-				return nil, fmt.Errorf("verification failed for store %q: %w", storeID, err)
-			}
-			warnings = append(warnings, fmt.Sprintf("store %q has no verification manifest; content authenticity was not checked", storeID))
-		} else {
+		if verified {
 			verifiedStores++
-		}
-
-		if err := s.snapshotMgr.Dematerialize(storeID, req.RepoRoot, s.storeRepo); err != nil {
-			return nil, fmt.Errorf("failed to dematerialize store %q: %w", storeID, err)
+		} else {
+			warnings = append(warnings, fmt.Sprintf("store %q has no verification manifest; content authenticity was not checked", storeID))
 		}
 		pulledStores = append(pulledStores, storeID)
 	}
@@ -126,7 +105,7 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		Warnings:                    warnings,
 	}
 	if workspaceRef != nil {
-		if err := s.restoreWorkspaceReference(req, workspaceRef); err != nil {
+		if err := s.restoreWorkspaceReference(ctx, req, workspaceRef); err != nil {
 			return nil, err
 		}
 		result.PulledWorkspace = true
@@ -183,6 +162,50 @@ func (s *Syncer) persistenceTarget(repoRoot, requestedRemote string) (string, st
 		return "", "", err
 	}
 	return remoteName, config.Branch, nil
+}
+
+// replaceLocalStore compares, verifies, and replaces one local store while
+// holding its exclusive transaction lock. Force authorizes overwriting
+// changed content, not bypassing a running store transaction. It reports
+// whether a verification manifest certified the persisted content.
+func (s *Syncer) replaceLocalStore(ctx context.Context, req *PullRequest, storeID string) (bool, error) {
+	unlock, err := s.lockStores(ctx, lockfile.Exclusive, storeID)
+	if err != nil {
+		return false, fmt.Errorf("failed to pull store %q: %w", storeID, err)
+	}
+	defer unlock()
+
+	// Compare the incoming content against the developer's pre-existing
+	// local copy, if any, before touching the working tree. This catches
+	// a remote-side change (tampering or otherwise) that a manifest-based
+	// check alone cannot: the manifest travels with the content it
+	// certifies, so an actor who can push to the persist branch can
+	// rewrite both together and still pass Verify.
+	changedFiles, err := s.snapshotMgr.DiffAgainstLocalCopy(storeID, req.RepoRoot, s.storeRepo, s.hasher)
+	if err != nil {
+		return false, fmt.Errorf("failed to compare store %q against local copy: %w", storeID, err)
+	}
+	if len(changedFiles) > 0 && !req.Force {
+		return false, fmt.Errorf("%w: store %q (changed: %s); rerun with --force to overwrite the local copy", ErrPulledContentChanged, storeID, strings.Join(changedFiles, ", "))
+	}
+
+	// Verify persisted content before copying it into the local store.
+	// Verification always runs; a missing manifest is an explicit,
+	// reported warning rather than a silent pass. Legacy persisted
+	// stores without manifests remain pullable, but they must never be
+	// reported as verified.
+	verified := true
+	if err := s.snapshotMgr.Verify(storeID, req.RepoRoot, s.hasher); err != nil {
+		if !errors.Is(err, persist.ErrVerificationManifestMissing) {
+			return false, fmt.Errorf("verification failed for store %q: %w", storeID, err)
+		}
+		verified = false
+	}
+
+	if err := s.snapshotMgr.Dematerialize(storeID, req.RepoRoot, s.storeRepo); err != nil {
+		return false, fmt.Errorf("failed to dematerialize store %q: %w", storeID, err)
+	}
+	return verified, nil
 }
 
 func appendUniqueStores(storeIDs []string, additional []string, activeStore string) []string {

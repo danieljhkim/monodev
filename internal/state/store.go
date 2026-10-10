@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,30 @@ type StateStore interface {
 // an optional capability so in-memory test stores remain lightweight.
 type WorkspaceLocker interface {
 	LockWorkspace(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error)
+}
+
+// ErrLockUnsupported lets composite state stores preserve optional locking
+// when none of their underlying stores implements WorkspaceLocker.
+var ErrLockUnsupported = errors.New("state store does not support locking")
+
+func noUnlock() {}
+
+// LockWorkspace acquires one workspace's transaction lock when store supports
+// locking and returns its release function. Stores without locking (in-memory
+// test stores) return a no-op release.
+func LockWorkspace(ctx context.Context, store StateStore, id string, mode lockfile.Mode) (func(), error) {
+	locker, ok := store.(WorkspaceLocker)
+	if !ok {
+		return noUnlock, nil
+	}
+	lock, err := locker.LockWorkspace(ctx, id, mode)
+	if err != nil {
+		if errors.Is(err, ErrLockUnsupported) {
+			return noUnlock, nil
+		}
+		return nil, fmt.Errorf("lock workspace %s: %w", id, err)
+	}
+	return func() { _ = lock.Close() }, nil
 }
 
 // FileStateStore implements StateStore using JSON files on disk.
