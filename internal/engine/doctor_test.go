@@ -541,6 +541,8 @@ func TestDoctor_ManagedExcludeDriftReportedAndFixed(t *testing.T) {
 	fx := newOverlayTxnFixture(t, "a.txt")
 	store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
 	ws := state.NewWorkspaceState("fp1", ".", "copy")
+	ws.Applied = true
+	ws.AddAppliedStore(fx.storeID, "copy")
 	ws.Paths["a.txt"] = state.PathOwnership{Store: fx.storeID, Type: "copy"}
 	if err := store.SaveWorkspace(fx.workspaceID, ws); err != nil {
 		t.Fatalf("seed workspace state: %v", err)

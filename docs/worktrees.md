@@ -102,7 +102,11 @@ Git worktrees share `.git/info/exclude` (it lives in the common git directory).
 Unapply rebuilds monodev's managed block from every applied workspace ledger
 whose checkout resolves to that same common git directory. Entries for the
 other worktrees remain, so their still-applied files stay excluded from
-`git status`.
+`git status`. Selecting or creating another active store also preserves
+exclusions for overlays still applied in any workspace sharing that directory.
+Committing paths to an unapplied store does not add exclusions. Eject removes
+the detached workspace's contribution while preserving the other workspaces'
+exclusions.
 
 Re-apply by id after unapply:
 
