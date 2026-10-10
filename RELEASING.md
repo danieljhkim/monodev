@@ -90,8 +90,11 @@ and release task before any commit, tag, push, or publication. After approval:
 Pushing the tag starts `.github/workflows/release.yml`. It creates the GitHub
 Release with the four archives and `SHA256SUMS`, then updates
 `danieljhkim/homebrew-tap` with the darwin/arm64 archive URL, checksum, version,
-completions, and man page. Confirm both the GitHub Release and Homebrew tap
-update completed successfully.
+completions, and man page. The tap formula is darwin/arm64 only, so
+`brew install danieljhkim/tap/monodev` is the install path for macOS on Apple
+Silicon; darwin/amd64, linux/amd64, and linux/arm64 users install from the
+GitHub Release archives, as the README says. Confirm both the GitHub Release
+and Homebrew tap update completed successfully.
 
 ## Failure and hotfix recovery
 

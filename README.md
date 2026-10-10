@@ -40,11 +40,15 @@ follow you to other clones without touching `main`.
 
 macOS and Linux only ([why not Windows](#platform-support)).
 
+**macOS on Apple Silicon (darwin/arm64)** — Homebrew:
+
 ```bash
 brew install danieljhkim/tap/monodev
 ```
 
-Or download the archive for your OS and CPU from
+The tap formula points at the darwin/arm64 archive only, so use the release
+archive instead on any other machine: macOS on Intel (darwin/amd64), Linux
+amd64, or Linux arm64. Download the archive for your OS and CPU from
 [GitHub Releases](https://github.com/danieljhkim/monodev/releases), check it
 against `SHA256SUMS`, and put `monodev` on your `PATH`. Archives also carry
 shell completions (`completions/`) and a man page (`man/monodev.1`); Homebrew
