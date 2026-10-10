@@ -17,6 +17,7 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 - Documented the `.agents/` layout convention for agent notes, session files and scripts.
 
 ### Fixed
+- A multi-store `pull` applies every requested store or none. Comparison and verification of all stores run before any local store is replaced, and the replacement is rolled back if a later swap fails, so a failure in one store no longer leaves earlier stores overwritten. The error names the failing store and workspace state is not restored.
 - `apply` keeps a copied directory and a nested path from another store, in either order. The nested path stays owned by its store. `unapply` of one store no longer deletes the other store's files or leaves those files marked applied. A path inside a file, or nested paths in symlink mode, conflicts before any change; `--force` does not override that conflict.
 
 ## [0.3.1] — 2026-10-09

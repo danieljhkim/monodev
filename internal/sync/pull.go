@@ -74,34 +74,20 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		storeIDs = appendUniqueStores(storeIDs, workspaceReferenceStoreIDs(workspaceRef), "")
 	}
 
-	// Refuse unsupported schemas before any store is replaced. The loop
-	// below publishes one store at a time, so checking inside it would
-	// leave earlier stores overwritten when a later one is too new.
+	// Refuse unsupported schemas before any store is replaced. Replacement
+	// publishes the whole batch at once, so checking later would leave
+	// earlier stores overwritten when a later one is too new.
 	// --force authorizes divergent content, not a schema this binary
 	// cannot read, and a missing or valid manifest does not bypass it.
 	if err := s.refuseFutureStoreSchemas(ctx, req.RepoRoot, storeIDs); err != nil {
 		return nil, err
 	}
 
-	var pulledStores []string
-	var warnings []string
-	verifiedStores := 0
-	for _, storeID := range storeIDs {
-		if err := checkContext(ctx); err != nil {
-			return nil, err
-		}
-
-		verified, err := s.replaceLocalStore(ctx, req, storeID)
-		if err != nil {
-			return nil, err
-		}
-		if verified {
-			verifiedStores++
-		} else {
-			warnings = append(warnings, fmt.Sprintf("store %q has no verification manifest; content authenticity was not checked", storeID))
-		}
-		pulledStores = append(pulledStores, storeID)
+	verifiedStores, warnings, err := s.replaceLocalStores(ctx, req, storeIDs)
+	if err != nil {
+		return nil, err
 	}
+	pulledStores := append([]string(nil), storeIDs...)
 
 	result := &PullResult{
 		PulledStores:                pulledStores,
@@ -173,19 +159,56 @@ func (s *Syncer) persistenceTarget(repoRoot, requestedRemote string) (string, st
 	return remoteName, config.Branch, nil
 }
 
-// replaceLocalStore compares, verifies, and replaces one local store while
-// holding its exclusive transaction lock. Force authorizes overwriting
-// changed content, not bypassing a running store transaction or an
-// unsupported store schema. Schema compatibility is refused for every
-// selected store before this method runs. It reports whether a
-// verification manifest certified the persisted content.
-func (s *Syncer) replaceLocalStore(ctx context.Context, req *PullRequest, storeID string) (bool, error) {
-	unlock, err := s.lockStores(ctx, lockfile.Exclusive, storeID)
+// replaceLocalStores compares, verifies, and replaces the local copy of every
+// selected store as one batch, holding all of their exclusive transaction locks.
+// Force authorizes overwriting changed content, not bypassing a running store
+// transaction or an unsupported store schema. Schema compatibility is refused
+// for every selected store before this method runs.
+//
+// Every store is compared and verified before any local store is touched, and
+// the replacement itself is all or nothing, so a failure for one store leaves
+// every local store as it was. It returns how many stores a verification
+// manifest certified and a warning for each store without one.
+func (s *Syncer) replaceLocalStores(ctx context.Context, req *PullRequest, storeIDs []string) (int, []string, error) {
+	if len(storeIDs) == 0 {
+		return 0, nil, nil
+	}
+	unlock, err := s.lockStores(ctx, lockfile.Exclusive, storeIDs...)
 	if err != nil {
-		return false, fmt.Errorf("failed to pull store %q: %w", storeID, err)
+		return 0, nil, fmt.Errorf("failed to pull stores %q: %w", storeIDs, err)
 	}
 	defer unlock()
 
+	verifiedStores := 0
+	var warnings []string
+	for _, storeID := range storeIDs {
+		if err := checkContext(ctx); err != nil {
+			return 0, nil, err
+		}
+		verified, err := s.checkStoreForPull(req, storeID)
+		if err != nil {
+			return 0, nil, err
+		}
+		if verified {
+			verifiedStores++
+		} else {
+			warnings = append(warnings, fmt.Sprintf("store %q has no verification manifest; content authenticity was not checked", storeID))
+		}
+	}
+
+	if err := checkContext(ctx); err != nil {
+		return 0, nil, err
+	}
+	if err := s.snapshotMgr.DematerializeAll(storeIDs, req.RepoRoot, s.storeRepo); err != nil {
+		return 0, nil, err
+	}
+	return verifiedStores, warnings, nil
+}
+
+// checkStoreForPull compares one persisted store against its local copy and
+// verifies it, without modifying any local store. It reports whether a
+// verification manifest certified the persisted content.
+func (s *Syncer) checkStoreForPull(req *PullRequest, storeID string) (bool, error) {
 	// Compare the incoming content against the developer's pre-existing
 	// local copy, if any, before touching the working tree. This catches
 	// a remote-side change (tampering or otherwise) that a manifest-based
@@ -205,18 +228,13 @@ func (s *Syncer) replaceLocalStore(ctx context.Context, req *PullRequest, storeI
 	// reported warning rather than a silent pass. Legacy persisted
 	// stores without manifests remain pullable, but they must never be
 	// reported as verified.
-	verified := true
 	if err := s.snapshotMgr.Verify(storeID, req.RepoRoot, s.hasher); err != nil {
 		if !errors.Is(err, persist.ErrVerificationManifestMissing) {
 			return false, fmt.Errorf("verification failed for store %q: %w", storeID, err)
 		}
-		verified = false
+		return false, nil
 	}
-
-	if err := s.snapshotMgr.Dematerialize(storeID, req.RepoRoot, s.storeRepo); err != nil {
-		return false, fmt.Errorf("failed to dematerialize store %q: %w", storeID, err)
-	}
-	return verified, nil
+	return true, nil
 }
 
 // refuseFutureStoreSchemas checks every selected persisted store before pull

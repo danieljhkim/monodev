@@ -15,6 +15,7 @@ import (
 	"github.com/danieljhkim/monodev/internal/hash"
 	"github.com/danieljhkim/monodev/internal/persist"
 	"github.com/danieljhkim/monodev/internal/remote"
+	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
 
@@ -308,6 +309,172 @@ func TestSyncer_PullStoreRefusesFutureSchemaBeforeReplacingEarlierStores(t *test
 		}
 		if string(data) != sentinel.want {
 			t.Fatalf("%s = %q, want %q", sentinel.path, data, sentinel.want)
+		}
+	}
+}
+
+func TestSyncer_PullStoreLaterStoreFailureLeavesEarlierStoresUnchanged(t *testing.T) {
+	repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+	defer cleanup()
+	savePullRemoteConfig(t, repoRoot, configStore)
+
+	// Both local stores differ from their persisted copies, so a forced pull
+	// that reached the first store would overwrite it.
+	firstFile, _ := keepLocalStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, "first-store", "first-sentinel")
+	secondFile, secondPersist := keepLocalStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, "second-store", "second-sentinel")
+	corruptPath := filepath.Join(secondPersist, "overlay", "remote.txt")
+	if err := os.WriteFile(corruptPath, []byte("tampered"), 0644); err != nil {
+		t.Fatalf("failed to corrupt persisted file: %v", err)
+	}
+
+	firstDir := filepath.Dir(filepath.Dir(firstFile))
+	secondDir := filepath.Dir(filepath.Dir(secondFile))
+	firstBefore := readTreeForPull(t, firstDir)
+	secondBefore := readTreeForPull(t, secondDir)
+
+	result, err := syncer.PullStore(context.Background(), &PullRequest{
+		RepoRoot: repoRoot,
+		StoreIDs: []string{"first-store", "second-store"},
+		Force:    true,
+	})
+	if result != nil {
+		t.Fatalf("PullStore result = %+v, want nil on failure", result)
+	}
+	assertPullVerificationPathError(t, err, "second-store", corruptPath)
+
+	assertTreeUnchangedForPull(t, firstDir, firstBefore)
+	assertTreeUnchangedForPull(t, secondDir, secondBefore)
+	assertNoReplacementLeftovers(t, filepath.Dir(firstDir))
+}
+
+func TestSyncer_PullStoreFailureSkipsWorkspaceRestore(t *testing.T) {
+	repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+	defer cleanup()
+	savePullRemoteConfig(t, repoRoot, configStore)
+
+	for _, storeID := range []string{"active-store", "stack-store"} {
+		if err := storeRepo.Create(storeID, stores.NewStoreMeta(storeID, time.Now())); err != nil {
+			t.Fatalf("create store %q: %v", storeID, err)
+		}
+		if err := os.WriteFile(filepath.Join(storeRepo.OverlayRoot(storeID), "portable.txt"), []byte(storeID), 0644); err != nil {
+			t.Fatalf("write store %q: %v", storeID, err)
+		}
+	}
+	const remoteWorkspaceID = "source-workspace"
+	if err := syncer.stateStore.SaveWorkspace(remoteWorkspaceID, &state.WorkspaceState{
+		WorkspacePath: "services/api",
+		Mode:          "copy",
+		ActiveStore:   "active-store",
+		Paths:         map[string]state.PathOwnership{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := syncer.PushStore(context.Background(), &PushRequest{
+		RepoRoot:           repoRoot,
+		StoreIDs:           []string{"active-store", "stack-store"},
+		WorkspaceID:        remoteWorkspaceID,
+		RepositoryIdentity: "git@example.test:team/repo.git",
+		WithWorkspace:      true,
+		Remote:             "origin",
+	}); err != nil {
+		t.Fatalf("push workspace reference: %v", err)
+	}
+	if err := syncer.stateStore.DeleteWorkspace(remoteWorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The forced pull would overwrite this local edit if it reached the
+	// first store; the second store then fails verification.
+	activeFile := filepath.Join(storeRepo.OverlayRoot("active-store"), "portable.txt")
+	if err := os.WriteFile(activeFile, []byte("local edit"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	stackPersist := filepath.Join(repoRoot, ".monodev", "persist", "stores", "stack-store")
+	if err := os.WriteFile(filepath.Join(stackPersist, "overlay", "portable.txt"), []byte("tampered"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const localWorkspaceID = "local-workspace"
+	result, err := syncer.PullStore(context.Background(), &PullRequest{
+		RepoRoot:           repoRoot,
+		WorkspaceID:        remoteWorkspaceID,
+		LocalWorkspaceID:   localWorkspaceID,
+		RepoFingerprint:    "local-only-fingerprint",
+		RepositoryIdentity: "git@example.test:team/repo.git",
+		WorkspacePath:      "services/api",
+		WithStores:         true,
+		Force:              true,
+	})
+	if result != nil {
+		t.Fatalf("PullStore result = %+v, want nil on failure", result)
+	}
+	assertPullVerificationPathError(t, err, "stack-store", filepath.Join(stackPersist, "overlay", "portable.txt"))
+
+	if _, loadErr := syncer.stateStore.LoadWorkspace(localWorkspaceID); !os.IsNotExist(loadErr) {
+		t.Fatalf("workspace state was restored despite failed pull, LoadWorkspace err = %v", loadErr)
+	}
+	data, readErr := os.ReadFile(activeFile)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "local edit" {
+		t.Fatalf("active-store file = %q, want local edit preserved", data)
+	}
+}
+
+func readTreeForPull(t *testing.T, root string) map[string]string {
+	t.Helper()
+
+	tree := make(map[string]string)
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			tree[rel+"/"] = ""
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		tree[rel] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to read tree %s: %v", root, err)
+	}
+	return tree
+}
+
+func assertTreeUnchangedForPull(t *testing.T, root string, before map[string]string) {
+	t.Helper()
+
+	after := readTreeForPull(t, root)
+	if len(after) != len(before) {
+		t.Fatalf("%s entries = %v, want %v", root, after, before)
+	}
+	for path, want := range before {
+		if got, ok := after[path]; !ok || got != want {
+			t.Fatalf("%s/%s = %q (present=%v), want %q", root, path, got, ok, want)
+		}
+	}
+}
+
+func assertNoReplacementLeftovers(t *testing.T, storesRoot string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(storesRoot)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", storesRoot, err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".monodev-") {
+			t.Fatalf("leftover replacement path %s in %s", entry.Name(), storesRoot)
 		}
 	}
 }

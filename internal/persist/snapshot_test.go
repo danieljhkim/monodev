@@ -1281,3 +1281,110 @@ func TestSnapshotsRejectSymlinkedSourceAncestors(t *testing.T) {
 		})
 	}
 }
+
+func TestSnapshotManager_DematerializeAll(t *testing.T) {
+	// seed materializes each store, then rewrites its local overlay so the
+	// local copy differs from the persisted one.
+	seed := func(t *testing.T, repo stores.StoreRepo, mgr *SnapshotManager, persistRoot string, ids ...string) {
+		t.Helper()
+		for _, id := range ids {
+			createTestStore(t, repo, id)
+			if err := mgr.Materialize(id, repo, persistRoot); err != nil {
+				t.Fatalf("failed to materialize %s: %v", id, err)
+			}
+			if err := os.WriteFile(filepath.Join(repo.OverlayRoot(id), "test.txt"), []byte("local "+id), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	readLocal := func(t *testing.T, repo stores.StoreRepo, id string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(repo.OverlayRoot(id), "test.txt"))
+		if err != nil {
+			t.Fatalf("failed to read local %s: %v", id, err)
+		}
+		return string(data)
+	}
+
+	t.Run("replaces every store", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+		seed(t, repo, mgr, persistRoot, "one", "two")
+
+		if err := mgr.DematerializeAll([]string{"one", "two"}, persistRoot, repo); err != nil {
+			t.Fatalf("DematerializeAll failed: %v", err)
+		}
+		for _, id := range []string{"one", "two"} {
+			if got := readLocal(t, repo, id); got != "test content" {
+				t.Errorf("%s test.txt = %q, want persisted content", id, got)
+			}
+		}
+		assertNoReplacementTemps(t, storesDir)
+	})
+
+	t.Run("later staging failure leaves earlier stores untouched", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+		seed(t, repo, mgr, persistRoot, "one")
+
+		err := mgr.DematerializeAll([]string{"one", "missing"}, persistRoot, repo)
+		if err == nil || !strings.Contains(err.Error(), `"missing"`) {
+			t.Fatalf("DematerializeAll error = %v, want one naming store \"missing\"", err)
+		}
+		if got := readLocal(t, repo, "one"); got != "local one" {
+			t.Errorf("one test.txt = %q, want local content preserved", got)
+		}
+		assertNoReplacementTemps(t, storesDir)
+	})
+
+	t.Run("rollback restores swapped stores and removes new ones", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+		seed(t, repo, mgr, persistRoot, "existing", "fresh")
+		freshDir := filepath.Dir(repo.OverlayRoot("fresh"))
+		if err := os.RemoveAll(freshDir); err != nil {
+			t.Fatal(err)
+		}
+
+		var swapped []swappedStore
+		for _, id := range []string{"existing", "fresh"} {
+			dst, staged, err := mgr.stageDematerialize(id, persistRoot, repo)
+			if err != nil {
+				t.Fatalf("stage %s: %v", id, err)
+			}
+			swap, err := mgr.swapInStagedStore(dst, staged)
+			if err != nil {
+				t.Fatalf("swap %s: %v", id, err)
+			}
+			swapped = append(swapped, swap)
+		}
+		if got := readLocal(t, repo, "existing"); got != "test content" {
+			t.Fatalf("existing swapped content = %q", got)
+		}
+
+		if err := mgr.rollbackSwaps(swapped); err != nil {
+			t.Fatalf("rollbackSwaps failed: %v", err)
+		}
+		if got := readLocal(t, repo, "existing"); got != "local existing" {
+			t.Errorf("existing test.txt = %q, want original local content", got)
+		}
+		if _, err := os.Stat(freshDir); !os.IsNotExist(err) {
+			t.Errorf("store that did not exist before the batch remains, stat err = %v", err)
+		}
+		assertNoReplacementTemps(t, storesDir)
+	})
+}
+
+func assertNoReplacementTemps(t *testing.T, dir string) {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", dir, err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".monodev-") {
+			t.Errorf("leftover replacement path %s in %s", entry.Name(), dir)
+		}
+	}
+}
