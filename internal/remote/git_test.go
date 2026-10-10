@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -234,5 +236,72 @@ func TestRealGitPersistenceCheckoutFetchedRefusesDivergedBranch(t *testing.T) {
 	}
 	if got := readPersistenceVersion(t, clientB); got != "local v2" {
 		t.Fatalf("divergent work tree was overwritten: got %q", got)
+	}
+}
+
+func TestRealGitPersistenceEnsureRepoRestoresBranchWhenIndexClearFails(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires POSIX permissions enforced for the current user")
+	}
+	git, _, clientA, _ := setupPersistenceTransport(t)
+	ctx := context.Background()
+
+	persistDir := filepath.Join(clientA, ".monodev", "persist")
+	headBefore, err := git.runGit(ctx, clientA, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A read-only directory makes `git rm` fail to unlink version.txt.
+	if err := os.Chmod(persistDir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	restorePerm := func() { _ = os.Chmod(persistDir, 0755) }
+	t.Cleanup(restorePerm)
+
+	err = git.EnsureRepo(ctx, clientA, "monodev/other")
+	if err == nil {
+		t.Fatal("EnsureRepo succeeded, want error when clearing the orphan index fails")
+	}
+	if !strings.Contains(err.Error(), "clear index") {
+		t.Fatalf("EnsureRepo error = %v, want index clear failure", err)
+	}
+	restorePerm()
+
+	branch, err := git.runGit(ctx, clientA, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != testPersistenceBranch {
+		t.Fatalf("HEAD branch = %q, want %q", branch, testPersistenceBranch)
+	}
+	headAfter, err := git.runGit(ctx, clientA, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headAfter != headBefore {
+		t.Fatalf("HEAD changed from %s to %s", headBefore, headAfter)
+	}
+	if got := readPersistenceVersion(t, clientA); got != "v1" {
+		t.Fatalf("work tree changed: version.txt = %q, want v1", got)
+	}
+	if status, err := git.runGit(ctx, clientA, "status", "--porcelain"); err != nil || status != "" {
+		t.Fatalf("status after failed clear = %q, err = %v, want clean", status, err)
+	}
+
+	// A later Commit must not publish anything from the failed attempt.
+	other := filepath.Join(clientA, ".monodev", "other.txt")
+	if err := os.WriteFile(other, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := git.Commit(ctx, clientA, "other", []string{other}); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+	files, err := git.runGit(ctx, clientA, "show", "--name-only", "--format=", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files != "other.txt" {
+		t.Fatalf("commit files = %q, want only other.txt", files)
 	}
 }

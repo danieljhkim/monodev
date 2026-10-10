@@ -172,11 +172,20 @@ func (g *RealGitPersistence) ensureBranch(ctx context.Context, repoRoot, branch 
 			return err
 		}
 		// Branch doesn't exist, create it as orphan
+		prev := g.captureHead(ctx, repoRoot)
 		if _, err := g.runGit(ctx, repoRoot, "checkout", "--orphan", branch); err != nil {
 			return fmt.Errorf("failed to create orphan branch: %w", err)
 		}
-		// Remove any files from index (orphan checkout may copy from HEAD)
-		_, _ = g.runGit(ctx, repoRoot, "rm", "-rf", "--ignore-unmatch", ".")
+		// Remove any files from index (orphan checkout may copy from HEAD).
+		// A failed clear must not leave the previous branch's index behind,
+		// or the next Commit would publish it on the new branch.
+		if _, err := g.runGit(ctx, repoRoot, "rm", "-rf", "--ignore-unmatch", "."); err != nil {
+			err = fmt.Errorf("failed to clear index for orphan branch: %w", err)
+			if rbErr := g.restoreHead(ctx, repoRoot, prev); rbErr != nil {
+				return errors.Join(err, fmt.Errorf("failed to restore previous branch: %w", rbErr))
+			}
+			return err
+		}
 	} else {
 		// Branch exists, just check it out
 		if _, err := g.runGit(ctx, repoRoot, "checkout", branch); err != nil {
@@ -185,6 +194,48 @@ func (g *RealGitPersistence) ensureBranch(ctx context.Context, repoRoot, branch 
 	}
 
 	return nil
+}
+
+// headState records what HEAD pointed at before an orphan checkout.
+type headState struct {
+	ref    string // symbolic ref (e.g. refs/heads/main); empty when detached
+	commit string // commit HEAD resolved to; empty when unborn
+}
+
+// captureHead records the current HEAD so a failed orphan setup can be undone.
+func (g *RealGitPersistence) captureHead(ctx context.Context, repoRoot string) headState {
+	var state headState
+	if ref, err := g.runGit(ctx, repoRoot, "symbolic-ref", "-q", "HEAD"); err == nil {
+		state.ref = ref
+	}
+	if commit, err := g.runGit(ctx, repoRoot, "rev-parse", "--verify", "-q", "HEAD"); err == nil {
+		state.commit = commit
+	}
+	return state
+}
+
+// restoreHead puts HEAD, the index and the work tree back to the captured
+// state. It runs detached from ctx cancellation so a canceled caller still
+// gets the previous branch back.
+func (g *RealGitPersistence) restoreHead(ctx context.Context, repoRoot string, prev headState) error {
+	ctx = context.WithoutCancel(contextOrBackground(ctx))
+	switch {
+	case prev.ref != "":
+		if _, err := g.runGit(ctx, repoRoot, "symbolic-ref", "HEAD", prev.ref); err != nil {
+			return err
+		}
+	case prev.commit != "":
+		if _, err := g.runGit(ctx, repoRoot, "update-ref", "--no-deref", "HEAD", prev.commit); err != nil {
+			return err
+		}
+	}
+	if prev.commit == "" {
+		// Unborn previous branch: nothing to restore beyond an empty index.
+		_, err := g.runGit(ctx, repoRoot, "read-tree", "--empty")
+		return err
+	}
+	_, err := g.runGit(ctx, repoRoot, "reset", "--hard", "-q", "HEAD")
+	return err
 }
 
 // Commit stages paths and creates a commit.
