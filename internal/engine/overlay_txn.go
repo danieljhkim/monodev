@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -373,27 +375,23 @@ func (e *Engine) prepareOverlayOp(workspaceRoot, txnDir string, seq int, op plan
 }
 
 func (e *Engine) installOverlayTxn(ctx context.Context, txn *overlayTxn, workspaceRoot, txnDir string) error {
+	owner := overlayTempOwner(txn.WorkspaceID)
 	for _, op := range txn.Ops {
 		if err := checkContext(ctx); err != nil {
 			return err
 		}
-		if err := e.installOverlayOp(workspaceRoot, txnDir, op); err != nil {
+		if err := e.installOverlayOp(workspaceRoot, txnDir, owner, op); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *Engine) installOverlayOp(workspaceRoot, txnDir string, op overlayTxnOp) error {
+func (e *Engine) installOverlayOp(workspaceRoot, txnDir, owner string, op overlayTxnOp) error {
 	switch op.Type {
 	case planner.OpCopy:
 		stagedPath := filepath.Join(txnDir, filepath.FromSlash(op.StagedRel))
-		return e.executeOperation(workspaceRoot, planner.Operation{
-			Type:       planner.OpCopy,
-			SourcePath: stagedPath,
-			DestPath:   filepath.Join(workspaceRoot, op.RelPath),
-			RelPath:    op.RelPath,
-		})
+		return e.copyOverlayPath(workspaceRoot, op.RelPath, stagedPath, owner)
 	case planner.OpCreateSymlink:
 		if err := e.removeRelPath(workspaceRoot, op.RelPath); err != nil {
 			return err
@@ -412,17 +410,18 @@ func (e *Engine) installOverlayOp(workspaceRoot, txnDir string, op overlayTxnOp)
 }
 
 func (e *Engine) rollbackOverlayTxn(txn *overlayTxn, workspaceRoot, txnDir string) error {
+	owner := overlayTempOwner(txn.WorkspaceID)
 	for i := len(txn.Ops) - 1; i >= 0; i-- {
 		op := txn.Ops[i]
-		if err := e.restoreOverlayOp(workspaceRoot, txnDir, op); err != nil {
+		if err := e.restoreOverlayOp(workspaceRoot, txnDir, owner, op); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *Engine) restoreOverlayOp(workspaceRoot, txnDir string, op overlayTxnOp) error {
-	cleanupInstallTemps(filepath.Join(workspaceRoot, filepath.Dir(op.RelPath)))
+func (e *Engine) restoreOverlayOp(workspaceRoot, txnDir, owner string, op overlayTxnOp) error {
+	e.cleanupOwnedInstallTemps(workspaceRoot, op.RelPath, owner)
 	absDest := filepath.Join(workspaceRoot, op.RelPath)
 	if !op.DestExisted {
 		return e.removeRelPath(workspaceRoot, op.RelPath)
@@ -442,22 +441,48 @@ func (e *Engine) restoreOverlayOp(workspaceRoot, txnDir string, op overlayTxnOp)
 		return nil
 	}
 	backupPath := filepath.Join(txnDir, filepath.FromSlash(op.BackupRel))
-	return e.restoreDest(backupPath, absDest, workspaceRoot, op.RelPath)
+	return e.restoreDest(backupPath, absDest, workspaceRoot, op.RelPath, owner)
 }
 
-func (e *Engine) restoreDest(backupPath, absDest, workspaceRoot, relPath string) error {
+func (e *Engine) restoreDest(backupPath, absDest, workspaceRoot, relPath, owner string) error {
 	if _, err := os.Lstat(backupPath); err == nil {
 		if err := restoreTree(backupPath, absDest); err != nil {
 			return fmt.Errorf("failed to restore %s: %w", relPath, err)
 		}
 		return nil
 	}
-	return e.executeOperation(workspaceRoot, planner.Operation{
+	return e.copyOverlayPath(workspaceRoot, relPath, backupPath, owner)
+}
+
+// overlayTempOwner tags the install temps of workspaceID's overlay
+// transactions. A workspace's transactions are serialized by its lock and share
+// one journal, so the tag covers every temp an interrupted transaction for this
+// workspace could leave, and nothing another workspace or a user created.
+func overlayTempOwner(workspaceID string) string {
+	if workspaceID == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("monodev-overlay-txn\x00" + workspaceID))
+	return "txn" + hex.EncodeToString(sum[:8])
+}
+
+// copyOverlayPath copies src to relPath beneath workspaceRoot, staging under
+// owner-tagged temp names when the filesystem supports them.
+func (e *Engine) copyOverlayPath(workspaceRoot, relPath, src, owner string) error {
+	op := planner.Operation{
 		Type:       planner.OpCopy,
-		SourcePath: backupPath,
-		DestPath:   absDest,
+		SourcePath: src,
+		DestPath:   filepath.Join(workspaceRoot, relPath),
 		RelPath:    relPath,
-	})
+	}
+	ownedFS, ok := e.fs.(fsops.OwnedTempRootFS)
+	if !ok || owner == "" {
+		return e.executeOperation(workspaceRoot, op)
+	}
+	if err := e.validateOperationDestination(workspaceRoot, op); err != nil {
+		return err
+	}
+	return ownedFS.CopyWithinRootOwned(workspaceRoot, relPath, src, owner)
 }
 
 func (e *Engine) removeRelPath(workspaceRoot, relPath string) error {
@@ -565,18 +590,15 @@ func copyRegularFile(src, dst string) error {
 	return nil
 }
 
-func cleanupInstallTemps(parent string) {
-	if parent == "" {
+// cleanupOwnedInstallTemps sweeps temps this workspace's transactions staged
+// beside relPath, such as those an interrupted process left. Only owner-tagged
+// names are removed, and the parent is opened without following symlinks. The
+// sweep is best-effort: a refused parent is reported by the confined restore
+// that follows it.
+func (e *Engine) cleanupOwnedInstallTemps(workspaceRoot, relPath, owner string) {
+	ownedFS, ok := e.fs.(fsops.OwnedTempRootFS)
+	if !ok || owner == "" {
 		return
 	}
-	entries, err := os.ReadDir(parent)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, ".monodev-copy-") || strings.HasPrefix(name, ".monodev-aside-") {
-			_ = os.RemoveAll(filepath.Join(parent, name))
-		}
-	}
+	_ = ownedFS.RemoveOwnedTempsWithinRoot(workspaceRoot, filepath.Dir(filepath.Clean(relPath)), owner)
 }

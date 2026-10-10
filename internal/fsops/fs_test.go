@@ -846,6 +846,152 @@ func assertNoStagingEntries(t *testing.T, root string) {
 	}
 }
 
+func writeOwnedTempFixture(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatalf("failed to create fixture parent: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+}
+
+func requireFixtureContent(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != want {
+		t.Fatalf("%s content = %q, error = %v; want %q", path, got, err, want)
+	}
+}
+
+func TestRealFS_RemoveOwnedTempsWithinRoot_RemovesOnlyOwnedTemps(t *testing.T) {
+	fs := NewRealFS()
+	root := t.TempDir()
+	for _, dirRel := range []string{".", "nested"} {
+		dir := filepath.Join(root, dirRel)
+		owned := []string{
+			filepath.Join(dir, ".monodev-copy-txnA-1-2"),
+			filepath.Join(dir, ".monodev-aside-txnA-1-3", "child.txt"),
+		}
+		kept := []string{
+			filepath.Join(dir, ".monodev-copy-user-notes"),
+			filepath.Join(dir, ".monodev-aside-keep", "child.txt"),
+			filepath.Join(dir, ".monodev-copy-txnB-1-2"),
+			filepath.Join(dir, ".monodev-copy-txnAB-1-2"),
+			filepath.Join(dir, ".monodev-copy-123-456"),
+			filepath.Join(dir, "regular.txt"),
+		}
+		for _, path := range append(append([]string{}, owned...), kept...) {
+			writeOwnedTempFixture(t, path, "fixture")
+		}
+
+		if err := fs.RemoveOwnedTempsWithinRoot(root, dirRel, "txnA"); err != nil {
+			t.Fatalf("RemoveOwnedTempsWithinRoot(%q) failed: %v", dirRel, err)
+		}
+		for _, path := range []string{owned[0], filepath.Dir(owned[1])} {
+			if _, err := os.Lstat(path); !os.IsNotExist(err) {
+				t.Fatalf("owned temp %s survived, lstat error: %v", path, err)
+			}
+		}
+		for _, path := range kept {
+			requireFixtureContent(t, path, "fixture")
+		}
+	}
+
+	if err := fs.RemoveOwnedTempsWithinRoot(root, "missing/dir", "txnA"); err != nil {
+		t.Fatalf("missing directory error = %v, want nil", err)
+	}
+	unrelated := filepath.Join(root, ".monodev-copy-a")
+	writeOwnedTempFixture(t, unrelated, "fixture")
+	for _, owner := range []string{"", "a-b", "../a", "a/b"} {
+		if err := fs.RemoveOwnedTempsWithinRoot(root, ".", owner); err == nil {
+			t.Fatalf("owner %q accepted, want refusal", owner)
+		}
+		if err := fs.CopyWithinRootOwned(root, "file.txt", unrelated, owner); err == nil {
+			t.Fatalf("CopyWithinRootOwned owner %q accepted, want refusal", owner)
+		}
+	}
+	requireFixtureContent(t, unrelated, "fixture")
+}
+
+func TestRealFS_RemoveOwnedTempsWithinRoot_RefusesSymlinkedAncestor(t *testing.T) {
+	fs := NewRealFS()
+	root := t.TempDir()
+	outside := t.TempDir()
+	sentinels := []string{
+		filepath.Join(outside, ".monodev-copy-txnA-1-2"),
+		filepath.Join(outside, ".monodev-copy-user-notes"),
+		filepath.Join(outside, "deeper", ".monodev-aside-txnA-1-3"),
+		filepath.Join(outside, "deeper", ".monodev-copy-user-notes"),
+	}
+	for _, path := range sentinels {
+		writeOwnedTempFixture(t, path, "outside sentinel")
+	}
+	requireSymlink(t, outside, filepath.Join(root, "nested"))
+
+	for _, dirRel := range []string{"nested", "nested/deeper"} {
+		err := fs.RemoveOwnedTempsWithinRoot(root, dirRel, "txnA")
+		if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
+			t.Fatalf("RemoveOwnedTempsWithinRoot(%q) error = %v, want symlinked ancestor refusal", dirRel, err)
+		}
+	}
+	for _, path := range sentinels {
+		requireFixtureContent(t, path, "outside sentinel")
+	}
+}
+
+func TestRealFS_CopyWithinRootOwned_TagsLeftoverTempsForSweep(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the directory permissions that force a leftover temp")
+	}
+	fs := NewRealFS()
+	root := t.TempDir()
+	source := filepath.Join(t.TempDir(), "source")
+	writeOwnedTempFixture(t, filepath.Join(source, "new.txt"), "replacement")
+	locked := filepath.Join(root, "dest", "locked")
+	writeOwnedTempFixture(t, filepath.Join(locked, "file.txt"), "original")
+	unrelated := filepath.Join(root, ".monodev-aside-user-notes")
+	writeOwnedTempFixture(t, unrelated, "keep")
+	if err := os.Chmod(locked, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = filepath.Walk(root, func(path string, _ os.FileInfo, _ error) error { return os.Chmod(path, 0700) })
+	})
+
+	// The replaced destination cannot be removed, so its moved-aside copy is
+	// left behind the way an interrupted process would leave it.
+	if err := fs.CopyWithinRootOwned(root, "dest", source, "txnA"); err == nil {
+		t.Fatal("CopyWithinRootOwned error = nil, want aside removal failure")
+	}
+	requireFixtureContent(t, filepath.Join(root, "dest", "new.txt"), "replacement")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var leftover string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".monodev-aside-txnA-") {
+			leftover = filepath.Join(root, entry.Name())
+		}
+	}
+	if leftover == "" {
+		t.Fatalf("no owner-tagged aside left in %v", entries)
+	}
+	if err := os.Chmod(filepath.Join(leftover, "locked"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fs.RemoveOwnedTempsWithinRoot(root, ".", "txnA"); err != nil {
+		t.Fatalf("RemoveOwnedTempsWithinRoot failed: %v", err)
+	}
+	if _, err := os.Lstat(leftover); !os.IsNotExist(err) {
+		t.Fatalf("owned leftover survived, lstat error: %v", err)
+	}
+	requireFixtureContent(t, unrelated, "keep")
+	requireFixtureContent(t, filepath.Join(root, "dest", "new.txt"), "replacement")
+}
+
 func requireSymlink(t *testing.T, oldname, newname string) {
 	t.Helper()
 

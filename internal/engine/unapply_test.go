@@ -720,3 +720,35 @@ func TestUnapply_LegacyCopiedDirectoryWithoutManifestFailsWithoutForce(t *testin
 		t.Fatalf("scripts still exists after force unapply, err=%v", err)
 	}
 }
+
+func TestUnapply_RefusedSymlinkedAncestorLeavesOutsidePrefixFiles(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "nested/a.txt")
+	outside := t.TempDir()
+	sentinels := map[string]string{
+		filepath.Join(outside, "a.txt"):                                                     "outside original",
+		filepath.Join(outside, ".monodev-copy-user-notes"):                                  "must keep",
+		filepath.Join(outside, ".monodev-aside-user-notes"):                                 "must keep",
+		filepath.Join(outside, ".monodev-copy-"+overlayTempOwner(fx.workspaceID)+"-1-2"):    "outside owned-looking",
+		filepath.Join(outside, ".monodev-aside-"+overlayTempOwner(fx.workspaceID)+"-1-3/x"): "outside owned-looking",
+	}
+	for path, content := range sentinels {
+		writeTestFile(t, path, content)
+	}
+	requireEngineSymlink(t, outside, filepath.Join(fx.repoRoot, "nested"))
+	store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
+	ws := state.NewWorkspaceState("fp1", ".", "copy")
+	ws.ActiveStore = fx.storeID
+	ws.Applied = true
+	ws.Paths["nested/a.txt"] = state.PathOwnership{Store: fx.storeID, Type: "copy"}
+	if err := store.SaveWorkspace(fx.workspaceID, ws); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := fx.engine(t, nil, store).Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot, Force: true})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Unapply error = %v, want symlinked ancestor refusal", err)
+	}
+	for path, content := range sentinels {
+		assertFileContent(t, path, content)
+	}
+}

@@ -79,6 +79,14 @@ type RootFS interface {
 	SymlinkWithinRoot(root, relPath, target string) error
 }
 
+// OwnedTempRootFS optionally tags root-confined copy temps with an owner so
+// recovery can sweep exactly the temps that owner left behind. Unrelated files
+// sharing monodev's temp prefixes are never matched.
+type OwnedTempRootFS interface {
+	CopyWithinRootOwned(root, relPath, src, owner string) error
+	RemoveOwnedTempsWithinRoot(root, dirRel, owner string) error
+}
+
 // RealFS implements FS using actual OS operations.
 type RealFS struct{}
 
