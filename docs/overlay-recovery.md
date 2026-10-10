@@ -34,6 +34,12 @@ File copies write a sibling temp and rename over the destination. They never
 truncate the live file in place. Directory replacements are staged completely
 before the live tree is moved aside.
 
+Those sibling temps are named for the workspace's transactions. Rollback and
+recovery sweep only temps carrying that tag beside each destination. They open
+the parent without following symlinks, so an interrupted install's leftovers are
+removed. Unrelated files that share the `.monodev-copy-` or `.monodev-aside-`
+prefix, or that sit behind a symlinked ancestor, are never touched.
+
 Overwritten user content is kept in the txn backup directory until the
 committed journal and workspace state save have succeeded.
 

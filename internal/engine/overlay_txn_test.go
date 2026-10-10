@@ -13,6 +13,7 @@ import (
 	"github.com/danieljhkim/monodev/internal/config"
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/hash"
+	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -84,6 +85,13 @@ func (f *faultingFS) CopyWithinRoot(root, relPath, src string) error {
 		return err
 	}
 	return f.RealFS.CopyWithinRoot(root, relPath, src)
+}
+
+func (f *faultingFS) CopyWithinRootOwned(root, relPath, src, owner string) error {
+	if err := f.hit(); err != nil {
+		return err
+	}
+	return f.RealFS.CopyWithinRootOwned(root, relPath, src, owner)
 }
 
 func (f *faultingFS) RemoveAllWithinRoot(root, relPath string) error {
@@ -480,6 +488,152 @@ func TestOverlayTxn_PreparedRecoverySynchronizesExcludeLedger(t *testing.T) {
 	}
 }
 
+// seedInstallTempLeftovers places an owned temp, as an interrupted install
+// leaves it, beside unrelated files that share monodev's temp prefixes.
+func seedInstallTempLeftovers(t *testing.T, fx overlayTxnFixture, dirRel string) (owned []string, unrelated []string) {
+	t.Helper()
+	dir := filepath.Join(fx.repoRoot, dirRel)
+	owner := overlayTempOwner(fx.workspaceID)
+	owned = []string{
+		filepath.Join(dir, ".monodev-copy-"+owner+"-1-2"),
+		filepath.Join(dir, ".monodev-aside-"+owner+"-1-3"),
+	}
+	writeTestFile(t, owned[0], "interrupted temp")
+	writeTestFile(t, filepath.Join(owned[1], "a.txt"), "interrupted aside")
+	unrelated = []string{
+		filepath.Join(dir, ".monodev-copy-user-notes"),
+		filepath.Join(dir, ".monodev-aside-keep", "notes.txt"),
+		filepath.Join(dir, ".monodev-copy-"+overlayTempOwner("other-workspace")+"-1-2"),
+		filepath.Join(dir, ".monodev-copy-123-456"),
+	}
+	for _, path := range unrelated {
+		writeTestFile(t, path, "must keep")
+	}
+	return owned, unrelated
+}
+
+func requireOwnedTempsSweptOnly(t *testing.T, owned, unrelated []string) {
+	t.Helper()
+	for _, path := range owned {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("owned temp %s survived, lstat err=%v", path, err)
+		}
+	}
+	for _, path := range unrelated {
+		assertFileContent(t, path, "must keep")
+	}
+}
+
+func TestOverlayTxn_RollbackSweepsOnlyOwnedTempsInsideWorkspace(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "nested/a.txt")
+	fx.requireUserFile(t, "nested/a.txt", "user-original")
+	owned, unrelated := seedInstallTempLeftovers(t, fx, "nested")
+	eng := fx.engine(t, nil, nil)
+
+	err := eng.runOverlayTxn(context.Background(), overlayTxnRequest{
+		kind:          overlayTxnApply,
+		workspaceID:   fx.workspaceID,
+		workspaceRoot: fx.repoRoot,
+		ops: []planner.Operation{{
+			Type:       planner.OpCopy,
+			SourcePath: filepath.Join(fx.overlayRoot, "nested", "a.txt"),
+			DestPath:   filepath.Join(fx.repoRoot, "nested", "a.txt"),
+			RelPath:    "nested/a.txt",
+		}},
+		finalize: func() (*state.WorkspaceState, bool, error) {
+			return nil, false, errors.New("injected finalize failure")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "injected finalize failure") {
+		t.Fatalf("runOverlayTxn error = %v, want injected finalize failure", err)
+	}
+	if got := fx.readWorkspace(t, "nested/a.txt"); got != "user-original" {
+		t.Fatalf("rolled back destination = %q, want user-original", got)
+	}
+	requireOwnedTempsSweptOnly(t, owned, unrelated)
+}
+
+func TestOverlayTxn_PreparedRecoverySweepsOnlyOwnedTemps(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "nested/a.txt")
+	owned, unrelated := seedInstallTempLeftovers(t, fx, "nested")
+	eng := fx.engine(t, nil, nil)
+	journalPath, _, err := eng.overlayTxnPaths(fx.workspaceID)
+	if err != nil {
+		t.Fatalf("journal paths: %v", err)
+	}
+	if err := eng.writeOverlayTxn(journalPath, &overlayTxn{
+		Kind:          overlayTxnApply,
+		WorkspaceID:   fx.workspaceID,
+		WorkspaceRoot: fx.repoRoot,
+		Phase:         overlayTxnPrepared,
+		Ops:           []overlayTxnOp{{RelPath: "nested/a.txt", Type: planner.OpCopy}},
+	}); err != nil {
+		t.Fatalf("write prepared journal: %v", err)
+	}
+
+	if err := eng.recoverOverlayTxn(context.Background(), fx.workspaceID, fx.repoRoot); err != nil {
+		t.Fatalf("recover prepared journal: %v", err)
+	}
+	requireOwnedTempsSweptOnly(t, owned, unrelated)
+	if _, err := os.Stat(journalPath); !os.IsNotExist(err) {
+		t.Fatalf("recovered journal still exists, stat err=%v", err)
+	}
+}
+
+// symlinkParentBeforeCopyFS redirects a destination parent outside the
+// workspace after prepare, so install and rollback meet a symlinked ancestor.
+type symlinkParentBeforeCopyFS struct {
+	*fsops.RealFS
+	parent, outside string
+}
+
+func (f *symlinkParentBeforeCopyFS) CopyWithinRootOwned(root, relPath, src, owner string) error {
+	if err := os.Symlink(f.outside, f.parent); err != nil {
+		return err
+	}
+	return f.RealFS.CopyWithinRootOwned(root, relPath, src, owner)
+}
+
+func TestOverlayTxn_RollbackRefusesSymlinkedAncestorWithoutTouchingOutside(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "nested/a.txt")
+	outside := t.TempDir()
+	owner := overlayTempOwner(fx.workspaceID)
+	sentinels := map[string]string{
+		filepath.Join(outside, ".monodev-copy-user-notes"):          "must keep",
+		filepath.Join(outside, ".monodev-aside-keep", "notes.txt"):  "must keep",
+		filepath.Join(outside, ".monodev-copy-"+owner+"-1-2"):       "outside owned-looking",
+		filepath.Join(outside, ".monodev-aside-"+owner+"-1-3", "x"): "outside owned-looking",
+		filepath.Join(outside, "unrelated.txt"):                     "must keep",
+	}
+	for path, content := range sentinels {
+		writeTestFile(t, path, content)
+	}
+	fs := &symlinkParentBeforeCopyFS{RealFS: fsops.NewRealFS(), parent: filepath.Join(fx.repoRoot, "nested"), outside: outside}
+	eng := fx.engine(t, fs, nil)
+
+	err := eng.runOverlayTxn(context.Background(), overlayTxnRequest{
+		kind:          overlayTxnApply,
+		workspaceID:   fx.workspaceID,
+		workspaceRoot: fx.repoRoot,
+		ops: []planner.Operation{{
+			Type:       planner.OpCopy,
+			SourcePath: filepath.Join(fx.overlayRoot, "nested", "a.txt"),
+			DestPath:   filepath.Join(fx.repoRoot, "nested", "a.txt"),
+			RelPath:    "nested/a.txt",
+		}},
+		finalize: func() (*state.WorkspaceState, bool, error) { return nil, false, nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
+		t.Fatalf("runOverlayTxn error = %v, want symlinked destination ancestor refusal", err)
+	}
+	for path, content := range sentinels {
+		assertFileContent(t, path, content)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "a.txt")); !os.IsNotExist(err) {
+		t.Fatalf("refused install wrote outside the workspace, lstat err=%v", err)
+	}
+}
+
 func runOverlayKind(t *testing.T, eng *Engine, fx overlayTxnFixture, kind string) error {
 	t.Helper()
 	switch kind {
@@ -503,6 +657,16 @@ type cancelAfterCopyFS struct {
 
 func (f *cancelAfterCopyFS) CopyWithinRoot(root, relPath, src string) error {
 	err := f.RealFS.CopyWithinRoot(root, relPath, src)
+	f.once.Do(func() {
+		if f.cancel != nil {
+			f.cancel()
+		}
+	})
+	return err
+}
+
+func (f *cancelAfterCopyFS) CopyWithinRootOwned(root, relPath, src, owner string) error {
+	err := f.RealFS.CopyWithinRootOwned(root, relPath, src, owner)
 	f.once.Do(func() {
 		if f.cancel != nil {
 			f.cancel()

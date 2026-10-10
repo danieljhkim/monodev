@@ -12,6 +12,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Temp names staged beside a destination while it is replaced.
+const (
+	copyTempPrefix  = ".monodev-copy-"
+	asideTempPrefix = ".monodev-aside-"
+)
+
 // Copy copies a file or directory from src to dst.
 //
 // Monodev-managed copies reject symlinks instead of following or preserving
@@ -204,6 +210,21 @@ func unsafeSymlinkError(relPath string) error {
 // so neither an existing symlink nor a concurrent replacement can redirect a
 // mutation outside the workspace or into aliased Git metadata.
 func (fs *RealFS) CopyWithinRoot(root, relPath, src string) error {
+	return fs.copyWithinRoot(root, relPath, src, "")
+}
+
+// CopyWithinRootOwned copies like CopyWithinRoot, but names every staged temp
+// and moved-aside destination after owner. RemoveOwnedTempsWithinRoot can then
+// sweep what an interrupted copy left behind without matching unrelated files
+// that merely share monodev's temp prefixes.
+func (fs *RealFS) CopyWithinRootOwned(root, relPath, src, owner string) error {
+	if err := validateTempOwner(owner); err != nil {
+		return err
+	}
+	return fs.copyWithinRoot(root, relPath, src, owner)
+}
+
+func (fs *RealFS) copyWithinRoot(root, relPath, src, owner string) error {
 	source, err := openCopySource(src)
 	if err != nil {
 		return err
@@ -232,7 +253,103 @@ func (fs *RealFS) CopyWithinRoot(root, relPath, src string) error {
 		return err
 	}
 	defer closeParent()
-	return fs.copyAt(source, parent, name, ".")
+	return fs.copyAt(source, parent, name, ".", owner)
+}
+
+// RemoveOwnedTempsWithinRoot removes the temps CopyWithinRootOwned staged for
+// owner directly beneath dirRel. The directory is opened one component at a
+// time without following symlinks, so a redirected ancestor is refused rather
+// than swept. Entries for other owners, unowned temps, and unrelated files that
+// share the temp prefixes are left untouched.
+func (fs *RealFS) RemoveOwnedTempsWithinRoot(root, dirRel, owner string) error {
+	if err := validateTempOwner(owner); err != nil {
+		return err
+	}
+	dirFD, closeDir, err := fs.openConfinedDir(root, dirRel)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer closeDir()
+
+	listFD, err := unix.Openat(dirFD, ".", unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open temp directory: %w", err)
+	}
+	dirFile := os.NewFile(uintptr(listFD), dirRel)
+	if dirFile == nil {
+		_ = unix.Close(listFD)
+		return fmt.Errorf("failed to open temp directory handle")
+	}
+	entries, err := dirFile.ReadDir(-1)
+	_ = dirFile.Close()
+	if err != nil {
+		return err
+	}
+
+	copyPrefix := ownedTempPrefix(copyTempPrefix, owner)
+	asidePrefix := ownedTempPrefix(asideTempPrefix, owner)
+	var errs []error
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, copyPrefix) && !strings.HasPrefix(name, asidePrefix) {
+			continue
+		}
+		if err := removeAllAt(dirFD, name); err != nil {
+			errs = append(errs, fmt.Errorf("failed to remove owned temp %q: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// openConfinedDir opens dirRel beneath root without following any symlinked
+// component. "." opens root itself.
+func (fs *RealFS) openConfinedDir(root, dirRel string) (int, func(), error) {
+	if filepath.Clean(dirRel) == "." {
+		rootFD, err := unix.Open(root, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+		if err != nil {
+			return -1, func() {}, fmt.Errorf("failed to open workspace root: %w", err)
+		}
+		return rootFD, func() { _ = unix.Close(rootFD) }, nil
+	}
+	parent, name, closeParent, err := fs.openConfinedParent(root, dirRel, false)
+	if err != nil {
+		return -1, func() {}, err
+	}
+	defer closeParent()
+	dirFD, err := unix.Openat(parent, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
+			return -1, func() {}, fmt.Errorf("unsafe symlinked destination ancestor %q", filepath.Clean(dirRel))
+		}
+		return -1, func() {}, fmt.Errorf("failed to open destination directory %q: %w", filepath.Clean(dirRel), err)
+	}
+	return dirFD, func() { _ = unix.Close(dirFD) }, nil
+}
+
+// validateTempOwner keeps owner tags to ASCII letters and digits so an owned
+// prefix can never contain a path separator or extend another owner's prefix.
+func validateTempOwner(owner string) error {
+	if owner == "" || len(owner) > 64 {
+		return fmt.Errorf("invalid temp owner %q", owner)
+	}
+	for _, r := range owner {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
+			return fmt.Errorf("invalid temp owner %q", owner)
+		}
+	}
+	return nil
+}
+
+// ownedTempPrefix returns prefix tagged with owner. An empty owner keeps the
+// shared prefix used by unowned copies.
+func ownedTempPrefix(prefix, owner string) string {
+	if owner == "" {
+		return prefix
+	}
+	return prefix + owner + "-"
 }
 
 // RemoveAllWithinRoot removes relPath without following any destination
@@ -345,19 +462,19 @@ func rejectGitAliasAt(dirFD int, name string) error {
 	return nil
 }
 
-func (fs *RealFS) copyAt(source *os.File, parentFD int, name, relPath string) error {
+func (fs *RealFS) copyAt(source *os.File, parentFD int, name, relPath, owner string) error {
 	info, err := source.Stat()
 	if err != nil {
 		return fmt.Errorf("failed to stat source: %w", err)
 	}
 	if info.IsDir() {
-		return fs.copyDirAt(source, parentFD, name, relPath)
+		return fs.copyDirAt(source, parentFD, name, relPath, owner)
 	}
-	return copyFileAt(source, parentFD, name, info.Mode())
+	return copyFileAt(source, parentFD, name, info.Mode(), owner)
 }
 
-func copyFileAt(srcFile *os.File, parentFD int, name string, mode os.FileMode) error {
-	tmpName, tmpFD, err := createExclusiveAt(parentFD, ".monodev-copy-", unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, uint32(privateFileMode(mode)))
+func copyFileAt(srcFile *os.File, parentFD int, name string, mode os.FileMode, owner string) error {
+	tmpName, tmpFD, err := createExclusiveAt(parentFD, ownedTempPrefix(copyTempPrefix, owner), unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, uint32(privateFileMode(mode)))
 	if err != nil {
 		return err
 	}
@@ -388,15 +505,15 @@ func copyFileAt(srcFile *os.File, parentFD int, name string, mode os.FileMode) e
 		return fmt.Errorf("failed to close staged copy: %w", err)
 	}
 
-	if err := replaceAt(parentFD, name, tmpName); err != nil {
+	if err := replaceAt(parentFD, name, tmpName, owner); err != nil {
 		return err
 	}
 	success = true
 	return nil
 }
 
-func (fs *RealFS) copyDirAt(source *os.File, parentFD int, name, relPath string) error {
-	tmpName, err := mkdirExclusiveAt(parentFD, ".monodev-copy-")
+func (fs *RealFS) copyDirAt(source *os.File, parentFD int, name, relPath, owner string) error {
+	tmpName, err := mkdirExclusiveAt(parentFD, ownedTempPrefix(copyTempPrefix, owner))
 	if err != nil {
 		return err
 	}
@@ -414,18 +531,18 @@ func (fs *RealFS) copyDirAt(source *os.File, parentFD int, name, relPath string)
 	defer func() { _ = unix.Close(tmpFD) }()
 
 	if err := walkSourceChildren(source, relPath, nil, func(child *os.File, _ os.FileInfo, childRel string) error {
-		return fs.copyAt(child, tmpFD, filepath.Base(childRel), childRel)
+		return fs.copyAt(child, tmpFD, filepath.Base(childRel), childRel, owner)
 	}); err != nil {
 		return err
 	}
-	if err := replaceAt(parentFD, name, tmpName); err != nil {
+	if err := replaceAt(parentFD, name, tmpName, owner); err != nil {
 		return err
 	}
 	success = true
 	return nil
 }
 
-func replaceAt(parentFD int, name, stagedName string) error {
+func replaceAt(parentFD int, name, stagedName, owner string) error {
 	_, exists, err := lstatAt(parentFD, name)
 	if err != nil {
 		return err
@@ -437,7 +554,7 @@ func replaceAt(parentFD int, name, stagedName string) error {
 		return nil
 	}
 
-	asideName, err := reserveNameAt(parentFD, ".monodev-aside-")
+	asideName, err := reserveNameAt(parentFD, ownedTempPrefix(asideTempPrefix, owner))
 	if err != nil {
 		return err
 	}

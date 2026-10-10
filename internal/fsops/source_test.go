@@ -116,7 +116,7 @@ func TestManagedSourceReplacementAfterPreflight(t *testing.T) {
 						t.Fatal(openErr)
 					}
 					defer func() { _ = unix.Close(fd) }()
-					err = NewRealFS().copyAt(handle, fd, "destination", ".")
+					err = NewRealFS().copyAt(handle, fd, "destination", ".", "")
 				} else {
 					if err := os.Mkdir(dst, 0700); err != nil {
 						t.Fatal(err)
