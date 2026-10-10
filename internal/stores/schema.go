@@ -3,6 +3,8 @@ package stores
 import (
 	"fmt"
 	"time"
+
+	"github.com/danieljhkim/monodev/internal/state"
 )
 
 const (
@@ -27,6 +29,30 @@ const (
 	OriginAgent = "agent"
 	OriginOther = "other"
 )
+
+// SupportedMetaSchemaVersion is the newest meta.json schema this binary can read.
+func SupportedMetaSchemaVersion() int {
+	return storeMetaSchemaVersion
+}
+
+// SupportedTrackSchemaVersion is the newest track.json schema this binary can read.
+func SupportedTrackSchemaVersion() int {
+	return trackFileSchemaVersion
+}
+
+// RefuseFutureStoreSchema rejects a store document whose schemaVersion is newer
+// than supported. The error names filePath, the found and supported versions,
+// and the action to upgrade monodev. A header that cannot be read is not an
+// error: a parsed document with no schemaVersion is legacy version zero, and
+// an unparseable document stays a later loader failure instead of a new pull
+// refusal.
+func RefuseFutureStoreSchema(filePath string, data []byte, supported int) error {
+	found, err := state.SchemaVersion(filePath, data)
+	if err != nil {
+		return nil
+	}
+	return state.ValidateSchemaVersion(filePath, found, supported)
+}
 
 // ScopedStore wraps a store with its scope location.
 type ScopedStore struct {

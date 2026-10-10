@@ -3,6 +3,7 @@ package persist
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -738,6 +739,98 @@ func TestSnapshotManager_VerifyLegacyManifestFixtureAndRejectsFutureSchema(t *te
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Verify() error = %q, want %q", err, want)
 		}
+	}
+}
+
+func TestSnapshotManager_CheckIncomingStoreSchemas(t *testing.T) {
+	newStore := func(t *testing.T) (persistRoot, storePath string, mgr *SnapshotManager) {
+		t.Helper()
+		storesDir, root, _, repo, manager := setupTestEnv(t)
+		t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(storesDir)) })
+		const storeID = "schema-store"
+		createTestStore(t, repo, storeID)
+		if err := manager.Materialize(storeID, repo, root); err != nil {
+			t.Fatalf("Materialize: %v", err)
+		}
+		local := filepath.Join(repo.OverlayRoot(storeID), "test.txt")
+		before, err := os.ReadFile(local)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			after, err := os.ReadFile(local)
+			if err != nil || string(after) != string(before) {
+				t.Errorf("local store changed to %q, %v", after, err)
+			}
+		})
+		return root, persistStoreDir(root, storeID), manager
+	}
+
+	t.Run("accepts the supported store", func(t *testing.T) {
+		persistRoot, _, mgr := newStore(t)
+		if err := mgr.CheckIncomingStoreSchemas("schema-store", persistRoot); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("accepts a missing track file", func(t *testing.T) {
+		persistRoot, storePath, mgr := newStore(t)
+		if err := os.Remove(filepath.Join(storePath, "track.json")); err != nil {
+			t.Fatal(err)
+		}
+		if err := mgr.CheckIncomingStoreSchemas("schema-store", persistRoot); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("accepts legacy and unparseable headers", func(t *testing.T) {
+		persistRoot, storePath, mgr := newStore(t)
+		metaPath := filepath.Join(storePath, "meta.json")
+		for _, document := range []string{
+			`{"schemaVersion":1,"name":"legacy"}`,
+			`{"name":"legacy-zero"}`,
+			`{"schemaVersion":`,
+		} {
+			if err := os.WriteFile(metaPath, []byte(document), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := mgr.CheckIncomingStoreSchemas("schema-store", persistRoot); err != nil {
+				t.Errorf("document %q: %v", document, err)
+			}
+		}
+	})
+
+	for _, document := range []string{"meta.json", "track.json"} {
+		t.Run("refuses future "+document, func(t *testing.T) {
+			persistRoot, storePath, mgr := newStore(t)
+			supported := stores.SupportedMetaSchemaVersion()
+			if document == "track.json" {
+				supported = stores.SupportedTrackSchemaVersion()
+			}
+			future := supported + 1
+			path := filepath.Join(storePath, document)
+			payload := fmt.Sprintf(`{"schemaVersion":%d}`, future)
+			if err := os.WriteFile(path, []byte(payload), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(storePath, verificationManifestName)); err != nil {
+				t.Fatal(err)
+			}
+			err := mgr.CheckIncomingStoreSchemas("schema-store", persistRoot)
+			if err == nil {
+				t.Fatal("error = nil, want future schema refusal")
+			}
+			for _, want := range []string{
+				path,
+				fmt.Sprintf("schemaVersion %d", future),
+				fmt.Sprintf("supported schemaVersion %d", supported),
+				"upgrade monodev",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+		})
 	}
 }
 

@@ -111,6 +111,246 @@ func rewriteManifestHash(t *testing.T, manifestPath, targetPath, newHash string)
 	}
 }
 
+func rewritePersistedSchema(t *testing.T, persistStorePath, name string, version int, withManifest bool) string {
+	t.Helper()
+
+	path := filepath.Join(persistStorePath, name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("failed to decode %s: %v", path, err)
+	}
+	doc["schemaVersion"] = version
+	encoded, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to encode %s: %v", path, err)
+	}
+	encoded = append(encoded, '\n')
+	if err := os.WriteFile(path, encoded, 0644); err != nil {
+		t.Fatalf("failed to write %s: %v", path, err)
+	}
+
+	manifestPath := filepath.Join(persistStorePath, "verification-manifest.json")
+	if !withManifest {
+		if err := os.Remove(manifestPath); err != nil {
+			t.Fatalf("failed to remove manifest: %v", err)
+		}
+		return path
+	}
+	sum, err := hash.NewSHA256Hasher().HashFile(path)
+	if err != nil {
+		t.Fatalf("failed to hash %s: %v", path, err)
+	}
+	rewriteManifestHash(t, manifestPath, name, sum)
+	return path
+}
+
+func assertFutureSchemaRefusal(t *testing.T, err error, path string, found, supported int) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatal("expected future schema refusal, got nil")
+	}
+	if errors.Is(err, ErrPulledContentChanged) {
+		t.Fatalf("schema refusal returned content-changed error: %v", err)
+	}
+	for _, want := range []string{
+		path,
+		fmt.Sprintf("schemaVersion %d", found),
+		fmt.Sprintf("supported schemaVersion %d", supported),
+		"upgrade monodev",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func keepLocalStoreForPull(t *testing.T, repoRoot string, snapshotMgr *persist.SnapshotManager, storeRepo *fakeStoreRepo, storeID, sentinel string) (localFile, persistStorePath string) {
+	t.Helper()
+
+	meta := stores.NewStoreMeta("Remote Store", time.Now())
+	if err := storeRepo.Create(storeID, meta); err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	overlayDir := storeRepo.OverlayRoot(storeID)
+	if err := os.MkdirAll(overlayDir, 0755); err != nil {
+		t.Fatalf("failed to create overlay dir: %v", err)
+	}
+	localFile = filepath.Join(overlayDir, "remote.txt")
+	if err := os.WriteFile(localFile, []byte("remote content"), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+	if err := snapshotMgr.Materialize(storeID, storeRepo, repoRoot); err != nil {
+		t.Fatalf("failed to materialize: %v", err)
+	}
+	if err := os.WriteFile(localFile, []byte(sentinel), 0644); err != nil {
+		t.Fatalf("failed to write sentinel: %v", err)
+	}
+	persistStorePath = filepath.Join(repoRoot, ".monodev", "persist", "stores", storeID)
+	return localFile, persistStorePath
+}
+
+func supportedSchemaFor(document string) int {
+	if document == "track.json" {
+		return stores.SupportedTrackSchemaVersion()
+	}
+	return stores.SupportedMetaSchemaVersion()
+}
+
+func TestSyncer_PullStoreRefusesFutureStoreSchemaBeforeReplacingLocal(t *testing.T) {
+	tests := []struct {
+		name         string
+		document     string
+		withManifest bool
+		firstTime    bool
+	}{
+		{name: "future meta with manifest on first pull", document: "meta.json", withManifest: true, firstTime: true},
+		{name: "future meta with manifest on forced overwrite", document: "meta.json", withManifest: true, firstTime: false},
+		{name: "future meta without manifest on first pull", document: "meta.json", withManifest: false, firstTime: true},
+		{name: "future meta without manifest on forced overwrite", document: "meta.json", withManifest: false, firstTime: false},
+		{name: "future track with manifest on first pull", document: "track.json", withManifest: true, firstTime: true},
+		{name: "future track with manifest on forced overwrite", document: "track.json", withManifest: true, firstTime: false},
+		{name: "future track without manifest on first pull", document: "track.json", withManifest: false, firstTime: true},
+		{name: "future track without manifest on forced overwrite", document: "track.json", withManifest: false, firstTime: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+			defer cleanup()
+			savePullRemoteConfig(t, repoRoot, configStore)
+
+			const storeID = "remote-store"
+			const sentinel = "local sentinel"
+			supported := supportedSchemaFor(tt.document)
+			future := supported + 1
+
+			var localFile, persistStorePath, storeDir string
+			if tt.firstTime {
+				storeDir, persistStorePath = stagePersistedStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, storeID)
+			} else {
+				localFile, persistStorePath = keepLocalStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, storeID, sentinel)
+				storeDir = filepath.Dir(filepath.Dir(localFile))
+			}
+			schemaPath := rewritePersistedSchema(t, persistStorePath, tt.document, future, tt.withManifest)
+
+			verifyErr := syncer.snapshotMgr.Verify(storeID, repoRoot, hash.NewSHA256Hasher())
+			if tt.withManifest {
+				if verifyErr != nil {
+					t.Fatalf("manifest should certify the future schema bytes: %v", verifyErr)
+				}
+			} else if !errors.Is(verifyErr, persist.ErrVerificationManifestMissing) {
+				t.Fatalf("Verify() = %v, want missing manifest", verifyErr)
+			}
+
+			_, err := syncer.PullStore(context.Background(), &PullRequest{
+				RepoRoot: repoRoot,
+				StoreIDs: []string{storeID},
+				Force:    !tt.firstTime,
+			})
+			assertFutureSchemaRefusal(t, err, schemaPath, future, supported)
+
+			if tt.firstTime {
+				if _, statErr := os.Stat(storeDir); !os.IsNotExist(statErr) {
+					t.Fatalf("first-time refusal created local store, stat err = %v", statErr)
+				}
+				return
+			}
+			data, readErr := os.ReadFile(localFile)
+			if readErr != nil {
+				t.Fatalf("failed to read sentinel: %v", readErr)
+			}
+			if string(data) != sentinel {
+				t.Fatalf("local sentinel = %q, want %q", data, sentinel)
+			}
+			meta, readErr := os.ReadFile(filepath.Join(storeDir, "meta.json"))
+			if readErr != nil {
+				t.Fatalf("failed to read local meta: %v", readErr)
+			}
+			if strings.Contains(string(meta), fmt.Sprintf(`"schemaVersion": %d`, future)) {
+				t.Fatalf("local meta was replaced with future schema: %s", meta)
+			}
+		})
+	}
+}
+
+func TestSyncer_PullStoreRefusesFutureSchemaBeforeReplacingEarlierStores(t *testing.T) {
+	repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+	defer cleanup()
+	savePullRemoteConfig(t, repoRoot, configStore)
+
+	goodFile, _ := keepLocalStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, "good-store", "good-sentinel")
+	futureFile, futurePersist := keepLocalStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, "future-store", "future-sentinel")
+	futureVersion := stores.SupportedMetaSchemaVersion() + 1
+	schemaPath := rewritePersistedSchema(t, futurePersist, "meta.json", futureVersion, true)
+
+	_, err := syncer.PullStore(context.Background(), &PullRequest{
+		RepoRoot: repoRoot,
+		StoreIDs: []string{"good-store", "future-store"},
+		Force:    true,
+	})
+	assertFutureSchemaRefusal(t, err, schemaPath, futureVersion, stores.SupportedMetaSchemaVersion())
+
+	for _, sentinel := range []struct {
+		path string
+		want string
+	}{
+		{path: goodFile, want: "good-sentinel"},
+		{path: futureFile, want: "future-sentinel"},
+	} {
+		data, readErr := os.ReadFile(sentinel.path)
+		if readErr != nil {
+			t.Fatalf("failed to read %s: %v", sentinel.path, readErr)
+		}
+		if string(data) != sentinel.want {
+			t.Fatalf("%s = %q, want %q", sentinel.path, data, sentinel.want)
+		}
+	}
+}
+
+func TestSyncer_PullStoreUnparseableHeaderStaysPullable(t *testing.T) {
+	repoRoot, _, syncer, _, storeRepo, configStore, cleanup := setupSyncerTest(t)
+	defer cleanup()
+	savePullRemoteConfig(t, repoRoot, configStore)
+
+	const storeID = "remote-store"
+	storeDir, persistStorePath := stagePersistedStoreForPull(t, repoRoot, syncer.snapshotMgr, storeRepo, storeID)
+	metaPath := filepath.Join(persistStorePath, "meta.json")
+	if err := os.WriteFile(metaPath, []byte("not-json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := hash.NewSHA256Hasher().HashFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewriteManifestHash(t, filepath.Join(persistStorePath, "verification-manifest.json"), "meta.json", sum)
+	if err := syncer.snapshotMgr.Verify(storeID, repoRoot, hash.NewSHA256Hasher()); err != nil {
+		t.Fatalf("unparseable header should still have a valid manifest: %v", err)
+	}
+
+	result, err := syncer.PullStore(context.Background(), &PullRequest{
+		RepoRoot: repoRoot,
+		StoreIDs: []string{storeID},
+	})
+	if err != nil {
+		t.Fatalf("unparseable header became a pull failure: %v", err)
+	}
+	if !result.Verified {
+		t.Fatal("Verified = false, want true")
+	}
+	got, err := os.ReadFile(filepath.Join(storeDir, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "not-json" {
+		t.Fatalf("pulled meta = %q, want unparseable bytes", got)
+	}
+}
+
 func TestSyncer_PullStore(t *testing.T) {
 	t.Run("pulls stores successfully", func(t *testing.T) {
 		repoRoot, _, syncer, git, storeRepo, configStore, cleanup := setupSyncerTest(t)
