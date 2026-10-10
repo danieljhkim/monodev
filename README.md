@@ -4,8 +4,8 @@ Coding agents leave files in your repo that don't belong in git: `.claude/`,
 `AGENTS.md`, `.cursorrules`, scratch scripts, local env files. Commit them and
 they pollute history; delete them and you lose the context.
 
-A monodev **store** holds them and overlays them onto your checkout. The
-files are on disk for you and your agents, and git never sees them.
+A monodev **store** keeps them outside git. Unapply them for a clean checkout,
+and apply them again whenever you or an agent need them, hidden from git.
 
 ```console
 $ git status --short
@@ -19,16 +19,20 @@ $ git status --short
 monodev checkout -n agent-context   # create and activate a store
 monodev track --agents              # track the agent paths that exist
 monodev track debug_helper.py
-monodev commit --all                # copy tracked paths into the store
-monodev apply                       # overlay the store and hide it from git
+monodev save                        # snapshot tracked paths into the store
+monodev unapply                     # remove them from the checkout
 ```
 
-`git status` is now clean, and the files are still on disk.
+The files are gone and `git status` is clean. Bring them back later with:
+
+```bash
+monodev apply                       # restore them, hidden from git
+```
 
 `apply` copies the store's files into the working tree and lists them in a
-managed block in `.git/info/exclude`. `unapply` removes the copies; the store
-keeps them, and a bare `apply` brings them back. Stores can be pushed to an orphan branch (`monodev/persist`) so
-they follow you to other clones without touching `main`.
+managed block in `.git/info/exclude`, so they stay out of `git status` while
+applied. Stores can be pushed to an orphan branch (`monodev/persist`) so they
+follow you to other clones without touching `main`.
 
 ![monodev preview](docs/assets/cli_preview.png)
 

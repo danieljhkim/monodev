@@ -10,15 +10,18 @@ import (
 
 var (
 	// Color functions - will be nil if output is not a TTY
-	successColor   = color.New(color.FgGreen, color.Bold)
-	warningColor   = color.New(color.FgYellow, color.Bold)
-	errorColor     = color.New(color.FgRed, color.Bold)
-	infoColor      = color.New(color.FgCyan)
-	headerColor    = color.New(color.FgBlue, color.Bold)
-	subHeaderColor = color.New(color.FgHiBlue)
-	labelColor     = color.New(color.FgWhite)
-	valueColor     = color.New(color.FgHiBlack)
-	dimColor       = color.New(color.FgHiBlack)
+	successColor     = color.New(color.FgGreen, color.Bold)
+	warningColor     = color.New(color.FgYellow, color.Bold)
+	errorColor       = color.New(color.FgRed, color.Bold)
+	infoColor        = color.New(color.FgCyan)
+	headerColor      = color.New(color.FgBlue, color.Bold)
+	tableHeaderColor = color.New(color.FgCyan, color.Bold)
+	subHeaderColor   = color.New(color.FgHiBlue)
+	// Labels and values use the terminal's default foreground so primary data
+	// stays readable on light and dark themes; only secondary text is dimmed.
+	labelColor = color.New(color.Bold)
+	valueColor = color.New(color.Reset)
+	dimColor   = color.New(color.FgHiBlack)
 )
 
 // initColors initializes color output - fatih/color handles TTY detection automatically
@@ -126,7 +129,7 @@ func PrintTable(headers []string, rows [][]string) {
 		if i > 0 {
 			fmt.Print("  ")
 		}
-		_, _ = infoColor.Printf("%-*s", colWidths[i], header)
+		_, _ = tableHeaderColor.Printf("%-*s", colWidths[i], header)
 	}
 	fmt.Println()
 
@@ -136,7 +139,7 @@ func PrintTable(headers []string, rows [][]string) {
 		if i > 0 {
 			fmt.Print("  ")
 		}
-		fmt.Print(strings.Repeat("-", width))
+		_, _ = dimColor.Print(strings.Repeat("-", width))
 	}
 	fmt.Println()
 
@@ -150,7 +153,11 @@ func PrintTable(headers []string, rows [][]string) {
 			if i > 0 {
 				fmt.Print("  ")
 			}
-			_, _ = valueColor.Printf("%-*s", colWidths[i], cell)
+			cellColor := valueColor
+			if cell == "-" {
+				cellColor = dimColor
+			}
+			_, _ = cellColor.Printf("%-*s", colWidths[i], cell)
 		}
 		fmt.Println()
 	}
@@ -171,7 +178,7 @@ func PrintBadge(text string, clr *color.Color) {
 // PrintSeparator prints a visual separator line
 func PrintSeparator() {
 	initColors()
-	_, _ = labelColor.Println("\n  ──────────────────────────────────────────────────────────────────────────────")
+	_, _ = dimColor.Println("\n  ──────────────────────────────────────────────────────────────────────────────")
 }
 
 // PrintCount prints a count with proper formatting
