@@ -49,6 +49,12 @@ func (fs *RealFS) copySource(src, dst string, excluded map[string]bool) error {
 	if !info.IsDir() {
 		return writeFileAtomically(dst, source, privateFileMode(info.Mode()))
 	}
+	// Staging is created in the destination parent and then the source tree is
+	// walked. A destination inside that tree would copy the staging directory
+	// into itself, so reject the relationship before creating any parent.
+	if err := rejectNestedDirectoryDestination(source, src, dst); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 		return fmt.Errorf("failed to create parent directory: %w", err)
@@ -205,6 +211,21 @@ func (fs *RealFS) CopyWithinRoot(root, relPath, src string) error {
 	defer func() { _ = source.Close() }()
 	if err := validateSourceHandle(source, ".", nil); err != nil {
 		return err
+	}
+	info, err := source.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat source: %w", err)
+	}
+	if info.IsDir() {
+		// openConfinedParent creates missing destination ancestors before
+		// copyDirAt stages inside the final parent. Reject a destination
+		// inside the source first, or that staging directory is walked.
+		if err := fs.ValidateRelPath(relPath); err != nil {
+			return err
+		}
+		if err := rejectNestedDirectoryDestination(source, src, filepath.Join(root, relPath)); err != nil {
+			return err
+		}
 	}
 	parent, name, closeParent, err := fs.openConfinedParent(root, relPath, true)
 	if err != nil {
@@ -528,6 +549,85 @@ func removeAllAt(parentFD int, name string) error {
 		return err
 	}
 	return nil
+}
+
+// rejectNestedDirectoryDestination stops a directory copy whose staging parent
+// would sit inside the source tree. Same-path replacement stays allowed: it
+// stages beside the source, in the source's parent, and then swaps the
+// finished tree into place. Nothing is created here.
+//
+// The nearest existing ancestor is resolved before the comparison. EvalSymlinks
+// is used only to learn where the destination write would land, including
+// symlink ancestors and the macOS /tmp, /var and /etc aliases. It is not a
+// source canonicalization: the copy still reads the pinned source descriptor.
+func rejectNestedDirectoryDestination(source *os.File, src, dst string) error {
+	var srcStat unix.Stat_t
+	if err := unix.Fstat(int(source.Fd()), &srcStat); err != nil {
+		return fmt.Errorf("failed to stat copy source: %w", err)
+	}
+	if !isDirectoryMode(uint32(srcStat.Mode)) {
+		return nil
+	}
+
+	absDst, err := filepath.Abs(dst)
+	if err != nil {
+		return fmt.Errorf("failed to resolve copy destination: %w", err)
+	}
+	stagingParent := filepath.Dir(filepath.Clean(absDst))
+	inside, err := pathIsInsideDirectory(srcStat, stagingParent)
+	if err != nil {
+		return err
+	}
+	if inside {
+		return fmt.Errorf("refusing to copy directory %q into its own descendant %q", src, dst)
+	}
+	return nil
+}
+
+// pathIsInsideDirectory reports whether path names the directory in srcStat
+// or a location inside it. Components that do not exist yet count as children
+// of the nearest existing ancestor. Symlinks on that ancestor are resolved so
+// an alias cannot hide containment. The path is not created.
+func pathIsInsideDirectory(srcStat unix.Stat_t, path string) (bool, error) {
+	current, err := filepath.Abs(path)
+	if err != nil {
+		return false, fmt.Errorf("failed to resolve destination ancestor: %w", err)
+	}
+	current = filepath.Clean(current)
+	for {
+		_, err := os.Lstat(current)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) {
+			return false, fmt.Errorf("failed to inspect destination ancestor %q: %w", current, err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false, fmt.Errorf("failed to inspect destination ancestor %q: no existing ancestor", path)
+		}
+		current = parent
+	}
+
+	resolved, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		return false, fmt.Errorf("failed to resolve destination ancestor %q: %w", current, err)
+	}
+	resolved = filepath.Clean(resolved)
+	for {
+		var st unix.Stat_t
+		if err := unix.Stat(resolved, &st); err != nil {
+			return false, fmt.Errorf("failed to inspect destination ancestor %q: %w", resolved, err)
+		}
+		if st.Dev == srcStat.Dev && st.Ino == srcStat.Ino {
+			return true, nil
+		}
+		parent := filepath.Dir(resolved)
+		if parent == resolved {
+			return false, nil
+		}
+		resolved = parent
+	}
 }
 
 func isDirectoryMode(mode uint32) bool {
