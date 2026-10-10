@@ -828,3 +828,172 @@ func TestApplyRejectsSymlinkedStoreSourceAncestor(t *testing.T) {
 		t.Fatalf("workspace changed to %q", got)
 	}
 }
+
+// seedPermissionedUserTree lays out user content whose permission bits differ from
+// anything a copy or temp file would produce by default.
+func (fx overlayTxnFixture) seedPermissionedUserTree(t *testing.T) map[string]os.FileMode {
+	t.Helper()
+	files := map[string]struct {
+		content string
+		mode    os.FileMode
+	}{
+		"bin/run.sh":        {"#!/bin/sh\n", 0755},
+		"bin/readonly.txt":  {"read-only\n", 0444},
+		"tree/inner.txt":    {"inner\n", 0640},
+		"tree/deep/leaf.sh": {"leaf\n", 0750},
+	}
+	for rel, f := range files {
+		path := filepath.Join(fx.repoRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(f.content), 0600); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+		if err := os.Chmod(path, f.mode); err != nil {
+			t.Fatalf("chmod %s: %v", rel, err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(fx.repoRoot, "readonly-dir"), 0700); err != nil {
+		t.Fatalf("mkdir readonly-dir: %v", err)
+	}
+	// Directory modes are set last, deepest first, so read-only parents do not
+	// block the setup.
+	dirs := map[string]os.FileMode{
+		"tree/deep":    0750,
+		"tree":         0710,
+		"readonly-dir": 0555,
+		"bin":          0750,
+	}
+	for _, rel := range []string{"tree/deep", "tree", "readonly-dir", "bin"} {
+		if err := os.Chmod(filepath.Join(fx.repoRoot, rel), dirs[rel]); err != nil {
+			t.Fatalf("chmod dir %s: %v", rel, err)
+		}
+	}
+	t.Cleanup(func() { makeTreeRemovable(fx.repoRoot) })
+
+	want := map[string]os.FileMode{}
+	for rel, f := range files {
+		want[rel] = f.mode
+	}
+	for rel, mode := range dirs {
+		want[rel] = mode
+	}
+	return want
+}
+
+func requirePermissionModes(t *testing.T, root string, want map[string]os.FileMode) {
+	t.Helper()
+	for rel, mode := range want {
+		info, err := os.Lstat(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		if got := info.Mode().Perm(); got != mode {
+			t.Errorf("%s mode = %04o, want %04o", rel, got, mode)
+		}
+	}
+}
+
+func permissionTxnOps(fx overlayTxnFixture) []planner.Operation {
+	return []planner.Operation{
+		{
+			Type:       planner.OpCopy,
+			SourcePath: filepath.Join(fx.overlayRoot, "a.txt"),
+			DestPath:   filepath.Join(fx.repoRoot, "bin", "run.sh"),
+			RelPath:    "bin/run.sh",
+		},
+		{
+			Type:       planner.OpCopy,
+			SourcePath: filepath.Join(fx.overlayRoot, "a.txt"),
+			DestPath:   filepath.Join(fx.repoRoot, "bin", "readonly.txt"),
+			RelPath:    "bin/readonly.txt",
+		},
+		{Type: planner.OpRemove, DestPath: filepath.Join(fx.repoRoot, "tree"), RelPath: "tree"},
+		{Type: planner.OpRemove, DestPath: filepath.Join(fx.repoRoot, "readonly-dir"), RelPath: "readonly-dir"},
+	}
+}
+
+func TestOverlayTxn_RollbackRestoresPermissionModes(t *testing.T) {
+	fx := newOverlayTxnFixture(t)
+	want := fx.seedPermissionedUserTree(t)
+	eng := fx.engine(t, nil, nil)
+
+	err := eng.runOverlayTxn(context.Background(), overlayTxnRequest{
+		kind:          overlayTxnApply,
+		workspaceID:   fx.workspaceID,
+		workspaceRoot: fx.repoRoot,
+		ops:           permissionTxnOps(fx),
+		finalize: func() (*state.WorkspaceState, bool, error) {
+			// The destinations were replaced and removed by now.
+			if _, statErr := os.Lstat(filepath.Join(fx.repoRoot, "tree")); !os.IsNotExist(statErr) {
+				t.Errorf("tree still exists before rollback, stat err=%v", statErr)
+			}
+			return nil, false, errors.New("injected finalize failure")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "injected finalize failure") {
+		t.Fatalf("runOverlayTxn error = %v, want injected finalize failure", err)
+	}
+
+	requirePermissionModes(t, fx.repoRoot, want)
+	if got := fx.readWorkspace(t, "bin/run.sh"); got != "#!/bin/sh\n" {
+		t.Fatalf("bin/run.sh content = %q, want original", got)
+	}
+	if got := fx.readWorkspace(t, "tree/deep/leaf.sh"); got != "leaf\n" {
+		t.Fatalf("tree/deep/leaf.sh content = %q, want original", got)
+	}
+	journalPath, txnDir, err := eng.overlayTxnPaths(fx.workspaceID)
+	if err != nil {
+		t.Fatalf("journal paths: %v", err)
+	}
+	for _, path := range []string{journalPath, txnDir} {
+		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("%s still exists after rollback, stat err=%v", path, statErr)
+		}
+	}
+}
+
+func TestOverlayTxn_InterruptedRecoveryRestoresPermissionModes(t *testing.T) {
+	fx := newOverlayTxnFixture(t)
+	want := fx.seedPermissionedUserTree(t)
+	eng := fx.engine(t, nil, nil)
+	journalPath, txnDir, err := eng.overlayTxnPaths(fx.workspaceID)
+	if err != nil {
+		t.Fatalf("journal paths: %v", err)
+	}
+	if err := os.MkdirAll(txnDir, 0700); err != nil {
+		t.Fatalf("mkdir txn dir: %v", err)
+	}
+
+	// Simulate a process that died after swapping every destination.
+	txn := overlayTxn{Kind: overlayTxnApply, WorkspaceID: fx.workspaceID, WorkspaceRoot: fx.repoRoot, Phase: overlayTxnPreparing}
+	for seq, op := range permissionTxnOps(fx) {
+		prepared, prepErr := eng.prepareOverlayOp(fx.repoRoot, txnDir, seq, op)
+		if prepErr != nil {
+			t.Fatalf("prepare %s: %v", op.RelPath, prepErr)
+		}
+		txn.Ops = append(txn.Ops, prepared)
+	}
+	txn.Phase = overlayTxnPrepared
+	if err := eng.writeOverlayTxn(journalPath, &txn); err != nil {
+		t.Fatalf("write journal: %v", err)
+	}
+	if err := eng.installOverlayTxn(context.Background(), &txn, fx.repoRoot, txnDir); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	// A fresh engine stands in for the restarted process.
+	if err := fx.engine(t, nil, nil).recoverOverlayTxn(context.Background(), fx.workspaceID, fx.repoRoot); err != nil {
+		t.Fatalf("recoverOverlayTxn: %v", err)
+	}
+	requirePermissionModes(t, fx.repoRoot, want)
+	if got := fx.readWorkspace(t, "bin/run.sh"); got != "#!/bin/sh\n" {
+		t.Fatalf("bin/run.sh content = %q, want original", got)
+	}
+	for _, path := range []string{journalPath, txnDir} {
+		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("%s still exists after recovery, stat err=%v", path, statErr)
+		}
+	}
+}

@@ -666,6 +666,69 @@ func TestRealFS_RestoreTreeWithinRoot_RecreatesNestedSymlinksAndReplacesLeafLink
 	assertNoStagingEntries(t, root)
 }
 
+func TestRealFS_RestoreTreeWithinRoot_PreservesPermissionModes(t *testing.T) {
+	fs := NewRealFS()
+	root := t.TempDir()
+	backup := filepath.Join(t.TempDir(), "backup", "dir")
+	modes := map[string]os.FileMode{
+		"exec.sh":          0755,
+		"readonly.txt":     0444,
+		"ro/inner.txt":     0640,
+		"ro/nested/in.txt": 0600,
+	}
+	for rel, mode := range modes {
+		path := filepath.Join(backup, filepath.FromSlash(rel))
+		writeCopyFixture(t, path, "content "+rel)
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dirModes := map[string]os.FileMode{"ro/nested": 0750, "ro": 0555, ".": 0710}
+	for _, rel := range []string{"ro/nested", "ro", "."} {
+		if err := os.Chmod(filepath.Join(backup, rel), dirModes[rel]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = filepath.Walk(filepath.Dir(backup), func(path string, info os.FileInfo, _ error) error {
+			if info != nil && info.IsDir() {
+				return os.Chmod(path, 0700)
+			}
+			return nil
+		})
+		_ = filepath.Walk(root, func(path string, info os.FileInfo, _ error) error {
+			if info != nil && info.IsDir() {
+				return os.Chmod(path, 0700)
+			}
+			return nil
+		})
+	})
+
+	if err := fs.RestoreTreeWithinRoot(root, "dir", backup, "txnA"); err != nil {
+		t.Fatalf("RestoreTreeWithinRoot failed: %v", err)
+	}
+	for rel, mode := range modes {
+		info, err := os.Stat(filepath.Join(root, "dir", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != mode {
+			t.Errorf("%s mode = %04o, want %04o", rel, info.Mode().Perm(), mode)
+		}
+		requireFixtureContent(t, filepath.Join(root, "dir", filepath.FromSlash(rel)), "content "+rel)
+	}
+	for rel, mode := range dirModes {
+		info, err := os.Stat(filepath.Join(root, "dir", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != mode {
+			t.Errorf("dir %s mode = %04o, want %04o", rel, info.Mode().Perm(), mode)
+		}
+	}
+	assertNoStagingEntries(t, root)
+}
+
 func TestRealFS_RestoreTreeWithinRoot_RefusesReplacedAncestor(t *testing.T) {
 	fs := NewRealFS()
 	backup := filepath.Join(t.TempDir(), "backup")

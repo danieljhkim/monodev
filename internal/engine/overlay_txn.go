@@ -159,6 +159,7 @@ func migrateOverlayTxnJSON(journalPath string, data []byte) ([]byte, bool, error
 }
 
 func (e *Engine) discardOverlayTxn(journalPath, txnDir string) error {
+	makeTreeRemovable(txnDir)
 	if err := e.fs.RemoveAll(txnDir); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove overlay transaction directory: %w", err)
 	}
@@ -520,6 +521,21 @@ func (e *Engine) backupDest(src, dst string) error {
 	return e.fs.Copy(src, dst)
 }
 
+// makeTreeRemovable reopens backed-up read-only directories so the transaction
+// directory can be deleted. Backups keep the original permission bits, and
+// WalkDir does not follow symlinks, so only directories inside root change.
+func makeTreeRemovable(root string) {
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			_ = os.Chmod(path, 0700)
+		}
+		return nil
+	})
+}
+
+// backupTree copies src to dst, keeping the permission bits of files and
+// directories so a restore returns what the user had. Directory modes are
+// applied after their children are written.
 func backupTree(src, dst string) error {
 	info, err := os.Lstat(src)
 	if err != nil {
@@ -548,7 +564,7 @@ func backupTree(src, dst string) error {
 				return err
 			}
 		}
-		return nil
+		return os.Chmod(dst, info.Mode().Perm())
 	}
 	return copyRegularFile(src, dst)
 }
@@ -576,6 +592,13 @@ func copyRegularFile(src, dst string) error {
 		}
 	}()
 	if _, err := io.Copy(tmp, srcFile); err != nil {
+		return err
+	}
+	info, err := srcFile.Stat()
+	if err != nil {
+		return err
+	}
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
