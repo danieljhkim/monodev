@@ -9,9 +9,11 @@ import (
 
 // scopedRepo looks up stores in both global and component scopes.
 // Existing stores are routed to the scope that already holds them (component
-// wins when both do). New stores are created in the component scope when it
-// is present, matching engine default-scope behavior after repo-local
-// `.monodev` exists (auto-created on first use, or via `monodev init`).
+// wins when both do). A lookup error is not absence: it is returned, and no
+// other scope is read, mutated, or locked in its place. New stores are
+// created in the component scope when it is present, matching engine
+// default-scope behavior after repo-local `.monodev` exists (auto-created on
+// first use, or via `monodev init`).
 type scopedRepo struct {
 	global    StoreRepo
 	component StoreRepo
@@ -55,18 +57,36 @@ func (r *scopedRepo) defaultRepo() StoreRepo {
 	return r.global
 }
 
-func (r *scopedRepo) repoFor(id string) StoreRepo {
+// repoFor selects the scope that serves id.
+// Component wins when that scope confirms the store exists. Global is used
+// only after the component scope confirms the store is absent. Exists errors
+// are returned so a failed lookup is never treated as absence and never
+// rerouted. When neither scope has the store, the default scope receives the
+// operation.
+func (r *scopedRepo) repoFor(id string) (StoreRepo, error) {
 	if r.component != nil {
-		if exists, err := r.component.Exists(id); err == nil && exists {
-			return r.component
+		exists, err := r.component.Exists(id)
+		if err != nil {
+			return nil, fmt.Errorf("component scope lookup for store %s: %w", id, err)
+		}
+		if exists {
+			return r.component, nil
 		}
 	}
 	if r.global != nil {
-		if exists, err := r.global.Exists(id); err == nil && exists {
-			return r.global
+		exists, err := r.global.Exists(id)
+		if err != nil {
+			return nil, fmt.Errorf("global scope lookup for store %s: %w", id, err)
+		}
+		if exists {
+			return r.global, nil
 		}
 	}
-	return r.defaultRepo()
+	repo := r.defaultRepo()
+	if repo == nil {
+		return nil, fmt.Errorf("no repo found for store %s", id)
+	}
+	return repo, nil
 }
 
 func (r *scopedRepo) List() ([]string, error) {
@@ -108,43 +128,71 @@ func (r *scopedRepo) Exists(id string) (bool, error) {
 }
 
 func (r *scopedRepo) Create(id string, meta *StoreMeta) error {
-	return r.repoFor(id).Create(id, meta)
+	repo, err := r.repoFor(id)
+	if err != nil {
+		return err
+	}
+	return repo.Create(id, meta)
 }
 
 func (r *scopedRepo) LoadMeta(id string) (*StoreMeta, error) {
-	return r.repoFor(id).LoadMeta(id)
+	repo, err := r.repoFor(id)
+	if err != nil {
+		return nil, err
+	}
+	return repo.LoadMeta(id)
 }
 
 func (r *scopedRepo) SaveMeta(id string, meta *StoreMeta) error {
-	return r.repoFor(id).SaveMeta(id, meta)
+	repo, err := r.repoFor(id)
+	if err != nil {
+		return err
+	}
+	return repo.SaveMeta(id, meta)
 }
 
 func (r *scopedRepo) LoadTrack(id string) (*TrackFile, error) {
-	return r.repoFor(id).LoadTrack(id)
+	repo, err := r.repoFor(id)
+	if err != nil {
+		return nil, err
+	}
+	return repo.LoadTrack(id)
 }
 
 func (r *scopedRepo) SaveTrack(id string, track *TrackFile) error {
-	return r.repoFor(id).SaveTrack(id, track)
+	repo, err := r.repoFor(id)
+	if err != nil {
+		return err
+	}
+	return repo.SaveTrack(id, track)
 }
 
+// OverlayRoot returns the overlay directory for the resolved scope.
+// A lookup error returns an empty string, the same safe failure FileStoreRepo
+// uses for an invalid store ID, so callers must reject that value before
+// deriving a path. Confirmed absence still resolves to the default scope.
 func (r *scopedRepo) OverlayRoot(id string) string {
-	repo := r.repoFor(id)
-	if repo == nil {
+	repo, err := r.repoFor(id)
+	if err != nil || repo == nil {
 		return ""
 	}
 	return repo.OverlayRoot(id)
 }
 
 func (r *scopedRepo) Delete(id string) error {
-	repo := r.repoFor(id)
-	if repo == nil {
-		return fmt.Errorf("no repo found for store %s", id)
+	repo, err := r.repoFor(id)
+	if err != nil {
+		return err
 	}
 	return repo.Delete(id)
 }
 
 func (r *scopedRepo) StoreLockKey(id string) (string, error) {
-	locker, ok := r.repoFor(id).(StoreLocker)
+	repo, err := r.repoFor(id)
+	if err != nil {
+		return "", err
+	}
+	locker, ok := repo.(StoreLocker)
 	if !ok {
 		return "", fmt.Errorf("%w: %s", ErrLockUnsupported, id)
 	}
@@ -152,7 +200,11 @@ func (r *scopedRepo) StoreLockKey(id string) (string, error) {
 }
 
 func (r *scopedRepo) LockStore(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error) {
-	locker, ok := r.repoFor(id).(StoreLocker)
+	repo, err := r.repoFor(id)
+	if err != nil {
+		return nil, err
+	}
+	locker, ok := repo.(StoreLocker)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrLockUnsupported, id)
 	}

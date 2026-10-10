@@ -31,6 +31,17 @@ func persistStoreDir(persistRoot, storeID string) string {
 	return filepath.Join(persistStoresDir(persistRoot), storeID)
 }
 
+// overlayStoreDir is the on-disk store directory, the parent of OverlayRoot.
+// An empty overlay path is the safe failure for an invalid ID or a scope
+// lookup error. Reject it before filepath.Dir, which would turn "" into ".".
+func overlayStoreDir(storeRepo stores.StoreRepo, storeID string) (string, error) {
+	overlayRoot := storeRepo.OverlayRoot(storeID)
+	if overlayRoot == "" {
+		return "", fmt.Errorf("store %q overlay path unavailable", storeID)
+	}
+	return filepath.Dir(overlayRoot), nil
+}
+
 // Materialize copies a store from ~/.monodev/stores/<store-id> to
 // .monodev/persist/stores/<store-id>/.
 func (s *SnapshotManager) Materialize(storeID string, storeRepo stores.StoreRepo, persistRoot string) error {
@@ -48,8 +59,12 @@ func (s *SnapshotManager) Materialize(storeID string, storeRepo stores.StoreRepo
 		return fmt.Errorf("store %q not found", storeID)
 	}
 
-	// Get the store path - overlay root's parent directory
-	storePath := filepath.Dir(storeRepo.OverlayRoot(storeID))
+	// Get the store path - overlay root's parent directory.
+	// Reject an unavailable overlay before deriving that parent.
+	storePath, err := overlayStoreDir(storeRepo, storeID)
+	if err != nil {
+		return err
+	}
 
 	// Destination path
 	dstPath := persistStoreDir(persistRoot, storeID)
@@ -101,8 +116,12 @@ func (s *SnapshotManager) Dematerialize(storeID string, persistRoot string, stor
 		return fmt.Errorf("store %q not found in persist directory at %s", storeID, srcPath)
 	}
 
-	// Destination path - overlay root's parent directory
-	dstPath := filepath.Dir(storeRepo.OverlayRoot(storeID))
+	// Destination path - overlay root's parent directory.
+	// Reject an unavailable overlay before deriving that parent.
+	dstPath, err := overlayStoreDir(storeRepo, storeID)
+	if err != nil {
+		return err
+	}
 
 	if err := fsops.ValidateCopySource(srcPath); err != nil {
 		return fmt.Errorf("persisted store %q contains an unsafe copy source: %w", storeID, err)

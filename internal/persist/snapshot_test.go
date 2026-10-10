@@ -879,6 +879,213 @@ func requireFileContent(t *testing.T, path, want string) {
 	}
 }
 
+type emptyOverlayRepo struct {
+	exists bool
+}
+
+func (emptyOverlayRepo) List() ([]string, error)       { return nil, nil }
+func (r emptyOverlayRepo) Exists(string) (bool, error) { return r.exists, nil }
+func (emptyOverlayRepo) Create(string, *stores.StoreMeta) error {
+	return errors.New("create called")
+}
+func (emptyOverlayRepo) LoadMeta(string) (*stores.StoreMeta, error) {
+	return nil, errors.New("load meta called")
+}
+func (emptyOverlayRepo) SaveMeta(string, *stores.StoreMeta) error {
+	return errors.New("save meta called")
+}
+func (emptyOverlayRepo) LoadTrack(string) (*stores.TrackFile, error) {
+	return nil, errors.New("load track called")
+}
+func (emptyOverlayRepo) SaveTrack(string, *stores.TrackFile) error {
+	return errors.New("save track called")
+}
+func (emptyOverlayRepo) OverlayRoot(string) string { return "" }
+func (emptyOverlayRepo) Delete(string) error       { return errors.New("delete called") }
+
+func TestSnapshotManager_RejectsEmptyOverlayBeforeDerivingPaths(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	sentinel := filepath.Join(dir, "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fs := fsops.NewRealFS()
+	mgr := NewSnapshotManager(fs)
+	repo := emptyOverlayRepo{exists: true}
+	persistRoot := filepath.Join(dir, "persist")
+	if err := os.MkdirAll(persistRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	const storeID = "store"
+	err = mgr.Materialize(storeID, repo, persistRoot)
+	if err == nil || !strings.Contains(err.Error(), "overlay path unavailable") {
+		t.Fatalf("Materialize err = %v, want overlay path unavailable", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(persistRoot, ".monodev")); !os.IsNotExist(statErr) {
+		t.Fatalf("materialize derived a destination from an empty overlay, stat err %v", statErr)
+	}
+	requireFileContent(t, sentinel, "keep")
+
+	src := persistStoreDir(persistRoot, storeID)
+	if err := os.MkdirAll(filepath.Join(src, "overlay"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "meta.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "overlay", "file.txt"), []byte("persisted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = mgr.Dematerialize(storeID, persistRoot, repo)
+	if err == nil || !strings.Contains(err.Error(), "overlay path unavailable") {
+		t.Fatalf("Dematerialize err = %v, want overlay path unavailable", err)
+	}
+	requireFileContent(t, sentinel, "keep")
+	requireFileContent(t, filepath.Join(src, "overlay", "file.txt"), "persisted")
+
+	changed, err := mgr.DiffAgainstLocalCopy(storeID, persistRoot, repo, nil)
+	if err == nil || changed != nil || !strings.Contains(err.Error(), "overlay path unavailable") {
+		t.Fatalf("DiffAgainstLocalCopy = %v, %v; want overlay path unavailable", changed, err)
+	}
+}
+
+func TestSnapshotManager_ScopedRoutingPreservesScope(t *testing.T) {
+	fs := fsops.NewRealFS()
+	globalDir := t.TempDir()
+	componentDir := t.TempDir()
+	global := stores.NewFileStoreRepo(fs, globalDir)
+	component := stores.NewFileStoreRepo(fs, componentDir)
+	repo := stores.NewScopedRepo(global, component)
+	mgr := NewSnapshotManager(fs)
+	persistRoot := t.TempDir()
+	now := time.Now()
+
+	writeMarker := func(t *testing.T, store stores.StoreRepo, id, body string) {
+		t.Helper()
+		path := filepath.Join(store.OverlayRoot(id), "marker.txt")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write marker: %v", err)
+		}
+	}
+	readMarker := func(t *testing.T, path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read marker %s: %v", path, err)
+		}
+		return string(data)
+	}
+
+	t.Run("same id materializes the component store", func(t *testing.T) {
+		if err := global.Create("shared", stores.NewStoreMeta("GLOBAL", now)); err != nil {
+			t.Fatal(err)
+		}
+		if err := component.Create("shared", stores.NewStoreMeta("COMPONENT", now)); err != nil {
+			t.Fatal(err)
+		}
+		writeMarker(t, global, "shared", "GLOBAL")
+		writeMarker(t, component, "shared", "COMPONENT")
+
+		if err := mgr.Materialize("shared", repo, persistRoot); err != nil {
+			t.Fatal(err)
+		}
+		persisted := persistStoreDir(persistRoot, "shared")
+		if got := readMarker(t, filepath.Join(persisted, "overlay", "marker.txt")); got != "COMPONENT" {
+			t.Fatalf("persisted marker = %q, want COMPONENT", got)
+		}
+	})
+
+	t.Run("confirmed missing component store falls back to global", func(t *testing.T) {
+		if err := global.Create("only-global", stores.NewStoreMeta("GLOBAL", now)); err != nil {
+			t.Fatal(err)
+		}
+		writeMarker(t, global, "only-global", "OLD")
+		if err := mgr.Materialize("only-global", repo, persistRoot); err != nil {
+			t.Fatal(err)
+		}
+		persistedMarker := filepath.Join(persistStoreDir(persistRoot, "only-global"), "overlay", "marker.txt")
+		if err := os.WriteFile(persistedMarker, []byte("NEW"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := mgr.Dematerialize("only-global", persistRoot, repo); err != nil {
+			t.Fatal(err)
+		}
+		if got := readMarker(t, filepath.Join(global.OverlayRoot("only-global"), "marker.txt")); got != "NEW" {
+			t.Fatalf("global marker = %q, want NEW", got)
+		}
+		if _, err := os.Stat(filepath.Join(componentDir, "only-global")); !os.IsNotExist(err) {
+			t.Fatalf("fallback wrote the component scope: %v", err)
+		}
+	})
+
+	t.Run("component lookup error does not rewrite global", func(t *testing.T) {
+		if os.Geteuid() <= 0 {
+			t.Skip("directory search permission is not enforced for this user")
+		}
+		if err := global.Create("hidden", stores.NewStoreMeta("GLOBAL", now)); err != nil {
+			t.Fatal(err)
+		}
+		if err := component.Create("hidden", stores.NewStoreMeta("COMPONENT", now)); err != nil {
+			t.Fatal(err)
+		}
+		writeMarker(t, global, "hidden", "GLOBAL")
+		writeMarker(t, component, "hidden", "COMPONENT")
+		if err := mgr.Materialize("hidden", repo, persistRoot); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.Chmod(componentDir, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(componentDir, 0o700) })
+
+		persistedMarker := filepath.Join(persistStoreDir(persistRoot, "hidden"), "overlay", "marker.txt")
+		if err := os.WriteFile(persistedMarker, []byte("WRONG"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		err := mgr.Dematerialize("hidden", persistRoot, repo)
+		if err == nil || !strings.Contains(err.Error(), "overlay path unavailable") {
+			t.Fatalf("Dematerialize err = %v, want overlay path unavailable", err)
+		}
+		if got := readMarker(t, filepath.Join(globalDir, "hidden", "overlay", "marker.txt")); got != "GLOBAL" {
+			t.Fatalf("global marker = %q, want GLOBAL", got)
+		}
+
+		err = mgr.Materialize("hidden", repo, persistRoot)
+		if !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("Materialize err = %v, want permission denied", err)
+		}
+		if got := readMarker(t, persistedMarker); got != "WRONG" {
+			t.Fatalf("persisted marker = %q, want WRONG (materialize must not copy another scope)", got)
+		}
+
+		changed, err := mgr.DiffAgainstLocalCopy("hidden", persistRoot, repo, hash.NewSHA256Hasher())
+		if err == nil || changed != nil || !strings.Contains(err.Error(), "overlay path unavailable") {
+			t.Fatalf("DiffAgainstLocalCopy = %v, %v; want overlay path unavailable", changed, err)
+		}
+
+		if err := os.Chmod(componentDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if got := readMarker(t, filepath.Join(componentDir, "hidden", "overlay", "marker.txt")); got != "COMPONENT" {
+			t.Fatalf("component marker = %q, want COMPONENT", got)
+		}
+	})
+}
+
 func requireNoSnapshotTempDirs(t *testing.T, parent string) {
 	t.Helper()
 

@@ -104,7 +104,10 @@ func (s *SnapshotManager) DiffAgainstLocalCopy(storeID, persistRoot string, stor
 		return nil, fmt.Errorf("invalid store ID: %w", err)
 	}
 
-	localPath := filepath.Dir(storeRepo.OverlayRoot(storeID))
+	localPath, err := overlayStoreDir(storeRepo, storeID)
+	if err != nil {
+		return nil, err
+	}
 
 	// Check the local store directory directly rather than going through
 	// storeRepo's own bookkeeping: what matters here is whether there is
