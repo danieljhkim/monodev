@@ -27,6 +27,10 @@ type FS interface {
 	// MkdirAll creates a directory and all parent directories.
 	MkdirAll(path string, perm os.FileMode) error
 
+	// Mkdir creates one directory, failing with os.ErrExist if path already
+	// exists. On error it does not create the directory.
+	Mkdir(path string, perm os.FileMode) error
+
 	// Remove removes a file or empty directory.
 	Remove(path string) error
 
@@ -96,6 +100,11 @@ func (fs *RealFS) Readlink(path string) (string, error) {
 // MkdirAll creates a directory and all parent directories.
 func (fs *RealFS) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
+}
+
+// Mkdir creates a directory only if its name is not already occupied.
+func (fs *RealFS) Mkdir(path string, perm os.FileMode) error {
+	return os.Mkdir(path, perm)
 }
 
 // Remove removes a file or empty directory.

@@ -64,6 +64,17 @@ func (fs *testFS) Readlink(path string) (string, error) {
 	return "", os.ErrInvalid
 }
 
+func (fs *testFS) Mkdir(path string, perm os.FileMode) error {
+	if exists, _ := fs.Exists(path); exists {
+		return os.ErrExist
+	}
+	if !fs.dirs[filepath.Dir(path)] {
+		return os.ErrNotExist
+	}
+	fs.dirs[path] = true
+	return nil
+}
+
 func (fs *testFS) MkdirAll(path string, perm os.FileMode) error {
 	fs.dirs[path] = true
 	// Also create parent directories

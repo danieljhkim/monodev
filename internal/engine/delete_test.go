@@ -87,6 +87,7 @@ type mockFS struct{}
 func (m *mockFS) ReadFile(path string) ([]byte, error)                         { return nil, nil }
 func (m *mockFS) AtomicWrite(path string, data []byte, perm os.FileMode) error { return nil }
 func (m *mockFS) Exists(path string) (bool, error)                             { return false, nil }
+func (m *mockFS) Mkdir(path string, perm os.FileMode) error                    { return nil }
 func (m *mockFS) MkdirAll(path string, perm os.FileMode) error                 { return nil }
 func (m *mockFS) Remove(path string) error                                     { return nil }
 func (m *mockFS) RemoveAll(path string) error                                  { return nil }

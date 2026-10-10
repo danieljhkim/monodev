@@ -36,6 +36,8 @@ func (fs *stateStoreValidationFS) Readlink(path string) (string, error) {
 	return "", fs.touch()
 }
 
+func (fs *stateStoreValidationFS) Mkdir(path string, perm os.FileMode) error { return fs.touch() }
+
 func (fs *stateStoreValidationFS) MkdirAll(path string, perm os.FileMode) error {
 	return fs.touch()
 }

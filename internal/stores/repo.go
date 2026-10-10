@@ -139,7 +139,7 @@ func (r *FileStoreRepo) Exists(id string) (bool, error) {
 }
 
 // Create creates a new store with the given ID and metadata.
-func (r *FileStoreRepo) Create(id string, meta *StoreMeta) error {
+func (r *FileStoreRepo) Create(id string, meta *StoreMeta) (err error) {
 	if err := r.validateStoreID(id); err != nil {
 		return err
 	}
@@ -155,10 +155,28 @@ func (r *FileStoreRepo) Create(id string, meta *StoreMeta) error {
 		return fmt.Errorf("store already exists: %s", id)
 	}
 
-	// Create store directory
-	if err := r.fs.MkdirAll(storePath, 0700); err != nil {
+	if err := r.fs.MkdirAll(r.storesDir, 0700); err != nil {
+		return fmt.Errorf("failed to create stores directory: %w", err)
+	}
+
+	// Claim the name exclusively. MkdirAll would let concurrent creators
+	// both succeed, allowing the losing attempt's rollback to delete the winner.
+	if err := r.fs.Mkdir(storePath, 0700); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("store already exists: %s", id)
+		}
 		return fmt.Errorf("failed to create store directory: %w", err)
 	}
+	// Only this attempt owns the directory. Roll back every subsequent failure,
+	// including a partially completed overlay or atomic write. Engine callers
+	// hold the store transaction lock against delete/replace while we do this.
+	defer func() {
+		if err != nil {
+			if cleanupErr := r.fs.RemoveAll(storePath); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("failed to roll back store %s: %w", id, cleanupErr))
+			}
+		}
+	}()
 
 	// Create overlay directory
 	overlayPath := filepath.Join(storePath, "overlay")

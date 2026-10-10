@@ -66,6 +66,7 @@ func (m *mockFS) Readlink(path string) (string, error) {
 }
 
 // Unused methods for mockFS
+func (m *mockFS) Mkdir(path string, perm os.FileMode) error                    { return nil }
 func (m *mockFS) MkdirAll(path string, perm os.FileMode) error                 { return nil }
 func (m *mockFS) Remove(path string) error                                     { return nil }
 func (m *mockFS) RemoveAll(path string) error                                  { return nil }
