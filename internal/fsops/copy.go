@@ -190,7 +190,7 @@ func privateFileMode(mode os.FileMode) os.FileMode {
 }
 
 // ValidateCopySource enforces monodev's managed-copy symlink policy before any
-// destination mutation happens. Symlinks are rejected by relative path so store
+// destination mutation happens. Errors name the absolute offending path so store
 // snapshot operations never read link targets across local/persist boundaries.
 func ValidateCopySource(src string) error {
 	source, err := openCopySource(src)

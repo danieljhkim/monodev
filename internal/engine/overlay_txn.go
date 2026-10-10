@@ -360,7 +360,11 @@ func (e *Engine) prepareOverlayOp(workspaceRoot, txnDir string, seq int, op plan
 			// Index by operation so an ancestor backup cannot replace a
 			// descendant operation's backup tree.
 			prepared.BackupRel = filepath.ToSlash(filepath.Join("backup", strconv.Itoa(seq), op.RelPath))
-			if err := e.backupDest(absDest, filepath.Join(txnDir, filepath.FromSlash(prepared.BackupRel))); err != nil {
+			backupSource, err := fsops.SourcePath(e.fs, workspaceRoot, absDest)
+			if err != nil {
+				return overlayTxnOp{}, fmt.Errorf("failed to resolve backup source %s: %w", op.RelPath, err)
+			}
+			if err := e.backupDest(backupSource, filepath.Join(txnDir, filepath.FromSlash(prepared.BackupRel))); err != nil {
 				return overlayTxnOp{}, fmt.Errorf("failed to backup %s: %w", op.RelPath, err)
 			}
 		}

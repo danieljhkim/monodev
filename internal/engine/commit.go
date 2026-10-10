@@ -312,6 +312,10 @@ func (e *Engine) commitFilePath(
 	}
 
 	// Copy the file/directory to the store.
+	workspaceFilePath, err = fsops.SourcePath(e.fs, workspaceRoot, workspaceFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve copy source %s: %w", cleanRelPath, err)
+	}
 	if info.IsDir() {
 		excluded := excludedDescendants(cleanRelPath, ignoredNewPaths)
 		if len(excluded) > 0 {
@@ -364,8 +368,8 @@ func (e *Engine) commitFilePath(
 
 // isOwnedOverlaySymlink reports whether the workspace symlink is the link that
 // a symlink-mode apply created for the active store: the workspace state
-// records symlink ownership by that store and the link target is exactly the
-// store's overlay path. Only the link itself is read, never its target.
+// records symlink ownership by that store and the link target names the same
+// store overlay location. Only the link itself is read, never its target file.
 func (e *Engine) isOwnedOverlaySymlink(
 	workspaceFilePath string,
 	storeFilePath string,
@@ -381,7 +385,25 @@ func (e *Engine) isOwnedOverlaySymlink(
 	if err != nil {
 		return false, fmt.Errorf("failed to read symlink %s: %w", relPath, err)
 	}
-	return filepath.Clean(target) == filepath.Clean(storeFilePath), nil
+	return e.sameOverlayTarget(target, storeFilePath), nil
+}
+
+// sameOverlayTarget preserves ownership of legacy overlays whose target uses
+// a logical store location. Resolve directory aliases only for this comparison;
+// do not open the target file or follow a symlink at the target leaf.
+func (e *Engine) sameOverlayTarget(target, expected string) bool {
+	if filepath.Clean(target) == filepath.Clean(expected) {
+		return true
+	}
+	if !filepath.IsAbs(target) || !filepath.IsAbs(expected) {
+		return false
+	}
+	target, err := fsops.SourcePath(e.fs, filepath.Dir(target), target)
+	if err != nil {
+		return false
+	}
+	expected, err = fsops.SourcePath(e.fs, filepath.Dir(expected), expected)
+	return err == nil && target == expected
 }
 
 func (e *Engine) userIgnoredNewFiles(workspaceRoot, overlayRoot string, trackedPaths []stores.TrackedPath) (map[string]bool, error) {

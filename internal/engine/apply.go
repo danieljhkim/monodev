@@ -164,7 +164,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 			owners := pathOwnersAfterOps(plan.Operations)
 			for _, op := range plan.Operations {
 				if op.Type != planner.OpRemove {
-					final.Paths[op.RelPath] = e.ownershipForAppliedPath(op, req.Mode, owners)
+					final.Paths[op.RelPath] = e.ownershipForAppliedPath(workspaceRoot, op, req.Mode, owners)
 				} else {
 					delete(final.Paths, op.RelPath)
 				}
