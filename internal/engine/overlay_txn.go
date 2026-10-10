@@ -15,10 +15,11 @@ import (
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
+	"github.com/danieljhkim/monodev/internal/stores"
 )
 
 const (
-	overlayTxnSchemaVersion = 2
+	overlayTxnSchemaVersion = 3
 
 	overlayTxnApply   = "apply"
 	overlayTxnUnapply = "unapply"
@@ -42,6 +43,7 @@ type overlayTxn struct {
 	SchemaVersion int                   `json:"schemaVersion"`
 	Kind          string                `json:"kind"`
 	WorkspaceID   string                `json:"workspaceId"`
+	StateScope    string                `json:"stateScope,omitempty"`
 	WorkspaceRoot string                `json:"workspaceRoot"`
 	Phase         string                `json:"phase"`
 	Ops           []overlayTxnOp        `json:"ops"`
@@ -61,11 +63,12 @@ type overlayTxnOp struct {
 }
 
 type overlayTxnRequest struct {
-	kind          string
-	workspaceID   string
-	workspaceRoot string
-	ops           []planner.Operation
-	finalize      func() (*state.WorkspaceState, bool, error)
+	workspaceStore state.StateStore
+	kind           string
+	workspaceID    string
+	workspaceRoot  string
+	ops            []planner.Operation
+	finalize       func() (*state.WorkspaceState, bool, error)
 }
 
 func (e *Engine) overlayTxnPaths(id string) (journalPath, txnDir string, err error) {
@@ -208,12 +211,12 @@ func (e *Engine) recoverOverlayTxn(ctx context.Context, workspaceID, workspaceRo
 
 // recoverWorkspaceOverlay finishes any interrupted overlay mutation, then
 // repairs the best-effort git exclusion block from the durable ledger.
-func (e *Engine) recoverWorkspaceOverlay(ctx context.Context, workspaceID, repoRoot, workspaceRoot, workspacePath string) ([]string, error) {
+func (e *Engine) recoverWorkspaceOverlay(ctx context.Context, workspaceStore state.StateStore, workspaceID, repoRoot, workspaceRoot, workspacePath string) ([]string, error) {
 	if err := e.recoverOverlayTxn(ctx, workspaceID, workspaceRoot); err != nil {
 		return nil, err
 	}
 
-	ws, err := e.stateStore.LoadWorkspace(workspaceID)
+	ws, err := workspaceStore.LoadWorkspace(workspaceID)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to reload workspace state after recovery: %w", err)
 	}
@@ -224,8 +227,12 @@ func (e *Engine) recoverWorkspaceOverlay(ctx context.Context, workspaceID, repoR
 }
 
 func (e *Engine) commitOverlayTxnState(workspaceID string, txn *overlayTxn) error {
+	workspaceStore, err := e.overlayTxnStore(workspaceID, txn)
+	if err != nil {
+		return err
+	}
 	if txn.DeleteState {
-		if err := e.stateStore.DeleteWorkspace(workspaceID); err != nil {
+		if err := workspaceStore.DeleteWorkspace(workspaceID); err != nil {
 			return fmt.Errorf("failed to delete workspace state during recovery: %w", err)
 		}
 		return nil
@@ -233,7 +240,7 @@ func (e *Engine) commitOverlayTxnState(workspaceID string, txn *overlayTxn) erro
 	if txn.FinalState == nil {
 		return nil
 	}
-	if err := e.stateStore.SaveWorkspace(workspaceID, txn.FinalState); err != nil {
+	if err := workspaceStore.SaveWorkspace(workspaceID, txn.FinalState); err != nil {
 		return fmt.Errorf("failed to save workspace state during recovery: %w", err)
 	}
 	return nil
@@ -255,7 +262,12 @@ func (e *Engine) runOverlayTxn(ctx context.Context, req overlayTxnRequest) error
 		return fmt.Errorf("failed to create overlay transaction directory: %w", err)
 	}
 
+	scope := stores.ScopeGlobal
+	if req.workspaceStore != nil && req.workspaceStore != e.stateStore {
+		scope = stores.ScopeComponent
+	}
 	txn := overlayTxn{
+		StateScope:    scope,
 		SchemaVersion: overlayTxnSchemaVersion,
 		Kind:          req.kind,
 		WorkspaceID:   req.workspaceID,
@@ -625,4 +637,28 @@ func (e *Engine) cleanupOwnedInstallTemps(workspaceRoot, relPath, owner string) 
 		return
 	}
 	_ = ownedFS.RemoveOwnedTempsWithinRoot(workspaceRoot, filepath.Dir(filepath.Clean(relPath)), owner)
+}
+
+// Journals remain in the global directory for backwards compatibility, but
+// explicitly name the ledger scope so recovery never guesses after a delete.
+func (e *Engine) overlayTxnStore(id string, txn *overlayTxn) (state.StateStore, error) {
+	switch txn.StateScope {
+	case stores.ScopeGlobal:
+		return e.stateStore, nil
+	case stores.ScopeComponent:
+		for _, store := range e.workspaceStateStores() {
+			if store != e.stateStore {
+				return store, nil
+			}
+		}
+		return nil, fmt.Errorf("component workspace state is unavailable for transaction %s", id)
+	case "":
+		store, err := e.workspaceStoreForID(id)
+		if os.IsNotExist(err) {
+			return e.stateStore, nil
+		}
+		return store, err
+	default:
+		return nil, fmt.Errorf("unknown workspace state scope %q in transaction %s", txn.StateScope, id)
+	}
 }

@@ -74,7 +74,7 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	workspaceStore, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, repoFingerprint, workspacePath, lockfile.Exclusive)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +213,7 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 				workspaceState.AddAppliedStore(workspaceState.ActiveStore, workspaceState.Mode)
 			}
 		}
-		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
+		if err := workspaceStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 			return nil, fmt.Errorf("failed to save workspace state: %w", err)
 		}
 		if adopt {

@@ -70,7 +70,7 @@ func (e *Engine) forEachWorkspaceState(fn func(workspaceID string, ws *state.Wor
 		}
 
 		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.HasSuffix(entry.Name(), ".txn.json") {
 				continue
 			}
 

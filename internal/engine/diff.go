@@ -24,7 +24,7 @@ func (e *Engine) Diff(ctx context.Context, req *DiffRequest) (*DiffResult, error
 	}
 
 	workspaceID := state.ComputeWorkspaceID(fingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	_, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, fingerprint, workspacePath, lockfile.Shared)
 	if err != nil {
 		return nil, err
 	}

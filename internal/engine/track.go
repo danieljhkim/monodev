@@ -66,14 +66,14 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	workspaceStore, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, repoFingerprint, workspacePath, lockfile.Shared)
 	if err != nil {
 		return nil, err
 	}
 	defer unlockWorkspace()
 
 	// Load workspace state to get active store
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+	workspaceState, err := workspaceStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrNoActiveStore
@@ -183,14 +183,14 @@ func (e *Engine) Untrack(ctx context.Context, req *UntrackRequest) (*UntrackResu
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	workspaceStore, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, repoFingerprint, workspacePath, lockfile.Shared)
 	if err != nil {
 		return nil, err
 	}
 	defer unlockWorkspace()
 
 	// Load workspace state to get active store
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+	workspaceState, err := workspaceStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrNoActiveStore
