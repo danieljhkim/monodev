@@ -2,6 +2,7 @@ package persist
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
@@ -167,5 +168,43 @@ func (s *SnapshotManager) Dematerialize(storeID string, persistRoot string, stor
 	}
 	stagedReady = false
 
+	return nil
+}
+
+// CheckIncomingStoreSchemas reports whether a persisted store's meta.json and
+// track.json are formats this binary can publish into the local store. It
+// reads the persistence checkout only and does not replace local bytes.
+// A missing document is absent: legacy stores may omit track.json, which
+// LoadTrack treats as empty. An unparseable header is not refused here.
+// Checksum manifests are ignored; schema compatibility is independent of them.
+func (s *SnapshotManager) CheckIncomingStoreSchemas(storeID, persistRoot string) error {
+	if err := s.fs.ValidateIdentifier(storeID); err != nil {
+		return fmt.Errorf("invalid store ID: %w", err)
+	}
+	if err := refuseReservedStoreID(storeID); err != nil {
+		return err
+	}
+
+	storePath := persistStoreDir(persistRoot, storeID)
+	documents := []struct {
+		name      string
+		supported int
+	}{
+		{name: "meta.json", supported: stores.SupportedMetaSchemaVersion()},
+		{name: "track.json", supported: stores.SupportedTrackSchemaVersion()},
+	}
+	for _, document := range documents {
+		path := filepath.Join(storePath, document.name)
+		data, err := s.fs.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("failed to read %s: %w", path, err)
+		}
+		if err := stores.RefuseFutureStoreSchema(path, data, document.supported); err != nil {
+			return err
+		}
+	}
 	return nil
 }

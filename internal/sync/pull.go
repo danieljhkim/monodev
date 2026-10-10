@@ -74,6 +74,15 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		storeIDs = appendUniqueStores(storeIDs, workspaceReferenceStoreIDs(workspaceRef), "")
 	}
 
+	// Refuse unsupported schemas before any store is replaced. The loop
+	// below publishes one store at a time, so checking inside it would
+	// leave earlier stores overwritten when a later one is too new.
+	// --force authorizes divergent content, not a schema this binary
+	// cannot read, and a missing or valid manifest does not bypass it.
+	if err := s.refuseFutureStoreSchemas(ctx, req.RepoRoot, storeIDs); err != nil {
+		return nil, err
+	}
+
 	var pulledStores []string
 	var warnings []string
 	verifiedStores := 0
@@ -166,8 +175,10 @@ func (s *Syncer) persistenceTarget(repoRoot, requestedRemote string) (string, st
 
 // replaceLocalStore compares, verifies, and replaces one local store while
 // holding its exclusive transaction lock. Force authorizes overwriting
-// changed content, not bypassing a running store transaction. It reports
-// whether a verification manifest certified the persisted content.
+// changed content, not bypassing a running store transaction or an
+// unsupported store schema. Schema compatibility is refused for every
+// selected store before this method runs. It reports whether a
+// verification manifest certified the persisted content.
 func (s *Syncer) replaceLocalStore(ctx context.Context, req *PullRequest, storeID string) (bool, error) {
 	unlock, err := s.lockStores(ctx, lockfile.Exclusive, storeID)
 	if err != nil {
@@ -206,6 +217,20 @@ func (s *Syncer) replaceLocalStore(ctx context.Context, req *PullRequest, storeI
 		return false, fmt.Errorf("failed to dematerialize store %q: %w", storeID, err)
 	}
 	return verified, nil
+}
+
+// refuseFutureStoreSchemas checks every selected persisted store before pull
+// publishes any of them into the local store directory.
+func (s *Syncer) refuseFutureStoreSchemas(ctx context.Context, repoRoot string, storeIDs []string) error {
+	for _, storeID := range storeIDs {
+		if err := checkContext(ctx); err != nil {
+			return err
+		}
+		if err := s.snapshotMgr.CheckIncomingStoreSchemas(storeID, repoRoot); err != nil {
+			return fmt.Errorf("failed to pull store %q: %w", storeID, err)
+		}
+	}
+	return nil
 }
 
 func appendUniqueStores(storeIDs []string, additional []string, activeStore string) []string {

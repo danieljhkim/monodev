@@ -2,6 +2,8 @@ package stores
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -542,6 +544,48 @@ func TestValidateRole(t *testing.T) {
 			t.Error("expected error for invalid role")
 		}
 	})
+}
+
+func TestRefuseFutureStoreSchema(t *testing.T) {
+	metaSupported := SupportedMetaSchemaVersion()
+	trackSupported := SupportedTrackSchemaVersion()
+	if got := NewStoreMeta("test", time.Now()).SchemaVersion; got != metaSupported {
+		t.Fatalf("NewStoreMeta schema = %d, accessor = %d", got, metaSupported)
+	}
+	if got := NewTrackFile().SchemaVersion; got != trackSupported {
+		t.Fatalf("NewTrackFile schema = %d, accessor = %d", got, trackSupported)
+	}
+
+	for _, supported := range []int{metaSupported, trackSupported} {
+		path := "store/meta.json"
+		future := supported + 1
+		err := RefuseFutureStoreSchema(path, []byte(fmt.Sprintf(`{"schemaVersion":%d}`, future)), supported)
+		if err == nil {
+			t.Fatal("future schema error = nil")
+		}
+		for _, want := range []string{
+			path,
+			fmt.Sprintf("schemaVersion %d", future),
+			fmt.Sprintf("supported schemaVersion %d", supported),
+			"upgrade monodev",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not contain %q", err, want)
+			}
+		}
+
+		for _, document := range []string{
+			fmt.Sprintf(`{"schemaVersion":%d}`, supported),
+			`{"schemaVersion":1,"name":"legacy"}`,
+			`{"name":"legacy-zero"}`,
+			`{"schemaVersion":`,
+			`not-json`,
+		} {
+			if err := RefuseFutureStoreSchema(path, []byte(document), supported); err != nil {
+				t.Errorf("RefuseFutureStoreSchema(%q) = %v, want nil", document, err)
+			}
+		}
+	}
 }
 
 func TestValidateOrigin(t *testing.T) {
