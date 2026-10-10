@@ -267,7 +267,14 @@ func (fs *RealFS) openConfinedParent(root, relPath string, create bool) (int, st
 		_ = unix.Close(currentFD)
 	}
 
-	for i, part := range parts[:len(parts)-1] {
+	for i, part := range parts {
+		if err := rejectGitAliasAt(currentFD, part); err != nil {
+			closeParent()
+			return -1, "", func() {}, err
+		}
+		if i == len(parts)-1 {
+			break
+		}
 		nextFD, openErr := unix.Openat(currentFD, part, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
 		if openErr != nil && errors.Is(openErr, unix.ENOENT) && create {
 			if mkdirErr := unix.Mkdirat(currentFD, part, 0700); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
@@ -289,6 +296,32 @@ func (fs *RealFS) openConfinedParent(root, relPath string, create bool) (int, st
 	}
 
 	return currentFD, parts[len(parts)-1], closeParent, nil
+}
+
+// rejectGitAliasAt fails when name inside dirFD is the same filesystem object
+// as the sibling .git entry. This catches aliases the lexical ".git" check
+// cannot see, such as ".GIT" on a case-insensitive volume, without rejecting
+// ordinary names like ".github" or a distinct ".GIT" on a case-sensitive one.
+// A name that does not exist cannot alias an existing .git entry.
+func rejectGitAliasAt(dirFD int, name string) error {
+	var gitStat unix.Stat_t
+	if err := unix.Fstatat(dirFD, ".git", &gitStat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect repository .git entry: %w", err)
+	}
+	var nameStat unix.Stat_t
+	if err := unix.Fstatat(dirFD, name, &nameStat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect destination component %q: %w", name, err)
+	}
+	if nameStat.Dev == gitStat.Dev && nameStat.Ino == gitStat.Ino {
+		return fmt.Errorf("path resolves inside repository .git directory")
+	}
+	return nil
 }
 
 func (fs *RealFS) copyAt(source *os.File, parentFD int, name, relPath string) error {
