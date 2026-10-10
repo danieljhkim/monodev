@@ -12,6 +12,11 @@ import (
 // SnapshotManager handles materialization and dematerialization of stores
 // between the user's home directory (~/.monodev/stores) and the persistence
 // directory (.monodev/persist/stores).
+//
+// SnapshotManager does not lock. Callers own each store's transaction lock
+// (stores.LockStores): shared for Materialize, exclusive across a
+// DiffAgainstLocalCopy and Dematerialize that must agree. Keeping acquisition
+// in one place means a flow never takes the same lock twice.
 type SnapshotManager struct {
 	fs fsops.FS
 }
@@ -52,7 +57,8 @@ func overlayStoreDir(storeRepo stores.StoreRepo, storeID string) (string, error)
 }
 
 // Materialize copies a store from ~/.monodev/stores/<store-id> to
-// .monodev/persist/stores/<store-id>/.
+// .monodev/persist/stores/<store-id>/. The caller must hold at least a shared
+// lock on the store.
 func (s *SnapshotManager) Materialize(storeID string, storeRepo stores.StoreRepo, persistRoot string) error {
 	// Validate store ID
 	if err := s.fs.ValidateIdentifier(storeID); err != nil {
@@ -109,7 +115,8 @@ func (s *SnapshotManager) Materialize(storeID string, storeRepo stores.StoreRepo
 }
 
 // Dematerialize copies a store from .monodev/persist/stores/<store-id>/ to
-// ~/.monodev/stores/<store-id>/.
+// ~/.monodev/stores/<store-id>/. The caller must hold the store's exclusive
+// lock.
 func (s *SnapshotManager) Dematerialize(storeID string, persistRoot string, storeRepo stores.StoreRepo) error {
 	// Validate store ID
 	if err := s.fs.ValidateIdentifier(storeID); err != nil {

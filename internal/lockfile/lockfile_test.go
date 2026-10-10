@@ -91,3 +91,36 @@ func closeLock(t *testing.T, lock *Lock) {
 		t.Errorf("close lock: %v", err)
 	}
 }
+
+func TestJoinReleasesEveryLockOnce(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{filepath.Join(dir, "a.lock"), filepath.Join(dir, "b.lock")}
+	locks := make([]*Lock, 0, len(paths))
+	for _, path := range paths {
+		lock, err := Acquire(context.Background(), path, Exclusive, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		locks = append(locks, lock)
+	}
+	joined := Join(locks...)
+
+	for _, path := range paths {
+		if _, err := Acquire(context.Background(), path, Exclusive, 30*time.Millisecond); !errors.Is(err, ErrContended) {
+			t.Fatalf("Acquire(%s) while joined lock held = %v, want ErrContended", path, err)
+		}
+	}
+	if err := joined.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := joined.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	for _, path := range paths {
+		lock, err := Acquire(context.Background(), path, Exclusive, 30*time.Millisecond)
+		if err != nil {
+			t.Fatalf("Acquire(%s) after joined Close: %v", path, err)
+		}
+		closeLock(t, lock)
+	}
+}

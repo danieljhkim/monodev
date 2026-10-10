@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
 
@@ -15,6 +16,18 @@ func (s *Syncer) listRepoLocalStores() ([]string, error) {
 		return lister.ListRepoLocal()
 	}
 	return s.storeRepo.List()
+}
+
+// materializeStore snapshots one store under its shared transaction lock, so
+// the persisted metadata, track file, and overlay come from one committed
+// state while compatible readers keep running.
+func (s *Syncer) materializeStore(ctx context.Context, storeID, repoRoot string) error {
+	unlock, err := s.lockStores(ctx, lockfile.Shared, storeID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.snapshotMgr.Materialize(storeID, s.storeRepo, repoRoot)
 }
 
 // pushStore implements the push operation for stores.
@@ -67,7 +80,7 @@ func (s *Syncer) pushStore(ctx context.Context, req *PushRequest) (*PushResult, 
 		if err := checkContext(ctx); err != nil {
 			return nil, err
 		}
-		refPath, refData, err := s.prepareWorkspaceReference(req)
+		refPath, refData, err := s.prepareWorkspaceReference(ctx, req)
 		if err != nil {
 			return nil, err
 		}
@@ -83,7 +96,7 @@ func (s *Syncer) pushStore(ctx context.Context, req *PushRequest) (*PushResult, 
 			return nil, err
 		}
 		if !req.DryRun {
-			if err := s.snapshotMgr.Materialize(storeID, s.storeRepo, req.RepoRoot); err != nil {
+			if err := s.materializeStore(ctx, storeID, req.RepoRoot); err != nil {
 				return nil, fmt.Errorf("failed to materialize store %q: %w", storeID, err)
 			}
 		}

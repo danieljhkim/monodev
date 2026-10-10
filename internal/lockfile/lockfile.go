@@ -50,7 +50,14 @@ func (m Mode) String() string {
 // Lock is held until Close or process exit. The kernel releases locks for
 // abruptly terminated processes when their file descriptors are closed.
 type Lock struct {
-	file *os.File
+	file   *os.File
+	joined []*Lock
+}
+
+// Join returns one handle that owns every lock. Close releases them in
+// reverse order, so callers should pass locks in acquisition order.
+func Join(locks ...*Lock) *Lock {
+	return &Lock{joined: append([]*Lock(nil), locks...)}
 }
 
 // Acquire obtains a lock, polling so context cancellation and timeout remain
@@ -103,7 +110,19 @@ func Acquire(ctx context.Context, path string, mode Mode, timeout time.Duration)
 
 // Close releases the advisory lock. It is safe to call more than once.
 func (l *Lock) Close() error {
-	if l == nil || l.file == nil {
+	if l == nil {
+		return nil
+	}
+	if l.joined != nil {
+		joined := l.joined
+		l.joined = nil
+		var errs []error
+		for i := len(joined) - 1; i >= 0; i-- {
+			errs = append(errs, joined[i].Close())
+		}
+		return errors.Join(errs...)
+	}
+	if l.file == nil {
 		return nil
 	}
 	file := l.file

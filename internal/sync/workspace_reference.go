@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/danieljhkim/monodev/internal/gitx"
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 )
 
@@ -52,7 +54,7 @@ func workspaceReferencePath(repoRoot, workspaceID string) string {
 	return filepath.Join(workspaceReferencesDir(repoRoot), workspaceID+".json")
 }
 
-func (s *Syncer) prepareWorkspaceReference(req *PushRequest) (string, []byte, error) {
+func (s *Syncer) prepareWorkspaceReference(ctx context.Context, req *PushRequest) (string, []byte, error) {
 	if req.WorkspaceID == "" {
 		return "", nil, fmt.Errorf("workspace ID is required when pushing workspace references")
 	}
@@ -60,12 +62,9 @@ func (s *Syncer) prepareWorkspaceReference(req *PushRequest) (string, []byte, er
 		return "", nil, fmt.Errorf("invalid workspace ID: %w", err)
 	}
 
-	workspaceState, err := s.stateStore.LoadWorkspace(req.WorkspaceID)
+	workspaceState, err := s.loadWorkspaceForReference(ctx, req.WorkspaceID)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil, fmt.Errorf("workspace %q not found", req.WorkspaceID)
-		}
-		return "", nil, fmt.Errorf("failed to load workspace %q: %w", req.WorkspaceID, err)
+		return "", nil, err
 	}
 
 	ref := s.buildWorkspaceReference(req, workspaceState)
@@ -77,6 +76,25 @@ func (s *Syncer) prepareWorkspaceReference(req *PushRequest) (string, []byte, er
 
 	refPath := workspaceReferencePath(req.RepoRoot, req.WorkspaceID)
 	return refPath, data, nil
+}
+
+// loadWorkspaceForReference reads workspace state under its shared
+// transaction lock so a reference never captures a half-finished apply.
+func (s *Syncer) loadWorkspaceForReference(ctx context.Context, workspaceID string) (*state.WorkspaceState, error) {
+	unlock, err := s.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
+	workspaceState, err := s.stateStore.LoadWorkspace(workspaceID)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("workspace %q not found", workspaceID)
+		}
+		return nil, fmt.Errorf("failed to load workspace %q: %w", workspaceID, err)
+	}
+	return workspaceState, nil
 }
 
 func (s *Syncer) buildWorkspaceReference(req *PushRequest, workspaceState *state.WorkspaceState) workspaceReference {
@@ -195,14 +213,31 @@ func (s *Syncer) validateWorkspaceReference(req *PullRequest, ref *workspaceRefe
 	return nil
 }
 
-func (s *Syncer) restoreWorkspaceReference(req *PullRequest, ref *workspaceReference) error {
+// restoreWorkspaceReference holds the local workspace's exclusive lock across
+// the absence check and the save, so state created by a concurrent
+// transaction is never overwritten. Shared locks on the referenced stores,
+// taken after the workspace lock, keep them from being deleted mid-restore.
+func (s *Syncer) restoreWorkspaceReference(ctx context.Context, req *PullRequest, ref *workspaceReference) error {
+	unlockWorkspace, err := s.lockWorkspace(ctx, req.LocalWorkspaceID, lockfile.Exclusive)
+	if err != nil {
+		return err
+	}
+	defer unlockWorkspace()
+
+	storeIDs := workspaceReferenceStoreIDs(ref)
+	unlockStores, err := s.lockStores(ctx, lockfile.Shared, storeIDs...)
+	if err != nil {
+		return err
+	}
+	defer unlockStores()
+
 	if existing, err := s.stateStore.LoadWorkspace(req.LocalWorkspaceID); err == nil && existing != nil {
 		return fmt.Errorf("local workspace state %q already exists; refusing to overwrite it", req.LocalWorkspaceID)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("failed to inspect local workspace state: %w", err)
 	}
 
-	for _, storeID := range workspaceReferenceStoreIDs(ref) {
+	for _, storeID := range storeIDs {
 		exists, err := s.storeRepo.Exists(storeID)
 		if err != nil {
 			return fmt.Errorf("failed to check workspace reference store %q: %w", storeID, err)

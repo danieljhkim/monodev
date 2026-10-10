@@ -1,6 +1,13 @@
 package state
 
-import "os"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+
+	"github.com/danieljhkim/monodev/internal/lockfile"
+)
 
 // scopedStore loads workspace state from primary then secondary.
 // New IDs are saved on primary, matching Engine.stateStore (the global
@@ -62,4 +69,37 @@ func (s *scopedStore) DeleteWorkspace(id string) error {
 		return err
 	}
 	return store.DeleteWorkspace(id)
+}
+
+// LockWorkspace locks the ID in both scopes, primary first. The scope that
+// holds an ID can change between resolution and acquisition (a new ID is
+// saved to primary while a migration may write secondary), so holding both
+// excludes every transaction that locks either scope directly. Callers that
+// need workspace and store locks must still take this one first.
+func (s *scopedStore) LockWorkspace(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error) {
+	locks := make([]*lockfile.Lock, 0, 2)
+	release := func() {
+		for i := len(locks) - 1; i >= 0; i-- {
+			_ = locks[i].Close()
+		}
+	}
+	for _, store := range []StateStore{s.primary, s.secondary} {
+		locker, ok := store.(WorkspaceLocker)
+		if !ok {
+			continue
+		}
+		lock, err := locker.LockWorkspace(ctx, id, mode)
+		if errors.Is(err, ErrLockUnsupported) {
+			continue
+		}
+		if err != nil {
+			release()
+			return nil, err
+		}
+		locks = append(locks, lock)
+	}
+	if len(locks) == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrLockUnsupported, id)
+	}
+	return lockfile.Join(locks...), nil
 }
