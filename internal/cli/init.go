@@ -54,7 +54,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if !initForce {
 			return fmt.Errorf(".monodev already exists at %s\nUse --force to reinitialize", monodevPath)
 		}
-		PrintInfo(fmt.Sprintf(".monodev already exists at %s (reinitializing with --force)", monodevPath))
+		if !jsonOutput {
+			PrintInfo(fmt.Sprintf(".monodev already exists at %s (reinitializing with --force)", monodevPath))
+		}
 	}
 
 	// 3. Create directory structure and * .gitignore
