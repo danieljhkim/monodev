@@ -751,3 +751,301 @@ func TestDeleteStore_InUse_WithoutForce(t *testing.T) {
 		t.Error("store should not have been deleted without force")
 	}
 }
+
+// sameIDDeleteFixture holds component and global stores that share an ID,
+// plus optional workspaces that select one of those physical stores.
+type sameIDDeleteFixture struct {
+	eng            *Engine
+	globalState    *state.FileStateStore
+	componentState *state.FileStateStore
+	globalRepo     *stores.FileStoreRepo
+	componentRepo  *stores.FileStoreRepo
+}
+
+func seedSameIDDeleteFixture(t *testing.T, globalWorkspace, componentWorkspace bool) sameIDDeleteFixture {
+	t.Helper()
+
+	eng, globalState, componentState, globalRepo, componentRepo := newScopedDeleteStoreTestEngine(t)
+	if err := globalRepo.Create("shared", stores.NewStoreMeta("shared", time.Now())); err != nil {
+		t.Fatalf("create global store: %v", err)
+	}
+	if err := componentRepo.Create("shared", stores.NewStoreMeta("shared", time.Now())); err != nil {
+		t.Fatalf("create component store: %v", err)
+	}
+
+	if globalWorkspace {
+		ws := state.NewWorkspaceState("repo-global", "services/api", "copy")
+		ws.Applied = true
+		ws.ActiveStore = "shared"
+		ws.ActiveStoreScope = stores.ScopeGlobal
+		ws.AppliedStores = []state.AppliedStore{
+			{Store: "shared", Type: "copy"},
+			{Store: "keeper", Type: "copy"},
+		}
+		ws.Paths["a.txt"] = state.PathOwnership{Store: "shared", Type: "copy"}
+		ws.Paths["keep.txt"] = state.PathOwnership{Store: "keeper", Type: "copy"}
+		if err := globalState.SaveWorkspace("global-ws", ws); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if componentWorkspace {
+		ws := state.NewWorkspaceState("repo-component", "components/api", "copy")
+		ws.Applied = true
+		ws.ActiveStore = "shared"
+		ws.ActiveStoreScope = stores.ScopeComponent
+		ws.AppliedStores = []state.AppliedStore{
+			{Store: "shared", Type: "copy"},
+			{Store: "comp-keeper", Type: "copy"},
+		}
+		ws.Paths["a.txt"] = state.PathOwnership{Store: "shared", Type: "copy"}
+		ws.Paths["keep.txt"] = state.PathOwnership{Store: "comp-keeper", Type: "copy"}
+		if err := componentState.SaveWorkspace("component-ws", ws); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return sameIDDeleteFixture{
+		eng:            eng,
+		globalState:    globalState,
+		componentState: componentState,
+		globalRepo:     globalRepo,
+		componentRepo:  componentRepo,
+	}
+}
+
+func assertScopeWorkspacePreserved(t *testing.T, store *state.FileStateStore, id, scope, keeperStore string) {
+	t.Helper()
+
+	ws, err := store.LoadWorkspace(id)
+	if err != nil {
+		t.Fatalf("load %s: %v", id, err)
+	}
+	if ws.ActiveStore != "shared" || ws.ActiveStoreScope != scope {
+		t.Errorf("%s active store = %q/%q, want shared/%s", id, ws.ActiveStore, ws.ActiveStoreScope, scope)
+	}
+	if !ws.Applied {
+		t.Errorf("%s Applied was cleared", id)
+	}
+	if ws.GetAppliedStore("shared") == nil {
+		t.Errorf("%s lost applied store shared", id)
+	}
+	if ws.GetAppliedStore(keeperStore) == nil {
+		t.Errorf("%s lost applied store %s", id, keeperStore)
+	}
+	if _, ok := ws.Paths["a.txt"]; !ok {
+		t.Errorf("%s lost path a.txt", id)
+	}
+	if _, ok := ws.Paths["keep.txt"]; !ok {
+		t.Errorf("%s lost path keep.txt", id)
+	}
+	if len(ws.Paths) != 2 {
+		t.Errorf("%s path count = %d, want 2", id, len(ws.Paths))
+	}
+}
+
+func assertScopeWorkspaceCleaned(t *testing.T, store *state.FileStateStore, id, keeperStore string) {
+	t.Helper()
+
+	ws, err := store.LoadWorkspace(id)
+	if err != nil {
+		t.Fatalf("load %s: %v", id, err)
+	}
+	if ws.ActiveStore != "" || ws.ActiveStoreScope != "" {
+		t.Errorf("%s active store = %q/%q, want empty", id, ws.ActiveStore, ws.ActiveStoreScope)
+	}
+	if ws.GetAppliedStore("shared") != nil {
+		t.Errorf("%s still has applied store shared", id)
+	}
+	if ws.GetAppliedStore(keeperStore) == nil {
+		t.Errorf("%s lost applied store %s", id, keeperStore)
+	}
+	if _, ok := ws.Paths["a.txt"]; ok {
+		t.Errorf("%s still has path a.txt", id)
+	}
+	if _, ok := ws.Paths["keep.txt"]; !ok {
+		t.Errorf("%s lost path keep.txt", id)
+	}
+	if !ws.Applied {
+		t.Errorf("%s Applied should stay true while other paths remain", id)
+	}
+}
+
+func assertStoreExists(t *testing.T, repo *stores.FileStoreRepo, id string, want bool) {
+	t.Helper()
+	exists, err := repo.Exists(id)
+	if err != nil {
+		t.Fatalf("exists %s: %v", id, err)
+	}
+	if exists != want {
+		t.Errorf("store %s exists = %v, want %v", id, exists, want)
+	}
+}
+
+func TestDeleteStore_SameIDPreservesOtherScope(t *testing.T) {
+	t.Run("force preferred component leaves global references", func(t *testing.T) {
+		fx := seedSameIDDeleteFixture(t, true, false)
+
+		result, err := fx.eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+			StoreID: "shared",
+			Force:   true,
+		})
+		if err != nil {
+			t.Fatalf("DeleteStore() error = %v", err)
+		}
+		if result == nil || !result.Deleted {
+			t.Fatalf("DeleteStore() result = %+v, want deleted", result)
+		}
+		if len(result.AffectedWorkspaces) != 0 {
+			t.Fatalf("affected workspaces = %+v, want none", result.AffectedWorkspaces)
+		}
+		assertStoreExists(t, fx.componentRepo, "shared", false)
+		assertStoreExists(t, fx.globalRepo, "shared", true)
+		assertScopeWorkspacePreserved(t, fx.globalState, "global-ws", stores.ScopeGlobal, "keeper")
+	})
+
+	t.Run("force explicit global leaves component references", func(t *testing.T) {
+		fx := seedSameIDDeleteFixture(t, true, true)
+
+		result, err := fx.eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+			StoreID: "shared",
+			Scope:   stores.ScopeGlobal,
+			Force:   true,
+		})
+		if err != nil {
+			t.Fatalf("DeleteStore() error = %v", err)
+		}
+		if result == nil || !result.Deleted {
+			t.Fatalf("DeleteStore() result = %+v, want deleted", result)
+		}
+		if len(result.AffectedWorkspaces) != 1 || result.AffectedWorkspaces[0].WorkspaceID != "global-ws" {
+			t.Fatalf("affected workspaces = %+v, want global-ws", result.AffectedWorkspaces)
+		}
+		usage := result.AffectedWorkspaces[0]
+		if !usage.IsActive || !usage.InStack || usage.AppliedPathCount != 1 {
+			t.Errorf("usage = %+v, want active applied store and 1 path", usage)
+		}
+		assertStoreExists(t, fx.globalRepo, "shared", false)
+		assertStoreExists(t, fx.componentRepo, "shared", true)
+		assertScopeWorkspaceCleaned(t, fx.globalState, "global-ws", "keeper")
+		assertScopeWorkspacePreserved(t, fx.componentState, "component-ws", stores.ScopeComponent, "comp-keeper")
+	})
+
+	t.Run("force explicit component cleans only component references", func(t *testing.T) {
+		fx := seedSameIDDeleteFixture(t, true, true)
+
+		result, err := fx.eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+			StoreID: "shared",
+			Scope:   stores.ScopeComponent,
+			Force:   true,
+		})
+		if err != nil {
+			t.Fatalf("DeleteStore() error = %v", err)
+		}
+		if result == nil || !result.Deleted {
+			t.Fatalf("DeleteStore() result = %+v, want deleted", result)
+		}
+		if len(result.AffectedWorkspaces) != 1 || result.AffectedWorkspaces[0].WorkspaceID != "component-ws" {
+			t.Fatalf("affected workspaces = %+v, want component-ws", result.AffectedWorkspaces)
+		}
+		usage := result.AffectedWorkspaces[0]
+		if !usage.IsActive || !usage.InStack || usage.AppliedPathCount != 1 {
+			t.Errorf("usage = %+v, want active applied store and 1 path", usage)
+		}
+		assertStoreExists(t, fx.componentRepo, "shared", false)
+		assertStoreExists(t, fx.globalRepo, "shared", true)
+		assertScopeWorkspaceCleaned(t, fx.componentState, "component-ws", "comp-keeper")
+		assertScopeWorkspacePreserved(t, fx.globalState, "global-ws", stores.ScopeGlobal, "keeper")
+	})
+
+	t.Run("non-force does not treat the other scope as in use", func(t *testing.T) {
+		fx := seedSameIDDeleteFixture(t, true, false)
+
+		result, err := fx.eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+			StoreID: "shared",
+			Scope:   stores.ScopeComponent,
+		})
+		if err != nil {
+			t.Fatalf("DeleteStore() error = %v", err)
+		}
+		if result == nil || !result.Deleted {
+			t.Fatalf("DeleteStore() result = %+v, want deleted", result)
+		}
+		if len(result.AffectedWorkspaces) != 0 {
+			t.Fatalf("affected workspaces = %+v, want none", result.AffectedWorkspaces)
+		}
+		assertStoreExists(t, fx.componentRepo, "shared", false)
+		assertStoreExists(t, fx.globalRepo, "shared", true)
+		assertScopeWorkspacePreserved(t, fx.globalState, "global-ws", stores.ScopeGlobal, "keeper")
+	})
+
+	t.Run("non-force still blocks the matching scope", func(t *testing.T) {
+		fx := seedSameIDDeleteFixture(t, true, true)
+
+		result, err := fx.eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+			StoreID: "shared",
+		})
+		if err == nil {
+			t.Fatal("expected in-use error")
+		}
+		if result == nil || result.Deleted {
+			t.Fatalf("DeleteStore() result = %+v, want not deleted", result)
+		}
+		if len(result.AffectedWorkspaces) != 1 || result.AffectedWorkspaces[0].WorkspaceID != "component-ws" {
+			t.Fatalf("affected workspaces = %+v, want component-ws", result.AffectedWorkspaces)
+		}
+		usage := result.AffectedWorkspaces[0]
+		if !usage.IsActive || !usage.InStack || usage.AppliedPathCount != 1 {
+			t.Errorf("usage = %+v, want active applied store and 1 path", usage)
+		}
+		assertStoreExists(t, fx.componentRepo, "shared", true)
+		assertStoreExists(t, fx.globalRepo, "shared", true)
+		assertScopeWorkspacePreserved(t, fx.globalState, "global-ws", stores.ScopeGlobal, "keeper")
+		assertScopeWorkspacePreserved(t, fx.componentState, "component-ws", stores.ScopeComponent, "comp-keeper")
+	})
+
+	t.Run("dry-run reports only the resolved scope", func(t *testing.T) {
+		fx := seedSameIDDeleteFixture(t, true, true)
+
+		componentDry, err := fx.eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+			StoreID: "shared",
+			DryRun:  true,
+		})
+		if err != nil {
+			t.Fatalf("component dry-run error = %v", err)
+		}
+		if componentDry == nil || componentDry.Deleted || !componentDry.DryRun {
+			t.Fatalf("component dry-run = %+v", componentDry)
+		}
+		if len(componentDry.AffectedWorkspaces) != 1 || componentDry.AffectedWorkspaces[0].WorkspaceID != "component-ws" {
+			t.Fatalf("component dry-run workspaces = %+v, want component-ws", componentDry.AffectedWorkspaces)
+		}
+		usage := componentDry.AffectedWorkspaces[0]
+		if !usage.IsActive || !usage.InStack || usage.AppliedPathCount != 1 {
+			t.Errorf("component dry-run usage = %+v, want active applied store and 1 path", usage)
+		}
+
+		globalDry, err := fx.eng.DeleteStore(context.Background(), &DeleteStoreRequest{
+			StoreID: "shared",
+			Scope:   stores.ScopeGlobal,
+			DryRun:  true,
+		})
+		if err != nil {
+			t.Fatalf("global dry-run error = %v", err)
+		}
+		if globalDry == nil || globalDry.Deleted || !globalDry.DryRun {
+			t.Fatalf("global dry-run = %+v", globalDry)
+		}
+		if len(globalDry.AffectedWorkspaces) != 1 || globalDry.AffectedWorkspaces[0].WorkspaceID != "global-ws" {
+			t.Fatalf("global dry-run workspaces = %+v, want global-ws", globalDry.AffectedWorkspaces)
+		}
+		usage = globalDry.AffectedWorkspaces[0]
+		if !usage.IsActive || !usage.InStack || usage.AppliedPathCount != 1 {
+			t.Errorf("global dry-run usage = %+v, want active applied store and 1 path", usage)
+		}
+
+		assertStoreExists(t, fx.componentRepo, "shared", true)
+		assertStoreExists(t, fx.globalRepo, "shared", true)
+		assertScopeWorkspacePreserved(t, fx.globalState, "global-ws", stores.ScopeGlobal, "keeper")
+		assertScopeWorkspacePreserved(t, fx.componentState, "component-ws", stores.ScopeComponent, "comp-keeper")
+	})
+}
