@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -273,6 +274,234 @@ func TestFileStoreRepo_Create(t *testing.T) {
 		}
 	})
 }
+
+// createFailureFS delegates to the real filesystem, with failures either before
+// or after the selected mutation so rollback must handle partial output too.
+type createFailureFS struct {
+	*fsops.RealFS
+	failPath   string
+	afterWrite bool
+	failure    error
+	cleanupErr error
+}
+
+func (fs *createFailureFS) Mkdir(path string, perm os.FileMode) error {
+	if path == fs.failPath {
+		return fs.failure
+	}
+	return fs.RealFS.Mkdir(path, perm)
+}
+
+func (fs *createFailureFS) MkdirAll(path string, perm os.FileMode) error {
+	if path != fs.failPath {
+		return fs.RealFS.MkdirAll(path, perm)
+	}
+	if fs.afterWrite {
+		if err := fs.RealFS.MkdirAll(path, perm); err != nil {
+			return err
+		}
+	}
+	return fs.failure
+}
+
+func (fs *createFailureFS) AtomicWrite(path string, data []byte, perm os.FileMode) error {
+	if path != fs.failPath {
+		return fs.RealFS.AtomicWrite(path, data, perm)
+	}
+	if fs.afterWrite {
+		if err := fs.RealFS.AtomicWrite(path, data, perm); err != nil {
+			return err
+		}
+	}
+	return fs.failure
+}
+
+func (fs *createFailureFS) RemoveAll(path string) error {
+	if fs.cleanupErr != nil {
+		return fs.cleanupErr
+	}
+	return fs.RealFS.RemoveAll(path)
+}
+
+func TestFileStoreRepo_CreateFailureAllowsRetry(t *testing.T) {
+	for _, stage := range []string{"parent", "store", "overlay", "meta.json", "track.json"} {
+		for _, afterWrite := range []bool{false, true} {
+			// The exclusive Mkdir contract leaves no directory on error.
+			if afterWrite && (stage == "parent" || stage == "store") {
+				continue
+			}
+			name := stage + " before write"
+			if afterWrite {
+				name = stage + " after write"
+			}
+			t.Run(name, func(t *testing.T) {
+				root := filepath.Join(t.TempDir(), "stores")
+				storePath := filepath.Join(root, "new-store")
+				failPath := filepath.Join(storePath, stage)
+				switch stage {
+				case "parent":
+					failPath = root
+				case "store":
+					failPath = storePath
+				}
+				injected := errors.New("injected " + stage + " creation failure")
+				fs := &createFailureFS{RealFS: fsops.NewRealFS(), failPath: failPath, afterWrite: afterWrite, failure: injected}
+				repo := NewFileStoreRepo(fs, root)
+				meta := NewStoreMeta("Retry", time.Now())
+				if err := repo.Create("new-store", meta); !errors.Is(err, injected) {
+					t.Fatalf("Create error = %v, want injected failure", err)
+				}
+				if exists, err := repo.Exists("new-store"); err != nil || exists {
+					t.Fatalf("Exists after failure = %v, %v; want false, nil", exists, err)
+				}
+				if ids, err := repo.List(); err != nil || len(ids) != 0 {
+					t.Fatalf("List after failure = %v, %v; want no stores", ids, err)
+				}
+				fs.failPath = ""
+				if err := repo.Create("new-store", meta); err != nil {
+					t.Fatalf("retry Create: %v", err)
+				}
+				if got, err := repo.LoadMeta("new-store"); err != nil || got.Name != meta.Name {
+					t.Fatalf("retry metadata = %v, %v", got, err)
+				}
+				if track, err := repo.LoadTrack("new-store"); err != nil || len(track.Tracked) != 0 {
+					t.Fatalf("retry track = %v, %v; want empty track", track, err)
+				}
+				for _, name := range []string{"", "overlay", "meta.json", "track.json"} {
+					info, err := os.Stat(filepath.Join(storePath, name))
+					if err != nil {
+						t.Fatal(err)
+					}
+					want := os.FileMode(0600)
+					if name == "" || name == "overlay" {
+						want = 0700
+						if !info.IsDir() {
+							t.Fatalf("%q is not a directory", name)
+						}
+					}
+					if got := info.Mode().Perm(); got != want {
+						t.Errorf("%q mode = %04o, want %04o", name, got, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestFileStoreRepo_CreateReportsRollbackFailure(t *testing.T) {
+	root := t.TempDir()
+	writeErr := errors.New("injected track failure")
+	cleanupErr := errors.New("injected cleanup failure")
+	fs := &createFailureFS{
+		RealFS: fsops.NewRealFS(), failPath: filepath.Join(root, "new-store", "track.json"),
+		failure: writeErr, cleanupErr: cleanupErr,
+	}
+	err := NewFileStoreRepo(fs, root).Create("new-store", NewStoreMeta("Test", time.Now()))
+	if !errors.Is(err, writeErr) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("Create error = %v, want both write and rollback errors", err)
+	}
+}
+
+// staleCreateLookupFS forces both creators past the existence check before
+// either can claim the directory, reproducing the TOCTOU race deterministically.
+type staleCreateLookupFS struct {
+	*fsops.RealFS
+	lookups chan struct{}
+	proceed chan struct{}
+}
+
+func (fs *staleCreateLookupFS) Exists(path string) (bool, error) {
+	exists, err := fs.RealFS.Exists(path)
+	fs.lookups <- struct{}{}
+	<-fs.proceed
+	return exists, err
+}
+
+func TestFileStoreRepo_ConcurrentCreatePreservesWinner(t *testing.T) {
+	root := t.TempDir()
+	fs := &staleCreateLookupFS{RealFS: fsops.NewRealFS(), lookups: make(chan struct{}, 2), proceed: make(chan struct{})}
+	metas := []*StoreMeta{NewStoreMeta("First", time.Now()), NewStoreMeta("Second", time.Now())}
+	errs := make([]error, len(metas))
+	var wg sync.WaitGroup
+	for i := range metas {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = NewFileStoreRepo(fs, root).Create("shared", metas[i])
+		}()
+	}
+	<-fs.lookups
+	<-fs.lookups
+	close(fs.proceed)
+	wg.Wait()
+	winner := -1
+	for i, err := range errs {
+		if err == nil {
+			if winner != -1 {
+				t.Fatal("both concurrent creates succeeded")
+			}
+			winner = i
+		} else if !strings.Contains(err.Error(), "store already exists: shared") {
+			t.Fatalf("Create error = %v, want duplicate store refusal", err)
+		}
+	}
+	if winner == -1 {
+		t.Fatalf("neither create succeeded: %v", errs)
+	}
+	repo := NewFileStoreRepo(fsops.NewRealFS(), root)
+	if got, err := repo.LoadMeta("shared"); err != nil || got.Name != metas[winner].Name {
+		t.Fatalf("winner metadata = %v, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "shared", "track.json")); err != nil {
+		t.Fatalf("winner track file: %v", err)
+	}
+}
+
+func TestFileStoreRepo_DuplicateCreatePreservesContents(t *testing.T) {
+	root := t.TempDir()
+	repo := NewFileStoreRepo(fsops.NewRealFS(), root)
+	if err := repo.Create("existing", NewStoreMeta("Original", time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	track := NewTrackFile()
+	track.Tracked = []TrackedPath{{Path: "keep.txt", Kind: "file"}}
+	if err := repo.SaveTrack("existing", track); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "existing", "overlay", "keep.txt"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := make(map[string][]byte)
+	for _, name := range []string{"meta.json", "track.json", "overlay/keep.txt"} {
+		data, err := os.ReadFile(filepath.Join(root, "existing", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[name] = data
+	}
+	// Stale lookup also exercises a pre-existing store encountered at Mkdir,
+	// rather than only the early Exists check.
+	for _, staleLookup := range []bool{false, true} {
+		var fs fsops.FS = fsops.NewRealFS()
+		if staleLookup {
+			fs = &absentCreateLookupFS{RealFS: fsops.NewRealFS()}
+		}
+		err := NewFileStoreRepo(fs, root).Create("existing", NewStoreMeta("Replacement", time.Now()))
+		if err == nil || !strings.Contains(err.Error(), "store already exists: existing") {
+			t.Fatalf("duplicate Create = %v", err)
+		}
+		for name, want := range before {
+			got, err := os.ReadFile(filepath.Join(root, "existing", name))
+			if err != nil || string(got) != string(want) {
+				t.Fatalf("duplicate changed %s: %q, %v", name, got, err)
+			}
+		}
+	}
+}
+
+type absentCreateLookupFS struct{ *fsops.RealFS }
+
+func (fs *absentCreateLookupFS) Exists(string) (bool, error) { return false, nil }
 
 func TestFileStoreRepo_LoadMeta(t *testing.T) {
 	t.Run("loads metadata correctly", func(t *testing.T) {

@@ -39,6 +39,7 @@ func (m *copyCapturingFS) AtomicWrite(path string, data []byte, perm os.FileMode
 func (m *copyCapturingFS) Exists(path string) (bool, error) {
 	return m.existingPaths[path], nil
 }
+func (m *copyCapturingFS) Mkdir(path string, perm os.FileMode) error    { return nil }
 func (m *copyCapturingFS) MkdirAll(path string, perm os.FileMode) error { return nil }
 func (m *copyCapturingFS) Remove(path string) error                     { return nil }
 func (m *copyCapturingFS) RemoveAll(path string) error                  { return nil }

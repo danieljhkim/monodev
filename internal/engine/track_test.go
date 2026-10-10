@@ -84,6 +84,7 @@ func newTrackFileInfoFS(paths ...string) *trackFileInfoFS {
 func (m *trackFileInfoFS) ReadFile(path string) ([]byte, error)                         { return nil, nil }
 func (m *trackFileInfoFS) AtomicWrite(path string, data []byte, perm os.FileMode) error { return nil }
 func (m *trackFileInfoFS) Exists(path string) (bool, error)                             { return m.existingPaths[path], nil }
+func (m *trackFileInfoFS) Mkdir(path string, perm os.FileMode) error                    { return nil }
 func (m *trackFileInfoFS) MkdirAll(path string, perm os.FileMode) error                 { return nil }
 func (m *trackFileInfoFS) Remove(path string) error                                     { return nil }
 func (m *trackFileInfoFS) RemoveAll(path string) error                                  { return nil }
