@@ -66,6 +66,35 @@ installs both for you.
 `AGENTS.md`, `.codex/`, `.gemini/`, `.aider*` and
 `.github/copilot-instructions.md`, skipping any that don't exist.
 
+## Agents
+
+Two commands let coding agents use monodev on their own:
+
+```bash
+monodev skill init             # write a monodev SKILL.md, tracked and hidden from git
+monodev context                # session start: find, restore and list agent context
+```
+
+`skill init` writes `.claude/skills/monodev/SKILL.md` (Claude Code) and/or
+`.agents/skills/monodev/SKILL.md` (the Agent Skills layout Codex reads),
+depending on which agent directories exist; `--target claude|agents|all`
+overrides. It needs an active store, and leaves `git status` clean.
+
+`context` reports the active store, or pulls and applies the stores pushed for
+this directory (`push --with-workspace`), then lists the agent paths on disk.
+It never pushes or forces, and finding nothing is not an error.
+
+Agent notes and scripts are plain files in a store, by convention:
+
+- `.agents/notes/lessons.md`: short durable lessons, edited in place.
+- `.agents/notes/sessions/<date>-<agent>-<id>.md`: one file per session, so
+  parallel agents never write the same file.
+- `.agents/scripts/`: helper scripts.
+
+Keep private, unreviewed or experimental context in monodev. Decisions that
+bind everyone (ADRs) and gotchas true for every contributor belong in
+reviewed, committed repo docs.
+
 ## Commands
 
 ```bash
@@ -79,6 +108,8 @@ monodev apply [store...]       # overlay; later stores win conflicts
 monodev unapply [--all]        # remove the active store's (or every) overlay
 monodev push / pull / sync     # share stores via the persistence branch
 monodev eject                  # detach the workspace, keep the files
+monodev context [--json]       # restore and list agent context for this directory
+monodev skill init / show      # install or print the monodev agent skill
 monodev doctor [--fix]         # diagnose and repair local state
 ```
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/danieljhkim/monodev/internal/persist"
+	"github.com/danieljhkim/monodev/internal/remote"
 )
 
 // ErrPulledContentChanged is wrapped by the error pullStore returns when a
@@ -29,31 +30,17 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		return nil, err
 	}
 
-	config, remoteName, err := s.loadPullConfig(req.RepoRoot, req.Remote)
+	var (
+		remoteName, branch string
+		err                error
+	)
+	if req.SkipFetch {
+		remoteName, branch, err = s.persistenceTarget(req.RepoRoot, req.Remote)
+	} else {
+		remoteName, branch, err = s.FetchPersistence(ctx, req.RepoRoot, req.Remote)
+	}
 	if err != nil {
 		return nil, err
-	}
-
-	// Ensure persistence repo exists
-	if err := s.ensurePersistenceRemote(ctx, req.RepoRoot, remoteName, config.Branch); err != nil {
-		return nil, err
-	}
-
-	// Fetch the persistence branch
-	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := s.git.Fetch(ctx, req.RepoRoot, remoteName, config.Branch); err != nil {
-		return nil, fmt.Errorf("failed to fetch: %w", err)
-	}
-
-	// Fast-forward the local persistence branch to the exact fetched commit
-	// and materialize that commit in the persistence work tree.
-	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := s.git.CheckoutFetched(ctx, req.RepoRoot, config.Branch); err != nil {
-		return nil, fmt.Errorf("failed to materialize fetched persistence branch: %w", err)
 	}
 
 	workspaceRef, workspaceFound, err := s.loadWorkspaceReference(req)
@@ -77,7 +64,7 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 				PulledWorkspace: false,
 				Verified:        false,
 				Remote:          remoteName,
-				Branch:          config.Branch,
+				Branch:          branch,
 			}, nil
 		}
 		storeIDs = persistedStores
@@ -135,7 +122,7 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		WorkspaceReferenceValidated: workspaceRef != nil,
 		Verified:                    len(pulledStores) > 0 && verifiedStores == len(pulledStores),
 		Remote:                      remoteName,
-		Branch:                      config.Branch,
+		Branch:                      branch,
 		Warnings:                    warnings,
 	}
 	if workspaceRef != nil {
@@ -146,6 +133,56 @@ func (s *Syncer) pullStore(ctx context.Context, req *PullRequest) (*PullResult, 
 		result.WorkspaceID = req.LocalWorkspaceID
 	}
 	return result, nil
+}
+
+// FetchPersistence fetches the configured persistence branch and fast-forwards
+// the persistence work tree to it without restoring any store or workspace
+// reference. It returns the remote and branch it fetched.
+func (s *Syncer) FetchPersistence(ctx context.Context, repoRoot, requestedRemote string) (string, string, error) {
+	if repoRoot == "" {
+		return "", "", fmt.Errorf("repo root is required")
+	}
+	config, remoteName, err := s.loadPullConfig(repoRoot, requestedRemote)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Ensure persistence repo exists
+	if err := s.ensurePersistenceRemote(ctx, repoRoot, remoteName, config.Branch); err != nil {
+		return "", "", err
+	}
+
+	// Fetch the persistence branch
+	if err := checkContext(ctx); err != nil {
+		return "", "", err
+	}
+	if err := s.git.Fetch(ctx, repoRoot, remoteName, config.Branch); err != nil {
+		return "", "", fmt.Errorf("failed to fetch: %w", err)
+	}
+
+	// Fast-forward the local persistence branch to the exact fetched commit
+	// and materialize that commit in the persistence work tree.
+	if err := checkContext(ctx); err != nil {
+		return "", "", err
+	}
+	if err := s.git.CheckoutFetched(ctx, repoRoot, config.Branch); err != nil {
+		return "", "", fmt.Errorf("failed to materialize fetched persistence branch: %w", err)
+	}
+	return remoteName, config.Branch, nil
+}
+
+// persistenceTarget names the remote and branch a pull that reuses the
+// already-materialized persistence work tree reports. A missing remote
+// configuration is not an error there: nothing is fetched.
+func (s *Syncer) persistenceTarget(repoRoot, requestedRemote string) (string, string, error) {
+	config, remoteName, err := s.loadPullConfig(repoRoot, requestedRemote)
+	if err != nil {
+		if errors.Is(err, remote.ErrRemoteNotConfigured) {
+			return requestedRemote, "", nil
+		}
+		return "", "", err
+	}
+	return remoteName, config.Branch, nil
 }
 
 func appendUniqueStores(storeIDs []string, additional []string, activeStore string) []string {

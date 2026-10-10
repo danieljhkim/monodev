@@ -11,6 +11,11 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ## [Unreleased]
 
+### Added
+- `monodev skill init` writes a monodev `SKILL.md` for coding agents to `.claude/skills/monodev/` (Claude Code) and/or `.agents/skills/monodev/` (Agent Skills layout, read by Codex), chosen by which agent directories exist or `--target claude|agents|all`. The skill is tracked in the active store, snapshotted and hidden from git, so `git status` stays clean. Its content is generated from the binary and stamped with the version; `--force` rewrites it after an upgrade. `monodev skill show` prints it.
+- `monodev context [--json]` is the agent session-start command: it reports the active store, or finds this directory's workspace reference locally or on the remote persistence branch, pulls and applies its stores, and lists the `.agents/notes`, `.agents/notes/sessions` and `.agents/scripts` files on disk. It never pushes or forces; no remote or nothing found exits 0 with an empty result.
+- Documented the `.agents/` layout convention for agent notes, session files and scripts.
+
 ## [0.3.1] — 2026-10-09
 
 v0.3.0 was tagged but never published: its Linux builds failed, so no release

@@ -82,6 +82,48 @@ for deleted stores, remove orphaned backups, reconcile `.git/info/exclude`).
 Exits non-zero when problems remain. Journal details:
 [overlay-recovery.md](overlay-recovery.md).
 
+### context
+
+```bash
+monodev context
+monodev context --json
+```
+
+Session-start entry point for agents. If this workspace has an active store,
+reports it. Otherwise looks for a workspace reference for this directory
+(matched by repository identity and workspace path, newest wins), first in
+the local persistence work tree, then on the configured remote's persistence
+branch. A match is pulled with its stores and applied through the normal
+`pull` and `apply` checks: a local store that differs from the remote, or an
+apply conflict, fails the command. `context` never passes `--force` and never
+pushes.
+
+It then lists the agent paths on disk, relative to the workspace:
+
+- notes: files under `.agents/notes/`, such as `lessons.md`;
+- sessions: files under `.agents/notes/sessions/`;
+- scripts: files under `.agents/scripts/`.
+
+No remote, offline, or nothing found exits 0 with an empty result and a
+one-line hint.
+
+`--json` prints one object. Every field is always present; lists are `[]`,
+never `null`:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `workspaceId` | string | This workspace's ID |
+| `workspacePath` | string | Workspace path relative to the repository root |
+| `source` | string | `active-store`, `local-reference`, `remote-reference` or `none` |
+| `activeStore` | string | Active store, or `""` |
+| `stores` | string[] | Applied stores in ledger order, then the active store |
+| `pulledStores` | string[] | Stores pulled by this call |
+| `notes` | string[] | Files under `.agents/notes/`, excluding sessions |
+| `sessions` | string[] | Files under `.agents/notes/sessions/` |
+| `scripts` | string[] | Files under `.agents/scripts/` |
+| `warnings` | string[] | Non-fatal issues, such as a failed fetch |
+| `hint` | string | One-line next step, or `""` |
+
 ### eject
 
 ```bash
@@ -277,6 +319,58 @@ run `monodev remote use origin` first.
 ---
 
 ## CLI tooling
+
+### skill
+
+```bash
+monodev skill init
+monodev skill init --target claude
+monodev skill init --target agents
+monodev skill init --target all
+monodev skill init --force
+monodev skill show
+```
+
+`init` writes a `SKILL.md` that teaches coding agents the monodev loop:
+session start with `context`, session end with a session file, `lessons.md`
+and `save`, never `git add` agent files, restore with `apply`, check notes
+against the code, the `unapply` and drift warnings, and what belongs in
+committed docs instead. The content is generated from the binary's command
+tree and stamped with its version.
+
+Targets, verified against each tool's documentation:
+
+- `claude`: `.claude/skills/monodev/SKILL.md`, where Claude Code loads project
+  skills ([docs](https://code.claude.com/docs/en/skills)).
+- `agents`: `.agents/skills/monodev/SKILL.md`, the
+  [Agent Skills](https://agentskills.io/specification) layout Codex scans
+  ([docs](https://learn.chatgpt.com/docs/build-skills)).
+
+Without `--target`, `init` writes each target whose agent directory (`.claude/`
+or `.agents/`) exists in this workspace, and errors if neither does. It needs
+an active store (`monodev checkout -n <store>`): the skill is tracked in it,
+snapshotted, and added to the managed exclude block, so `git status` stays
+clean. A skill under an already-tracked directory (for example after
+`track --agents`) is committed through that directory. `init` refuses to
+overwrite an existing `SKILL.md` unless `--force` (`-f`); rerun with `--force`
+after upgrading monodev. `show` prints the skill to stdout.
+
+### Agent notes layout
+
+Notes and scripts are plain files in a store overlay; monodev has no schema or
+index for them. By convention:
+
+- `.agents/notes/lessons.md`: short durable lessons, edited in place.
+- `.agents/notes/sessions/<date>-<agent>-<id>.md`: one file per session, so
+  parallel agents never write the same file and `pull` never hits a content
+  conflict.
+- `.agents/scripts/`: helper scripts.
+
+Track the directories once (`monodev track .agents/notes .agents/scripts`);
+`save` picks up new files under them. Decisions that bind everyone (ADRs) and
+gotchas true for every contributor belong in reviewed, committed repo docs.
+
+### Other tooling
 
 ```bash
 monodev version

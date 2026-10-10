@@ -44,8 +44,12 @@ type workspacePathOwnership struct {
 	Checksum  string    `json:"checksum,omitempty"`
 }
 
+func workspaceReferencesDir(repoRoot string) string {
+	return filepath.Join(repoRoot, ".monodev", "persist", "workspaces")
+}
+
 func workspaceReferencePath(repoRoot, workspaceID string) string {
-	return filepath.Join(repoRoot, ".monodev", "persist", "workspaces", workspaceID+".json")
+	return filepath.Join(workspaceReferencesDir(repoRoot), workspaceID+".json")
 }
 
 func (s *Syncer) prepareWorkspaceReference(req *PushRequest) (string, []byte, error) {

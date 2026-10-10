@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/danieljhkim/monodev/internal/gitx"
-	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -89,25 +88,14 @@ func runPull(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get current directory: %w", err)
 		}
-		fingerprint, err := gitRepo.Fingerprint(repoRoot)
+		identity, err := localWorkspaceIdentity(gitRepo, repoRoot, cwd)
 		if err != nil {
-			return fmt.Errorf("failed to get local repository fingerprint: %w", err)
+			return err
 		}
-		_, repositoryIdentity, err := gitRepo.GetFingerprintComponents(repoRoot)
-		if err != nil || repositoryIdentity == "" {
-			if err != nil {
-				return fmt.Errorf("failed to determine portable repository identity: %w", err)
-			}
-			return fmt.Errorf("failed to determine portable repository identity: no remote origin URL")
-		}
-		workspacePath, err := gitRepo.RelPath(repoRoot, cwd)
-		if err != nil {
-			return fmt.Errorf("failed to compute workspace path: %w", err)
-		}
-		req.LocalWorkspaceID = state.ComputeWorkspaceID(fingerprint, workspacePath)
-		req.RepoFingerprint = fingerprint
-		req.RepositoryIdentity = repositoryIdentity
-		req.WorkspacePath = workspacePath
+		req.LocalWorkspaceID = identity.localWorkspaceID
+		req.RepoFingerprint = identity.fingerprint
+		req.RepositoryIdentity = identity.repositoryIdentity
+		req.WorkspacePath = identity.workspacePath
 	}
 
 	// Execute pull
