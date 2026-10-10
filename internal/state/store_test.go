@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -275,11 +276,63 @@ func TestFileStateStore_MigratesLegacyStackOnLoad(t *testing.T) {
 	}
 }
 
+func TestFileStateStoreRejectsInvalidWorkspaceDocuments(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{name: "null", data: `null`},
+		{name: "null with whitespace", data: " \nnull\t "},
+		{name: "empty array", data: `[]`},
+		{name: "array of objects", data: `[{"schemaVersion":2}]`},
+		{name: "string", data: `"workspace"`},
+		{name: "number", data: `42`},
+		{name: "boolean", data: `true`},
+		{name: "empty", data: ""},
+		{name: "whitespace", data: " \n\t"},
+		{name: "truncated object", data: `{"schemaVersion":2`},
+		{name: "malformed object", data: `{"schemaVersion":}`},
+		{name: "trailing document", data: `{"schemaVersion":2} null`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspacesDir := t.TempDir()
+			workspaceID := "invalid-workspace"
+			path := filepath.Join(workspacesDir, workspaceID+".json")
+			original := []byte(tt.data)
+			if err := os.WriteFile(path, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := NewFileStateStore(fsops.NewRealFS(), workspacesDir).LoadWorkspace(workspaceID)
+			if err == nil {
+				t.Fatalf("LoadWorkspace() = %#v, nil; want invalid document error", got)
+			}
+			if got != nil {
+				t.Fatalf("LoadWorkspace() state = %#v, want nil on refusal", got)
+			}
+			for _, want := range []string{path, "non-null JSON object"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("LoadWorkspace() error = %q, want %q", err, want)
+				}
+			}
+			persisted, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(persisted, original) {
+				t.Fatalf("refused document changed: got %q, want %q", persisted, original)
+			}
+		})
+	}
+}
+
 func TestFileStateStoreRejectsFutureSchemaVersion(t *testing.T) {
 	workspacesDir := t.TempDir()
 	workspaceID := "future-workspace"
 	path := filepath.Join(workspacesDir, workspaceID+".json")
-	if err := os.WriteFile(path, []byte(`{"schemaVersion":3}`), 0600); err != nil {
+	original := []byte(`{"schemaVersion":3}`)
+	if err := os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -291,5 +344,12 @@ func TestFileStateStoreRejectsFutureSchemaVersion(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("LoadWorkspace() error = %q, want %q", err, want)
 		}
+	}
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(persisted, original) {
+		t.Fatalf("future-schema document changed: got %q, want %q", persisted, original)
 	}
 }
