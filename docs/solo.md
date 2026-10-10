@@ -60,12 +60,8 @@ monodev unapply
 monodev apply
 ```
 
-`unapply` with no arguments removes the active store's overlay. Re-apply by
-id if the workspace no longer has an active store:
-
-```bash
-monodev apply agent-context
-```
+`unapply` with no arguments removes the active store's overlay and leaves the
+store active, so a bare `apply` restores it.
 
 Several stores in one directory:
 

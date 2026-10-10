@@ -27,6 +27,22 @@ func workspaceRemoveAllCalls(paths []string) []string {
 	return filtered
 }
 
+// assertWorkspaceUnapplied checks that a full unapply keeps the workspace
+// state with its active store, so a bare apply can restore the overlay.
+func assertWorkspaceUnapplied(t *testing.T, stateStore state.StateStore, workspaceID, wantActive string) {
+	t.Helper()
+	ws, err := stateStore.LoadWorkspace(workspaceID)
+	if err != nil {
+		t.Fatalf("load workspace after unapply: %v", err)
+	}
+	if ws.ActiveStore != wantActive {
+		t.Fatalf("ActiveStore = %q, want %q", ws.ActiveStore, wantActive)
+	}
+	if ws.Applied || len(ws.Paths) != 0 || len(ws.AppliedStores) != 0 {
+		t.Fatalf("workspace after unapply = applied %v, paths %v, applied stores %v; want none", ws.Applied, ws.Paths, ws.AppliedStores)
+	}
+}
+
 func newUnapplyDriftEngine(gitRepo *trackGitRepo, stateStore *mockStateStore, fs *removeCapturingFS, hasher *hash.FakeHasher) *Engine {
 	return New(
 		gitRepo,
@@ -241,9 +257,7 @@ func TestUnapply_AllRemovesEveryLedgerOwner(t *testing.T) {
 	if got, want := workspaceRemoveAllCalls(fs.removed), []string{"/repo/stack/config.yml", "/repo/active.yml"}; !slices.Equal(got, want) {
 		t.Fatalf("RemoveAll calls = %v, want %v", got, want)
 	}
-	if _, err := stateStore.LoadWorkspace(workspaceID); !os.IsNotExist(err) {
-		t.Fatalf("workspace state after --all = %v, want missing", err)
-	}
+	assertWorkspaceUnapplied(t, stateStore, workspaceID, "active-store")
 }
 
 func TestUnapply_MissingCopyAndSymlinkPathsStillRemoveStateEntries(t *testing.T) {
@@ -625,8 +639,13 @@ func TestUnapply_UnchangedCopiedDirectoryRemovesCompletely(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoRoot, "scripts")); !os.IsNotExist(err) {
 		t.Fatalf("scripts still exists after unapply, err=%v", err)
 	}
-	if _, err := stateStore.LoadWorkspace(workspaceID); !os.IsNotExist(err) {
-		t.Fatalf("expected workspace state deleted, err=%v", err)
+	assertWorkspaceUnapplied(t, stateStore, workspaceID, "active-store")
+
+	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, Mode: "copy"}); err != nil {
+		t.Fatalf("bare Apply after unapply: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, "scripts", "init.sh")); err != nil {
+		t.Fatalf("scripts not restored by bare apply: %v", err)
 	}
 }
 
@@ -644,9 +663,7 @@ func TestUnapply_ForceRemovesDriftedCopiedDirectory(t *testing.T) {
 	if _, err := os.Stat(fx.scriptsDir); !os.IsNotExist(err) {
 		t.Fatalf("scripts still exists after force unapply, err=%v", err)
 	}
-	if _, err := fx.stateStore.LoadWorkspace(fx.workspaceID); !os.IsNotExist(err) {
-		t.Fatalf("expected workspace state deleted, err=%v", err)
-	}
+	assertWorkspaceUnapplied(t, fx.stateStore, fx.workspaceID, "active-store")
 }
 
 func TestUnapply_LegacyCopiedDirectoryWithoutManifestFailsWithoutForce(t *testing.T) {

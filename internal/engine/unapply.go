@@ -17,7 +17,7 @@ import (
 //  1. Discover repo and load workspace state (must exist)
 //  2. Collect paths owned by the requested stores
 //  3. Remove paths in deepest-first order
-//  4. Delete workspace state when no managed paths remain
+//  4. Delete workspace state when no managed paths and no active store remain
 func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResult, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, err
@@ -131,9 +131,11 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	for _, relPath := range removed {
 		delete(final.Paths, relPath)
 	}
-	deleteState := len(final.Paths) == 0
+	// Keep the state file while it still records an active store, so a bare
+	// `apply` after a full unapply re-applies the same store.
+	deleteState := len(final.Paths) == 0 && final.ActiveStore == ""
 	if !deleteState {
-		final.Applied = true
+		final.Applied = len(final.Paths) > 0
 		final.PruneAppliedStores()
 	}
 

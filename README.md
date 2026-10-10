@@ -4,7 +4,7 @@ Coding agents leave files in your repo that don't belong in git: `.claude/`,
 `AGENTS.md`, `.cursorrules`, scratch scripts, local env files. Commit them and
 they pollute history; delete them and you lose the context.
 
-monodev keeps them in a **store** and overlays them onto your checkout. The
+A monodev **store** holds them and overlays them onto your checkout. The
 files are on disk for you and your agents, and git never sees them.
 
 ```console
@@ -13,19 +13,21 @@ $ git status --short
 ?? .cursorrules
 ?? AGENTS.md
 ?? debug_helper.py
-
-$ monodev checkout -n agent-context   # create and activate a store
-$ monodev track --agents              # track the agent paths that exist
-$ monodev track debug_helper.py
-$ monodev commit --all                # copy tracked paths into the store
-$ monodev apply                       # overlay the store and hide it from git
-
-$ git status --short                  # clean; the files are still on disk
 ```
+
+```bash
+monodev checkout -n agent-context   # create and activate a store
+monodev track --agents              # track the agent paths that exist
+monodev track debug_helper.py
+monodev commit --all                # copy tracked paths into the store
+monodev apply                       # overlay the store and hide it from git
+```
+
+`git status` is now clean, and the files are still on disk.
 
 `apply` copies the store's files into the working tree and lists them in a
 managed block in `.git/info/exclude`. `unapply` removes the copies; the store
-keeps them. Stores can be pushed to an orphan branch (`monodev/persist`) so
+keeps them, and a bare `apply` brings them back. Stores can be pushed to an orphan branch (`monodev/persist`) so
 they follow you to other clones without touching `main`.
 
 ![monodev preview](docs/assets/cli_preview.png)
@@ -76,9 +78,7 @@ monodev eject                  # detach the workspace, keep the files
 monodev doctor [--fix]         # diagnose and repair local state
 ```
 
-When `unapply` removes a workspace's last overlay it also forgets the active
-store, so bring it back with `monodev apply <store>` rather than a bare
-`apply`. `push` refuses payloads with detected secrets unless you pass
+`push` refuses payloads with detected secrets unless you pass
 `--allow-secrets`.
 
 Every flag: [docs/commands.md](docs/commands.md).

@@ -11,6 +11,9 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ## [Unreleased]
 
+### Fixed
+- `unapply` no longer forgets the active store when it removes the workspace's last overlay, so a bare `apply` restores it instead of failing with `no active store set`.
+
 ## [0.3.0] — 2026-08-30
 
 ### Breaking Changes

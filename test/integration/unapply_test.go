@@ -38,6 +38,22 @@ func assertWorkspaceDeleted(t *testing.T, stateStore *testStateStore, workspaceI
 	}
 }
 
+// assertWorkspaceUnapplied checks that a full unapply keeps the workspace
+// state with its active store, so a bare apply can restore the overlay.
+func assertWorkspaceUnapplied(t *testing.T, stateStore *testStateStore, workspaceID, wantActive string) {
+	t.Helper()
+	ws, err := stateStore.LoadWorkspace(workspaceID)
+	if err != nil {
+		t.Fatalf("expected workspace state to remain, got err=%v", err)
+	}
+	if ws.ActiveStore != wantActive {
+		t.Fatalf("ActiveStore = %q, want %q", ws.ActiveStore, wantActive)
+	}
+	if ws.Applied || len(ws.Paths) != 0 || len(ws.AppliedStores) != 0 {
+		t.Fatalf("workspace after unapply = applied %v, paths %v, applied stores %v; want none", ws.Applied, ws.Paths, ws.AppliedStores)
+	}
+}
+
 func TestUnapply_DeepestFirstRemoval(t *testing.T) {
 	eng, fs, stateStore, _, _ := setupTestEngine(t)
 	ctx := context.Background()
@@ -101,8 +117,8 @@ func TestUnapply_DeepestFirstRemoval(t *testing.T) {
 		}
 	}
 
-	// Verify workspace state was deleted (all paths removed)
-	assertWorkspaceDeleted(t, stateStore, workspaceID)
+	// Verify workspace state kept its active store (all paths removed)
+	assertWorkspaceUnapplied(t, stateStore, workspaceID, "store1")
 }
 
 func TestUnapply_StateCleanup(t *testing.T) {
@@ -147,7 +163,53 @@ func TestUnapply_StateCleanup(t *testing.T) {
 		}
 	}
 
-	// Verify workspace state was deleted (all paths removed)
+	// Verify workspace state kept its active store (all paths removed)
+	assertWorkspaceUnapplied(t, stateStore, workspaceID, "store1")
+}
+
+func TestUnapply_StateDeletedWithoutActiveStore(t *testing.T) {
+	eng, fs, stateStore, _, _ := setupTestEngine(t)
+	ctx := context.Background()
+
+	// Setup workspace state
+	workspaceID := state.ComputeWorkspaceID("repo-fingerprint-123", "workspace")
+	workspaceState := state.NewWorkspaceState("repo-fingerprint-123", "workspace", "symlink")
+	workspaceState.Applied = true
+	workspaceState.Paths = map[string]state.PathOwnership{
+		"file1.txt": {
+			Store: "store1",
+			Type:  "symlink",
+		},
+		"file2.txt": {
+			Store: "store1",
+			Type:  "symlink",
+		},
+	}
+	_ = stateStore.SaveWorkspace(workspaceID, workspaceState)
+
+	cwd := "/repo/workspace"
+	fs.symlinks[filepath.Join(cwd, "file1.txt")] = "/store1/file1.txt"
+	fs.symlinks[filepath.Join(cwd, "file2.txt")] = "/store1/file2.txt"
+
+	// Unapply
+	req := &engine.UnapplyRequest{
+		CWD:      cwd,
+		StoreIDs: []string{"store1"},
+	}
+
+	result, err := eng.Unapply(ctx, req)
+	if err != nil {
+		t.Fatalf("Unapply() error = %v", err)
+	}
+
+	assertRemovedOrder(t, result.Removed, []string{"file2.txt", "file1.txt"})
+	for _, path := range result.Removed {
+		if _, ok := fs.symlinks[filepath.Join(cwd, path)]; ok {
+			t.Errorf("expected %q to be removed from filesystem", path)
+		}
+	}
+
+	// With no active store to remember, the empty state is deleted
 	assertWorkspaceDeleted(t, stateStore, workspaceID)
 }
 
@@ -365,7 +427,7 @@ func TestUnapply_DriftDetection(t *testing.T) {
 		if _, ok := fs.files[configPath]; ok {
 			t.Fatal("expected force unapply to remove drifted copy")
 		}
-		assertWorkspaceDeleted(t, stateStore, workspaceID)
+		assertWorkspaceUnapplied(t, stateStore, workspaceID, "store1")
 	})
 }
 
@@ -403,8 +465,8 @@ func TestUnapply_ForceMode(t *testing.T) {
 
 	assertRemovedOrder(t, result.Removed, []string{"file.txt"})
 
-	// Verify workspace state was deleted
-	assertWorkspaceDeleted(t, stateStore, workspaceID)
+	// Verify workspace state kept its active store
+	assertWorkspaceUnapplied(t, stateStore, workspaceID, "store1")
 }
 
 func TestUnapply_NoState(t *testing.T) {
@@ -605,7 +667,7 @@ func TestUnapply_CopiedDirectoryProtectsUserChanges(t *testing.T) {
 	if _, err := os.Stat(scriptsDir); !os.IsNotExist(err) {
 		t.Fatalf("expected force unapply to remove scripts, err=%v", err)
 	}
-	assertWorkspaceDeleted(t, stateStore, workspaceID)
+	assertWorkspaceUnapplied(t, stateStore, workspaceID, "store1")
 }
 
 func TestUnapply_UnchangedCopiedDirectoryCleansOwnershipState(t *testing.T) {
@@ -648,7 +710,7 @@ func TestUnapply_UnchangedCopiedDirectoryCleansOwnershipState(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repoRoot, "scripts")); !os.IsNotExist(err) {
 		t.Fatalf("expected scripts to be removed, err=%v", err)
 	}
-	assertWorkspaceDeleted(t, stateStore, workspaceID)
+	assertWorkspaceUnapplied(t, stateStore, workspaceID, "store1")
 }
 
 func TestUnapply_LegacyCopiedDirectoryWithoutManifestIsConservative(t *testing.T) {
