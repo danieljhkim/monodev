@@ -224,3 +224,186 @@ func TestSkillInit_CommitsCoveringTrackedDirectory(t *testing.T) {
 		t.Fatalf("git status after skill init = %q, want clean", status)
 	}
 }
+
+// skillSymlinkFixture is a store-backed repo plus a sibling directory that
+// stands for files outside the workspace.
+func skillSymlinkFixture(t *testing.T) (repo, outside string) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	configureTestGitIdentity(t)
+	repo = initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "initial")
+	outside = t.TempDir()
+	chdir(t, repo)
+	runCLI(t, "checkout", "-n", "agent-context")
+	return repo, outside
+}
+
+func assertDirEmpty(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("%s was modified: %v", dir, entries)
+	}
+}
+
+func TestSkillInit_SymlinkedAncestorWritesNothingOutside(t *testing.T) {
+	for _, tc := range []struct {
+		target string
+		dir    string
+	}{
+		{"claude", ".claude"},
+		{"agents", ".agents"},
+	} {
+		for _, force := range []bool{false, true} {
+			name := tc.target
+			args := []string{"skill", "init", "--target", tc.target}
+			if force {
+				name += "-force"
+				args = append(args, "--force")
+			}
+			t.Run(name, func(t *testing.T) {
+				repo, outside := skillSymlinkFixture(t)
+				if err := os.Symlink(outside, filepath.Join(repo, tc.dir)); err != nil {
+					t.Fatal(err)
+				}
+				err := runCLIErr(t, args...)
+				if err == nil || !strings.Contains(err.Error(), "symlink") {
+					t.Fatalf("skill init error = %v, want a symlink refusal", err)
+				}
+				assertDirEmpty(t, outside)
+			})
+		}
+	}
+}
+
+func TestSkillInit_AllRefusesBeforeWritingAnyTarget(t *testing.T) {
+	repo, outside := skillSymlinkFixture(t)
+	if err := os.Symlink(outside, filepath.Join(repo, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	err := runCLIErr(t, "skill", "init", "--target", "all", "--force")
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("skill init --target all error = %v, want a symlink refusal", err)
+	}
+	assertDirEmpty(t, outside)
+	if _, statErr := os.Lstat(filepath.Join(repo, ".claude")); !os.IsNotExist(statErr) {
+		t.Fatalf("safe target was written before the unsafe target was refused: %v", statErr)
+	}
+}
+
+func TestSkillInit_SymlinkedLeafKeepsExternalTarget(t *testing.T) {
+	for _, target := range []string{"claude", "agents"} {
+		for _, force := range []bool{false, true} {
+			name := target
+			args := []string{"skill", "init", "--target", target}
+			if force {
+				name += "-force"
+				args = append(args, "--force")
+			}
+			t.Run(name, func(t *testing.T) {
+				repo, outside := skillSymlinkFixture(t)
+				var rel string
+				for _, st := range skillTargets {
+					if st.name == target {
+						rel = st.path
+					}
+				}
+				if err := os.MkdirAll(filepath.Dir(filepath.Join(repo, rel)), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				sentinel := filepath.Join(outside, "sentinel")
+				if err := os.WriteFile(sentinel, []byte("keep\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(sentinel, filepath.Join(repo, rel)); err != nil {
+					t.Fatal(err)
+				}
+				if err := runCLIErr(t, args...); err == nil {
+					t.Fatal("skill init succeeded over a SKILL.md symlink")
+				}
+				got, err := os.ReadFile(sentinel)
+				if err != nil || string(got) != "keep\n" {
+					t.Fatalf("external sentinel = %q, %v; want unchanged", got, err)
+				}
+				if info, err := os.Lstat(filepath.Join(repo, rel)); err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("SKILL.md symlink was altered: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestSkillInit_ReplacementAfterPreflightIsConfined(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		replace func(t *testing.T, repo, outside string)
+	}{
+		{"ancestor", func(t *testing.T, repo, outside string) {
+			if err := os.RemoveAll(filepath.Join(repo, ".agents")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(repo, ".agents")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"leaf", func(t *testing.T, repo, outside string) {
+			leaf := filepath.Join(repo, ".agents", "skills", "monodev", "SKILL.md")
+			if err := os.Remove(leaf); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(outside, "sentinel"), []byte("keep\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(outside, "sentinel"), leaf); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, outside := skillSymlinkFixture(t)
+			runCLI(t, "skill", "init", "--target", "agents")
+			skillBeforeWrite = func() { tc.replace(t, repo, outside) }
+			t.Cleanup(func() { skillBeforeWrite = nil })
+
+			// The leaf swap is replaced in place rather than followed, so
+			// the command may succeed; only the external file must survive.
+			_ = runCLIErr(t, "skill", "init", "--target", "agents", "--force")
+			entries, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range entries {
+				if e.Name() != "sentinel" {
+					t.Fatalf("write escaped to %s", e.Name())
+				}
+			}
+			if got, err := os.ReadFile(filepath.Join(outside, "sentinel")); tc.name == "leaf" && (err != nil || string(got) != "keep\n") {
+				t.Fatalf("external sentinel = %q, %v; want unchanged", got, err)
+			}
+		})
+	}
+}
+
+func TestSkillInit_ForceStillRewritesOrdinaryFile(t *testing.T) {
+	repo, _ := skillSymlinkFixture(t)
+	runCLI(t, "skill", "init", "--target", "agents")
+	rel := filepath.Join(repo, ".agents", "skills", "monodev", "SKILL.md")
+	if err := os.WriteFile(rel, []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCLIErr(t, "skill", "init", "--target", "agents"); err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("non-force error = %v, want a --force refusal", err)
+	}
+	if got, _ := os.ReadFile(rel); string(got) != "stale\n" {
+		t.Fatal("non-force run modified an existing skill")
+	}
+	runCLI(t, "skill", "init", "--target", "agents", "--force")
+	if got, _ := os.ReadFile(rel); string(got) != renderSkill(rootCmd) {
+		t.Fatal("--force did not regenerate the skill")
+	}
+}
