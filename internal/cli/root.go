@@ -167,8 +167,17 @@ func init() {
 		Use:     "help [command]",
 		Short:   "Help about any command",
 		GroupID: "cli-tooling",
-		Run: func(cmd *cobra.Command, args []string) {
-			_ = cmd.Root().Help()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target, remaining, err := cmd.Root().Find(args)
+			if err != nil {
+				return err
+			}
+			if len(remaining) > 0 {
+				return fmt.Errorf("unknown command %q for %q", remaining[0], target.CommandPath())
+			}
+			target.InitDefaultHelpFlag()
+			target.InitDefaultVersionFlag()
+			return target.Help()
 		},
 	}
 	rootCmd.SetHelpCommand(helpCmd)
