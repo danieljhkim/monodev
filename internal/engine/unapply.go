@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
@@ -179,13 +180,16 @@ func (e *Engine) validateManagedPath(absPath, relPath string, ownership state.Pa
 		return nil
 	}
 
-	if ownership.Type != "copy" {
-		return nil
-	}
-
 	info, err := e.fs.Lstat(absPath)
 	if err != nil {
 		return fmt.Errorf("failed to stat path: %w", err)
+	}
+
+	if ownership.Type != "copy" {
+		if ownership.Type == "symlink" {
+			return e.validateManagedSymlink(absPath, relPath, ownership, info)
+		}
+		return nil
 	}
 	if info.IsDir() || ownership.Contents != nil {
 		if !info.IsDir() {
@@ -206,6 +210,47 @@ func (e *Engine) validateManagedPath(absPath, relPath string, ownership state.Pa
 	}
 
 	return nil
+}
+
+// validateManagedSymlink checks that a symlink-owned path is still the link
+// that apply created. Content changes behind an intact link are not drift, but
+// replacing the link with a file, directory or a link to somewhere else is.
+// The expected target is the owning store's overlay path; when the store can no
+// longer be resolved only the "still a symlink" check applies.
+func (e *Engine) validateManagedSymlink(absPath, relPath string, ownership state.PathOwnership, info os.FileInfo) error {
+	if info.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("%w: %w: managed symlink %s was replaced by user content; %s", ErrValidation, ErrDrift, relPath, forceUnapplyHint)
+	}
+
+	expected := e.expectedSymlinkTargets(ownership.Store, relPath)
+	if len(expected) == 0 {
+		return nil
+	}
+	target, err := e.fs.Readlink(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to read symlink %s: %w", relPath, err)
+	}
+	if !slices.Contains(expected, filepath.Clean(target)) {
+		return fmt.Errorf("%w: %w: managed symlink %s now points to %s; %s", ErrValidation, ErrDrift, relPath, target, forceUnapplyHint)
+	}
+	return nil
+}
+
+// expectedSymlinkTargets returns the overlay paths a symlink-mode apply of
+// storeID could have linked relPath to, one per location of the store.
+func (e *Engine) expectedSymlinkTargets(storeID, relPath string) []string {
+	if e.storeResolver == nil {
+		return nil
+	}
+	locations, err := e.storeResolver.findStore(storeID)
+	if err != nil {
+		return nil
+	}
+	targets := make([]string, 0, len(locations))
+	for _, loc := range locations {
+		targets = append(targets, filepath.Clean(filepath.Join(loc.Repo.OverlayRoot(storeID), relPath)))
+	}
+	return targets
 }
 
 // countPathSeparators counts the number of path separators in a path.

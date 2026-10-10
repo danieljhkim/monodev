@@ -277,14 +277,12 @@ func TestUnapply_MissingCopyAndSymlinkPathsStillRemoveStateEntries(t *testing.T)
 			},
 		},
 		{
-			name:    "symlink skips checksum drift validation",
+			name:    "missing symlink",
 			relPath: "linked.yml",
 			ownership: state.PathOwnership{
-				Store:    "active-store",
-				Type:     "symlink",
-				Checksum: "original-checksum",
+				Store: "active-store",
+				Type:  "symlink",
 			},
-			existing: []string{"/repo/linked.yml"},
 		},
 	}
 
@@ -750,5 +748,163 @@ func TestUnapply_RefusedSymlinkedAncestorLeavesOutsidePrefixFiles(t *testing.T) 
 	}
 	for path, content := range sentinels {
 		assertFileContent(t, path, content)
+	}
+}
+
+type symlinkUnapplyFixture struct {
+	repoRoot    string
+	overlayRoot string
+	linkPath    string
+	workspaceID string
+	stateStore  *mockStateStore
+	eng         *Engine
+}
+
+// setupSymlinkUnapplyFixture applies a.txt in symlink mode against a real
+// filesystem: the overlay file exists and the workspace path links to it.
+func setupSymlinkUnapplyFixture(t *testing.T) *symlinkUnapplyFixture {
+	t.Helper()
+	repoRoot := t.TempDir()
+	overlayRoot := filepath.Join(t.TempDir(), "overlay")
+	writeCopiedDirFile(t, filepath.Join(overlayRoot, "a.txt"), "overlay content\n")
+	linkPath := filepath.Join(repoRoot, "a.txt")
+	requireEngineSymlink(t, filepath.Join(overlayRoot, "a.txt"), linkPath)
+
+	stateStore := newMockStateStore()
+	workspaceID := state.ComputeWorkspaceID("fp1", ".")
+	ws := state.NewWorkspaceState("fp1", ".", "symlink")
+	ws.Applied = true
+	ws.ActiveStore = "active-store"
+	ws.AppliedStores = []state.AppliedStore{{Store: "active-store", Type: "symlink"}}
+	ws.Paths["a.txt"] = state.PathOwnership{Store: "active-store", Type: "symlink"}
+	stateStore.workspaces[workspaceID] = ws
+
+	storeRepo := &realOverlayStoreRepo{trackStoreRepo: newTrackStoreRepo(), overlayRoot: overlayRoot}
+	eng := New(
+		&trackGitRepo{root: repoRoot, fingerprint: "fp1", workspacePath: "."},
+		storeRepo,
+		stateStore,
+		fsops.NewRealFS(),
+		hash.NewSHA256Hasher(),
+		&mockClock{},
+		config.Paths{Root: filepath.Join(repoRoot, ".monodev"), Stores: filepath.Dir(overlayRoot), Workspaces: filepath.Join(repoRoot, ".state")},
+	)
+	return &symlinkUnapplyFixture{
+		repoRoot:    repoRoot,
+		overlayRoot: overlayRoot,
+		linkPath:    linkPath,
+		workspaceID: workspaceID,
+		stateStore:  stateStore,
+		eng:         eng,
+	}
+}
+
+func (fx *symlinkUnapplyFixture) assertLedgerKeeps(t *testing.T, relPath string) {
+	t.Helper()
+	ws, err := fx.stateStore.LoadWorkspace(fx.workspaceID)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if _, ok := ws.Paths[relPath]; !ok {
+		t.Fatalf("ledger lost %s after refused unapply: %v", relPath, ws.Paths)
+	}
+}
+
+func TestUnapply_SymlinkIntactLinkIsRemoved(t *testing.T) {
+	fx := setupSymlinkUnapplyFixture(t)
+
+	// Content changes behind an intact link are not drift.
+	writeCopiedDirFile(t, filepath.Join(fx.overlayRoot, "a.txt"), "edited overlay\n")
+
+	result, err := fx.eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot})
+	if err != nil {
+		t.Fatalf("Unapply: %v", err)
+	}
+	if !slices.Equal(result.Removed, []string{"a.txt"}) {
+		t.Fatalf("Removed = %v, want [a.txt]", result.Removed)
+	}
+	if _, err := os.Lstat(fx.linkPath); !os.IsNotExist(err) {
+		t.Fatalf("Lstat(link) error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(filepath.Join(fx.overlayRoot, "a.txt")); err != nil {
+		t.Fatalf("overlay file must survive unapply: %v", err)
+	}
+	assertWorkspaceUnapplied(t, fx.stateStore, fx.workspaceID, "active-store")
+}
+
+func TestUnapply_SymlinkReplacedByUserContentFailsWithoutForce(t *testing.T) {
+	tests := []struct {
+		name    string
+		replace func(t *testing.T, fx *symlinkUnapplyFixture)
+		// verify checks the user content is untouched after the refusal.
+		verify func(t *testing.T, fx *symlinkUnapplyFixture)
+	}{
+		{
+			name: "regular file",
+			replace: func(t *testing.T, fx *symlinkUnapplyFixture) {
+				if err := os.Remove(fx.linkPath); err != nil {
+					t.Fatal(err)
+				}
+				writeCopiedDirFile(t, fx.linkPath, "user work\n")
+			},
+			verify: func(t *testing.T, fx *symlinkUnapplyFixture) {
+				got, err := os.ReadFile(fx.linkPath)
+				if err != nil || string(got) != "user work\n" {
+					t.Fatalf("user file = %q, %v; want preserved", got, err)
+				}
+			},
+		},
+		{
+			name: "directory with user files",
+			replace: func(t *testing.T, fx *symlinkUnapplyFixture) {
+				if err := os.Remove(fx.linkPath); err != nil {
+					t.Fatal(err)
+				}
+				writeCopiedDirFile(t, filepath.Join(fx.linkPath, "valuable.txt"), "user work\n")
+			},
+			verify: func(t *testing.T, fx *symlinkUnapplyFixture) {
+				got, err := os.ReadFile(filepath.Join(fx.linkPath, "valuable.txt"))
+				if err != nil || string(got) != "user work\n" {
+					t.Fatalf("user directory file = %q, %v; want preserved", got, err)
+				}
+			},
+		},
+		{
+			name: "link retargeted elsewhere",
+			replace: func(t *testing.T, fx *symlinkUnapplyFixture) {
+				other := filepath.Join(t.TempDir(), "other.txt")
+				writeCopiedDirFile(t, other, "other\n")
+				if err := os.Remove(fx.linkPath); err != nil {
+					t.Fatal(err)
+				}
+				requireEngineSymlink(t, other, fx.linkPath)
+			},
+			verify: func(t *testing.T, fx *symlinkUnapplyFixture) {
+				target, err := os.Readlink(fx.linkPath)
+				if err != nil || filepath.Base(target) != "other.txt" {
+					t.Fatalf("Readlink = %q, %v; want retargeted link preserved", target, err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := setupSymlinkUnapplyFixture(t)
+			tt.replace(t, fx)
+
+			_, err := fx.eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot})
+			assertCopiedDirDriftError(t, err, "a.txt")
+			tt.verify(t, fx)
+			fx.assertLedgerKeeps(t, "a.txt")
+
+			// An explicit force still removes whatever sits at the path.
+			if _, err := fx.eng.Unapply(context.Background(), &UnapplyRequest{CWD: fx.repoRoot, Force: true}); err != nil {
+				t.Fatalf("forced Unapply: %v", err)
+			}
+			if _, err := os.Lstat(fx.linkPath); !os.IsNotExist(err) {
+				t.Fatalf("Lstat after force = %v, want not exist", err)
+			}
+		})
 	}
 }
