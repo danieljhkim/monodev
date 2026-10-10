@@ -416,6 +416,43 @@ func TestStoreRmCommand_JSONExitStatus(t *testing.T) {
 	})
 }
 
+func TestRemoteShowMissingRemoteJSONAndPlainOutput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONODEV_ROOT", "")
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+
+	runCLI(t, "remote", "use", "origin")
+	runGit(t, repo, "remote", "remove", "origin")
+
+	jsonOutput, err := executeJSONCommand(t, "remote", "show", "--json")
+	if err != nil {
+		t.Fatalf("remote show --json returned an error: %v\n%s", err, jsonOutput)
+	}
+	var result struct {
+		Configured bool   `json:"configured"`
+		Remote     string `json:"remote"`
+		URL        string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
+		t.Fatalf("remote show JSON is invalid: %v\n%s", err, jsonOutput)
+	}
+	if !result.Configured || result.Remote != "origin" || result.URL != "(not found)" {
+		t.Fatalf("remote show JSON = %#v, want configured stale origin with URL (not found)", result)
+	}
+	if strings.Contains(jsonOutput, "Remote \"origin\" not found in repository") {
+		t.Fatalf("remote show JSON contains a human warning: %s", jsonOutput)
+	}
+
+	plainOutput := runCLI(t, "remote", "show")
+	if !strings.Contains(plainOutput, "Remote \"origin\" not found in repository") {
+		t.Fatalf("plain remote show output does not explain the missing remote:\n%s", plainOutput)
+	}
+	if !strings.Contains(plainOutput, "URL:     (not found)") {
+		t.Fatalf("plain remote show output does not display the missing URL:\n%s", plainOutput)
+	}
+}
+
 func TestOutputDeleteJSONPropagatesEncoderError(t *testing.T) {
 	encodeErr := errors.New("write failed")
 	if err := outputDeleteJSONTo(errorWriter{err: encodeErr}, nil, errors.New("delete failed")); !errors.Is(err, encodeErr) {
