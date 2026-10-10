@@ -598,6 +598,89 @@ func TestRealFS_RootConfinedFinalPathOperationsDoNotFollowSymlinks(t *testing.T)
 	}
 }
 
+func TestRealFS_RestoreTreeWithinRoot_RecreatesNestedSymlinksAndReplacesLeafLink(t *testing.T) {
+	fs := NewRealFS()
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeCopyFixture(t, filepath.Join(outside, "target.txt"), "outside sentinel")
+	backup := filepath.Join(t.TempDir(), "backup", "dir")
+	writeCopyFixture(t, filepath.Join(backup, "file.txt"), "original file")
+	writeCopyFixture(t, filepath.Join(backup, "sub", "deep.txt"), "original deep")
+	requireSymlink(t, "../file.txt", filepath.Join(backup, "sub", "link"))
+	requireSymlink(t, filepath.Join(outside, "target.txt"), filepath.Join(backup, "abs-link"))
+
+	// The leaf is a symlink to outside: restore must replace it, not write
+	// through it.
+	if err := os.MkdirAll(filepath.Join(root, "nested"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	requireSymlink(t, outside, filepath.Join(root, "nested", "dir"))
+	before := directorySnapshot(t, outside)
+
+	if err := fs.RestoreTreeWithinRoot(root, "nested/dir", backup, "txnA"); err != nil {
+		t.Fatalf("RestoreTreeWithinRoot failed: %v", err)
+	}
+	if got, want := directorySnapshot(t, filepath.Join(root, "nested", "dir")), directorySnapshot(t, backup); got != want {
+		t.Fatalf("restored tree:\n%s\nwant:\n%s", got, want)
+	}
+	if after := directorySnapshot(t, outside); after != before {
+		t.Fatalf("outside tree changed:\n%s", after)
+	}
+	assertNoStagingEntries(t, root)
+
+	if err := fs.RestoreTreeWithinRoot(root, "file.txt", filepath.Join(backup, "file.txt"), ""); err != nil {
+		t.Fatalf("RestoreTreeWithinRoot(file) failed: %v", err)
+	}
+	requireFixtureContent(t, filepath.Join(root, "file.txt"), "original file")
+	if err := fs.RestoreTreeWithinRoot(root, "top-link", filepath.Join(backup, "sub", "link"), ""); err != nil {
+		t.Fatalf("RestoreTreeWithinRoot(symlink) failed: %v", err)
+	}
+	if target, err := os.Readlink(filepath.Join(root, "top-link")); err != nil || target != "../file.txt" {
+		t.Fatalf("restored symlink target = %q, error = %v", target, err)
+	}
+	assertNoStagingEntries(t, root)
+}
+
+func TestRealFS_RestoreTreeWithinRoot_RefusesReplacedAncestor(t *testing.T) {
+	fs := NewRealFS()
+	backup := filepath.Join(t.TempDir(), "backup")
+	writeCopyFixture(t, filepath.Join(backup, "file.txt"), "original file")
+	writeCopyFixture(t, filepath.Join(backup, "dir", "a.txt"), "original a")
+	requireSymlink(t, "a.txt", filepath.Join(backup, "dir", "link"))
+
+	for _, tc := range []struct{ name, relPath, src string }{
+		{"file", "nested/file.txt", filepath.Join(backup, "file.txt")},
+		{"directory", "nested/dir", filepath.Join(backup, "dir")},
+		{"symlink", "nested/link", filepath.Join(backup, "dir", "link")},
+		{"deep", "nested/deeper/dir", filepath.Join(backup, "dir")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			outside := t.TempDir()
+			writeCopyFixture(t, filepath.Join(outside, "unrelated.txt"), "outside sentinel")
+			writeCopyFixture(t, filepath.Join(outside, "deeper", "unrelated.txt"), "outside sentinel")
+			requireSymlink(t, outside, filepath.Join(root, "nested"))
+			before := directorySnapshot(t, outside)
+
+			err := fs.RestoreTreeWithinRoot(root, tc.relPath, tc.src, "txnA")
+			if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
+				t.Fatalf("RestoreTreeWithinRoot error = %v, want symlinked ancestor refusal", err)
+			}
+			if after := directorySnapshot(t, outside); after != before {
+				t.Fatalf("outside tree changed:\n%s", after)
+			}
+		})
+	}
+
+	root := t.TempDir()
+	if err := fs.RestoreTreeWithinRoot(root, ".git/config", filepath.Join(backup, "file.txt"), ""); err == nil {
+		t.Fatal("RestoreTreeWithinRoot into .git succeeded, want refusal")
+	}
+	if err := fs.RestoreTreeWithinRoot(root, "file.txt", filepath.Join(backup, "file.txt"), "a/b"); err == nil {
+		t.Fatal("RestoreTreeWithinRoot accepted an invalid owner")
+	}
+}
+
 func TestRealFS_DirectoryCopyRejectsNestedDestination(t *testing.T) {
 	fs := NewRealFS()
 	for _, method := range []string{"Copy", "CopyExcept", "CopyWithinRoot"} {

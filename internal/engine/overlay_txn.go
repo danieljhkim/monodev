@@ -441,17 +441,22 @@ func (e *Engine) restoreOverlayOp(workspaceRoot, txnDir, owner string, op overla
 		return nil
 	}
 	backupPath := filepath.Join(txnDir, filepath.FromSlash(op.BackupRel))
-	return e.restoreDest(backupPath, absDest, workspaceRoot, op.RelPath, owner)
+	return e.restoreDest(backupPath, workspaceRoot, op.RelPath, owner)
 }
 
-func (e *Engine) restoreDest(backupPath, absDest, workspaceRoot, relPath, owner string) error {
-	if _, err := os.Lstat(backupPath); err == nil {
-		if err := restoreTree(backupPath, absDest); err != nil {
-			return fmt.Errorf("failed to restore %s: %w", relPath, err)
-		}
-		return nil
+// restoreDest recreates a backed-up file, directory or symlink tree through the
+// root-confined restore. The removal before it was confined too, but an
+// ancestor can be replaced in between, so the restore must not fall back to
+// absolute-path writes: a filesystem without RootFS fails closed.
+func (e *Engine) restoreDest(backupPath, workspaceRoot, relPath, owner string) error {
+	rootFS, ok := e.fs.(fsops.RootFS)
+	if !ok {
+		return fmt.Errorf("failed to restore %s: filesystem does not support root-confined restore", relPath)
 	}
-	return e.copyOverlayPath(workspaceRoot, relPath, backupPath, owner)
+	if err := rootFS.RestoreTreeWithinRoot(workspaceRoot, relPath, backupPath, owner); err != nil {
+		return fmt.Errorf("failed to restore %s: %w", relPath, err)
+	}
+	return nil
 }
 
 // overlayTempOwner tags the install temps of workspaceID's overlay
@@ -546,10 +551,6 @@ func backupTree(src, dst string) error {
 		return nil
 	}
 	return copyRegularFile(src, dst)
-}
-
-func restoreTree(src, dst string) error {
-	return backupTree(src, dst)
 }
 
 func copyRegularFile(src, dst string) error {

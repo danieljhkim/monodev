@@ -108,6 +108,13 @@ func (f *faultingFS) SymlinkWithinRoot(root, relPath, target string) error {
 	return f.RealFS.SymlinkWithinRoot(root, relPath, target)
 }
 
+func (f *faultingFS) RestoreTreeWithinRoot(root, relPath, src, owner string) error {
+	if err := f.hit(); err != nil {
+		return err
+	}
+	return f.RealFS.RestoreTreeWithinRoot(root, relPath, src, owner)
+}
+
 type failSaveStore struct {
 	*state.FileStateStore
 	fail bool
@@ -631,6 +638,130 @@ func TestOverlayTxn_RollbackRefusesSymlinkedAncestorWithoutTouchingOutside(t *te
 	}
 	if _, err := os.Lstat(filepath.Join(outside, "a.txt")); !os.IsNotExist(err) {
 		t.Fatalf("refused install wrote outside the workspace, lstat err=%v", err)
+	}
+}
+
+// replaceParentAfterRemoveFS swaps the destination parent for a symlink to
+// outside as soon as the confined remove of relPath returns, the way an
+// external process could between rollback's remove and its restore.
+type replaceParentAfterRemoveFS struct {
+	*fsops.RealFS
+	relPath, outside string
+	replaced         bool
+}
+
+func (f *replaceParentAfterRemoveFS) RemoveAllWithinRoot(root, relPath string) error {
+	if err := f.RealFS.RemoveAllWithinRoot(root, relPath); err != nil {
+		return err
+	}
+	if f.replaced || relPath != f.relPath {
+		return nil
+	}
+	f.replaced = true
+	parent := filepath.Join(root, filepath.Dir(relPath))
+	if err := os.Remove(parent); err != nil {
+		return err
+	}
+	return os.Symlink(f.outside, parent)
+}
+
+func TestOverlayTxn_RestoreRefusesParentReplacedAfterRemove(t *testing.T) {
+	for _, mode := range []string{"rollback", "recovery"} {
+		t.Run(mode, func(t *testing.T) {
+			fx := newOverlayTxnFixture(t, "nested/a.txt")
+			fx.requireUserFile(t, "nested/a.txt", "user-original")
+			outside := t.TempDir()
+			sentinels := map[string]string{
+				filepath.Join(outside, "a.txt"):         "outside sentinel",
+				filepath.Join(outside, "unrelated.txt"): "must keep",
+			}
+			for path, content := range sentinels {
+				writeTestFile(t, path, content)
+			}
+			fs := &replaceParentAfterRemoveFS{RealFS: fsops.NewRealFS(), relPath: "nested/a.txt", outside: outside}
+			eng := fx.engine(t, fs, nil)
+			journalPath, txnDir, err := eng.overlayTxnPaths(fx.workspaceID)
+			if err != nil {
+				t.Fatalf("journal paths: %v", err)
+			}
+
+			switch mode {
+			case "rollback":
+				err = eng.runOverlayTxn(context.Background(), overlayTxnRequest{
+					kind:          overlayTxnApply,
+					workspaceID:   fx.workspaceID,
+					workspaceRoot: fx.repoRoot,
+					ops: []planner.Operation{{
+						Type:       planner.OpCopy,
+						SourcePath: filepath.Join(fx.overlayRoot, "nested", "a.txt"),
+						DestPath:   filepath.Join(fx.repoRoot, "nested", "a.txt"),
+						RelPath:    "nested/a.txt",
+					}},
+					finalize: func() (*state.WorkspaceState, bool, error) {
+						return nil, false, errors.New("injected finalize failure")
+					},
+				})
+				if err == nil || !strings.Contains(err.Error(), "injected finalize failure") {
+					t.Fatalf("runOverlayTxn error = %v, want injected finalize failure", err)
+				}
+			case "recovery":
+				writeTestFile(t, filepath.Join(fx.repoRoot, "nested", "a.txt"), "overlay content")
+				writeTestFile(t, filepath.Join(txnDir, "backup", "0", "nested", "a.txt"), "user-original")
+				if err := eng.writeOverlayTxn(journalPath, &overlayTxn{
+					Kind:          overlayTxnApply,
+					WorkspaceID:   fx.workspaceID,
+					WorkspaceRoot: fx.repoRoot,
+					Phase:         overlayTxnPrepared,
+					Ops: []overlayTxnOp{{
+						RelPath:     "nested/a.txt",
+						Type:        planner.OpCopy,
+						DestExisted: true,
+						BackupRel:   "backup/0/nested/a.txt",
+					}},
+				}); err != nil {
+					t.Fatalf("write prepared journal: %v", err)
+				}
+				err = eng.recoverOverlayTxn(context.Background(), fx.workspaceID, fx.repoRoot)
+				if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
+					t.Fatalf("recoverOverlayTxn error = %v, want symlinked destination ancestor refusal", err)
+				}
+			}
+
+			if !fs.replaced {
+				t.Fatal("destination parent was never replaced")
+			}
+			for path, content := range sentinels {
+				assertFileContent(t, path, content)
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != len(sentinels) {
+				t.Fatalf("restore wrote outside the workspace: %v", entries)
+			}
+			// The refused rollback keeps its journal and backup, so recovery
+			// restores the original once the parent is a real directory again.
+			if _, err := os.Stat(journalPath); err != nil {
+				t.Fatalf("refused rollback discarded its journal: %v", err)
+			}
+			parent := filepath.Join(fx.repoRoot, "nested")
+			if err := os.Remove(parent); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(parent, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := fx.engine(t, nil, nil).recoverOverlayTxn(context.Background(), fx.workspaceID, fx.repoRoot); err != nil {
+				t.Fatalf("recover after repairing parent: %v", err)
+			}
+			if got := fx.readWorkspace(t, "nested/a.txt"); got != "user-original" {
+				t.Fatalf("recovered destination = %q, want user-original", got)
+			}
+			for path, content := range sentinels {
+				assertFileContent(t, path, content)
+			}
+		})
 	}
 }
 
