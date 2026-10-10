@@ -99,10 +99,10 @@ This removes `.env.local` from `myrepo-agent-2` only. The main checkout keeps
 its own copy of the file.
 
 Git worktrees share `.git/info/exclude` (it lives in the common git directory).
-Unapply in one worktree updates that shared exclude list, so `git status` in
-another worktree may show the overlaid files as untracked even though those
-files are still on disk. Re-apply there, or run `monodev doctor --fix`, to
-restore the exclude block.
+Unapply rebuilds monodev's managed block from every applied workspace ledger
+whose checkout resolves to that same common git directory. Entries for the
+other worktrees remain, so their still-applied files stay excluded from
+`git status`.
 
 Re-apply by id after unapply:
 

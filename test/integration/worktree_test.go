@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/danieljhkim/monodev/internal/engine"
@@ -150,6 +151,24 @@ func TestWorktree_AppliedLedgerIsIndependentPerWorktree(t *testing.T) {
 	if _, err := os.Stat(devFile); err != nil {
 		t.Errorf("main checkout's applied file was removed by worktree unapply: %v", err)
 	}
+
+	// The shared exclude block must retain the still-applied main ledger's
+	// entry even though the linked worktree no longer contributes any paths.
+	excludes, err := os.ReadFile(filepath.Join(mainDir, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatalf("read shared exclude file after worktree unapply: %v", err)
+	}
+	managedBlock := "# >>> monodev managed block — do not edit <<<\n/local.cfg\n# <<< monodev managed block <<<\n"
+	if !strings.Contains(string(excludes), managedBlock) {
+		t.Errorf("shared managed exclude block lost main checkout's local.cfg entry: %q", excludes)
+	}
+	if ignored := runGit(t, mainDir, "check-ignore", "local.cfg"); ignored != "local.cfg\n" {
+		t.Errorf("main checkout's applied file is no longer ignored: %q", ignored)
+	}
+	if status := runGit(t, mainDir, "status", "--porcelain", "--untracked-files=all", "--", "local.cfg"); status != "" {
+		t.Errorf("main checkout's applied file appeared in git status after worktree unapply: %q", status)
+	}
+
 	mainStatusAfter, err := eng.Status(ctx, &engine.StatusRequest{CWD: mainDir})
 	if err != nil {
 		t.Fatalf("Status (main, after): %v", err)
