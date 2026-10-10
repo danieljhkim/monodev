@@ -37,7 +37,10 @@ git status
 monodev push team-overlay
 ```
 
-No store IDs pushes every local store:
+With no store IDs, `monodev push` pushes only this repository's stores under
+`<repo>/.monodev` (`<repo>/.monodev/stores/`). Stores under `~/.monodev` or
+`MONODEV_ROOT` are shared across repositories and are pushed only when named.
+If there are no repo-local stores, a bare push fails with `no repo-local stores to push`.
 
 ```bash
 monodev push
