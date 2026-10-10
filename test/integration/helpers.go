@@ -46,7 +46,7 @@ func (fs *testFS) Lstat(path string) (os.FileInfo, error) {
 		return info, nil
 	}
 	if _, ok := fs.symlinks[path]; ok {
-		return &mockFileInfo{name: filepath.Base(path), isDir: false}, nil
+		return &mockFileInfo{name: filepath.Base(path), mode: os.ModeSymlink}, nil
 	}
 	if _, ok := fs.dirs[path]; ok {
 		return &mockFileInfo{name: filepath.Base(path), isDir: true}, nil
@@ -123,7 +123,7 @@ func (fs *testFS) RemoveAll(path string) error {
 
 func (fs *testFS) Symlink(oldname, newname string) error {
 	fs.symlinks[newname] = oldname
-	fs.fileInfo[newname] = &mockFileInfo{name: filepath.Base(newname), isDir: false}
+	fs.fileInfo[newname] = &mockFileInfo{name: filepath.Base(newname), mode: os.ModeSymlink}
 	return nil
 }
 
