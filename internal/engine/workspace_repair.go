@@ -78,58 +78,103 @@ func (e *Engine) RebindWorkspace(ctx context.Context, req *RebindWorkspaceReques
 		return nil, fmt.Errorf("failed to resolve repository root: %w", err)
 	}
 
-	ws, sourceStore, err := e.loadWorkspaceRecord(req.WorkspaceID)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: workspace '%s' not found", ErrNotFound, req.WorkspaceID)
+	// The first load only chooses a lock set. A target can be created, or the
+	// source ledger replaced, before those locks are held. Reload after the
+	// locks that cover the fresh source and target, and decide from that
+	// snapshot: without Force a new target is left untouched, and Force
+	// migrates the reloaded source rather than the stale preflight copy.
+	var unlock func()
+	defer func() {
+		if unlock != nil {
+			unlock()
 		}
-		return nil, fmt.Errorf("failed to load workspace: %w", err)
-	}
-	if !workspaceBelongsToRepo(absRoot, ws) {
-		return nil, fmt.Errorf("workspace '%s' does not belong to the current repository", req.WorkspaceID)
+	}()
+
+	var heldSourceID, heldTargetID string
+	var heldSourceStore, heldTargetStore state.StateStore
+	held := false
+
+	for attempt := 0; attempt < rebindLockAttempts; attempt++ {
+		ws, sourceStore, err := e.loadWorkspaceRecord(req.WorkspaceID)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("%w: workspace '%s' not found", ErrNotFound, req.WorkspaceID)
+			}
+			return nil, fmt.Errorf("failed to load workspace: %w", err)
+		}
+		if !workspaceBelongsToRepo(absRoot, ws) {
+			return nil, fmt.Errorf("workspace '%s' does not belong to the current repository", req.WorkspaceID)
+		}
+
+		newID := state.ComputeWorkspaceID(fingerprint, ws.WorkspacePath)
+		targetStore := sourceStore
+		var existing *state.WorkspaceState
+		var existingErr error
+		alreadyCurrent := newID == req.WorkspaceID && ws.Repo == fingerprint
+		if !alreadyCurrent {
+			var existingStore state.StateStore
+			existing, existingStore, existingErr = e.loadWorkspaceRecord(newID)
+			if existingErr != nil && !os.IsNotExist(existingErr) {
+				return nil, fmt.Errorf("failed to load target workspace: %w", existingErr)
+			}
+			targetStore = firstNonNilStore(existingStore, sourceStore)
+		}
+
+		if !rebindLocksCover(held, heldSourceID, heldSourceStore, heldTargetID, heldTargetStore, req.WorkspaceID, sourceStore, newID, targetStore) {
+			if unlock != nil {
+				unlock()
+				unlock = nil
+			}
+			next, lockErr := e.lockWorkspaces(ctx,
+				workspaceLockRequest{store: sourceStore, id: req.WorkspaceID, mode: lockfile.Exclusive},
+				workspaceLockRequest{store: targetStore, id: newID, mode: lockfile.Exclusive},
+			)
+			if lockErr != nil {
+				return nil, lockErr
+			}
+			unlock = next
+			held = true
+			heldSourceID, heldSourceStore = req.WorkspaceID, sourceStore
+			heldTargetID, heldTargetStore = newID, targetStore
+			continue
+		}
+
+		if alreadyCurrent {
+			return rebindWorkspaceResult(req.WorkspaceID, newID, ws), nil
+		}
+		if existingErr == nil && existing != nil && newID != req.WorkspaceID && !req.Force {
+			return nil, fmt.Errorf("workspace '%s' already exists for this path; use --force to overwrite", newID)
+		}
+		if err := e.migrateWorkspaceRecord(sourceStore, ws, req.WorkspaceID, newID, fingerprint, absRoot, ws.WorkspacePath); err != nil {
+			return nil, err
+		}
+		return rebindWorkspaceResult(req.WorkspaceID, newID, ws), nil
 	}
 
-	newID := state.ComputeWorkspaceID(fingerprint, ws.WorkspacePath)
-	if newID == req.WorkspaceID && ws.Repo == fingerprint {
-		return &RebindWorkspaceResult{
-			OldWorkspaceID: req.WorkspaceID,
-			NewWorkspaceID: newID,
-			WorkspacePath:  ws.WorkspacePath,
-			ActiveStore:    ws.ActiveStore,
-			Applied:        ws.Applied,
-			AppliedPaths:   len(ws.Paths),
-		}, nil
-	}
+	return nil, fmt.Errorf("failed to rebind workspace %s: records changed while acquiring locks", req.WorkspaceID)
+}
 
-	existing, existingStore, existingErr := e.loadWorkspaceRecord(newID)
-	if existingErr != nil && !os.IsNotExist(existingErr) {
-		return nil, fmt.Errorf("failed to load target workspace: %w", existingErr)
-	}
-	if existingErr == nil && existing != nil && newID != req.WorkspaceID && !req.Force {
-		return nil, fmt.Errorf("workspace '%s' already exists for this path; use --force to overwrite", newID)
-	}
+const rebindLockAttempts = 5
 
-	unlock, err := e.lockWorkspaces(ctx,
-		workspaceLockRequest{store: sourceStore, id: req.WorkspaceID, mode: lockfile.Exclusive},
-		workspaceLockRequest{store: firstNonNilStore(existingStore, sourceStore), id: newID, mode: lockfile.Exclusive},
-	)
-	if err != nil {
-		return nil, err
+func rebindLocksCover(held bool, heldSourceID string, heldSourceStore state.StateStore, heldTargetID string, heldTargetStore state.StateStore, sourceID string, sourceStore state.StateStore, targetID string, targetStore state.StateStore) bool {
+	if !held || heldSourceID != sourceID || heldSourceStore != sourceStore {
+		return false
 	}
-	defer unlock()
-
-	if err := e.migrateWorkspaceRecord(sourceStore, ws, req.WorkspaceID, newID, fingerprint, absRoot, ws.WorkspacePath); err != nil {
-		return nil, err
+	if targetID == sourceID {
+		return true
 	}
+	return heldTargetID == targetID && heldTargetStore == targetStore
+}
 
+func rebindWorkspaceResult(oldID, newID string, ws *state.WorkspaceState) *RebindWorkspaceResult {
 	return &RebindWorkspaceResult{
-		OldWorkspaceID: req.WorkspaceID,
+		OldWorkspaceID: oldID,
 		NewWorkspaceID: newID,
 		WorkspacePath:  ws.WorkspacePath,
 		ActiveStore:    ws.ActiveStore,
 		Applied:        ws.Applied,
 		AppliedPaths:   len(ws.Paths),
-	}, nil
+	}
 }
 
 func firstNonNilStore(stores ...state.StateStore) state.StateStore {
