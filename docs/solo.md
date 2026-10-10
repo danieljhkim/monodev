@@ -21,6 +21,18 @@ git status
 `git status` is clean. `ls` still shows `.claude/`, `AGENTS.md`, and the other
 tracked paths. `monodev status` lists them as applied.
 
+## Let agents keep their own notes
+
+```bash
+monodev skill init
+monodev context
+```
+
+`skill init` installs a monodev skill for Claude Code and/or Codex, tracked in
+the active store. Agents then start a session with `context`, write a session
+file under `.agents/notes/sessions/` and lessons in `.agents/notes/lessons.md`,
+and `save` at the end. Details: [commands.md](commands.md#skill).
+
 ## A package-local overlay
 
 Workspaces are the directory you run from. A store created under `packages/api`

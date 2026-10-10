@@ -88,6 +88,20 @@ monodev pull dev-overlay
 monodev apply dev-overlay
 ```
 
+An agent starting in the new worktree can do that step itself. Push the
+workspace reference once from the main checkout, and `context` in any
+worktree at the same path pulls and applies it:
+
+```bash
+monodev push dev-overlay --with-workspace
+cd ~/src/myrepo-agent-2
+monodev remote use origin
+monodev context
+```
+
+Each agent should write its own session file under `.agents/notes/sessions/`
+so parallel worktrees never edit the same note.
+
 ## Unapplying is per-worktree
 
 ```bash

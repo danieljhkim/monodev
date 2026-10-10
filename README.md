@@ -34,7 +34,7 @@ managed block in `.git/info/exclude`, so they stay out of `git status` while
 applied. Stores can be pushed to an orphan branch (`monodev/persist`) so they
 follow you to other clones without touching `main`.
 
-![monodev preview](docs/assets/cli_preview.png)
+![monodev demo: track agent files, unapply, apply](docs/assets/demo.gif)
 
 ## Install
 
@@ -72,32 +72,26 @@ installs both for you.
 
 ## Agents
 
-Two commands let coding agents use monodev on their own:
+Agents can run the loop themselves:
 
 ```bash
-monodev skill init             # write a monodev SKILL.md, tracked and hidden from git
-monodev context                # session start: find, restore and list agent context
+monodev skill init      # teach agents monodev: a SKILL.md, tracked and hidden from git
+monodev context         # session start: restore this directory's store, list notes
 ```
 
-`skill init` writes `.claude/skills/monodev/SKILL.md` (Claude Code) and/or
-`.agents/skills/monodev/SKILL.md` (the Agent Skills layout Codex reads),
-depending on which agent directories exist; `--target claude|agents|all`
-overrides. It needs an active store, and leaves `git status` clean.
+- `skill init` writes `.claude/skills/monodev/SKILL.md` (Claude Code) and/or
+  `.agents/skills/monodev/SKILL.md` (Codex and other Agent Skills readers),
+  for whichever agent directory exists (`--target claude|agents|all` to
+  choose). It tracks the skill in the active store. Rerun with `--force`
+  after upgrading monodev.
+- `context` reports the active store. Without one, it pulls and applies the
+  stores pushed for this directory with `push --with-workspace`. It never
+  pushes or forces, and exits 0 when it finds nothing.
 
-`context` reports the active store, or pulls and applies the stores pushed for
-this directory (`push --with-workspace`), then lists the agent paths on disk.
-It never pushes or forces, and finding nothing is not an error.
-
-Agent notes and scripts are plain files in a store, by convention:
-
-- `.agents/notes/lessons.md`: short durable lessons, edited in place.
-- `.agents/notes/sessions/<date>-<agent>-<id>.md`: one file per session, so
-  parallel agents never write the same file.
-- `.agents/scripts/`: helper scripts.
-
-Keep private, unreviewed or experimental context in monodev. Decisions that
-bind everyone (ADRs) and gotchas true for every contributor belong in
-reviewed, committed repo docs.
+Notes and scripts are plain files in the store: `.agents/notes/lessons.md`,
+one file per session in `.agents/notes/sessions/` (so parallel agents never
+collide), and `.agents/scripts/`. Keep private or experimental context here.
+ADRs and gotchas that apply to everyone belong in committed docs.
 
 ## Commands
 

@@ -75,7 +75,14 @@ until you pass `--force`:
 monodev pull team-overlay --force
 ```
 
-Restore a pushed workspace reference and the stores it names:
+Restore a pushed workspace reference and the stores it names. `context` finds
+the reference for the current directory, pulls and applies it:
+
+```bash
+monodev context
+```
+
+Or name the reference explicitly:
 
 ```bash
 monodev pull --workspace <remote-workspace-id> --with-stores
@@ -84,8 +91,9 @@ monodev apply
 
 ## Everyday sync
 
-After a session, `sync` commits tracked paths, pushes, then pulls — that order,
-so you do not have to remember it:
+After a session, `sync` commits the active store's tracked paths, pushes, then
+pulls that same store — that order, so you do not have to remember it. Other
+stores are left alone:
 
 ```bash
 monodev sync

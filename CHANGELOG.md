@@ -11,6 +11,9 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ## [Unreleased]
 
+### Changed
+- `track --agents` lists absent agent paths on one dimmed line instead of a warning per path.
+
 ## [0.4.0] — 2026-10-09
 
 ### Breaking Changes

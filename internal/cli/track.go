@@ -139,8 +139,9 @@ var trackCmd = &cobra.Command{
 			if len(agentFound) > 0 {
 				PrintInfo(fmt.Sprintf("Agent paths found: %s", strings.Join(agentFound, ", ")))
 			}
-			for _, missing := range agentMissing {
-				PrintWarning(fmt.Sprintf("Agent path skipped-absent: %s", missing))
+			if len(agentMissing) > 0 {
+				initColors()
+				_, _ = dimColor.Printf("Not present, skipped: %s\n", strings.Join(agentMissing, ", "))
 			}
 			if len(agentFound) == 0 {
 				PrintInfo("No agent context paths found")

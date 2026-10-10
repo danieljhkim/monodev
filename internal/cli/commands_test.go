@@ -714,7 +714,7 @@ func TestTrackAgentsCommand_TracksExistingAndReportsAbsent(t *testing.T) {
 	if !strings.Contains(output, "Agent paths found: .claude, CLAUDE.md") {
 		t.Fatalf("output = %q, want found agent paths", output)
 	}
-	if !strings.Contains(output, "Agent path skipped-absent: .cursor/") {
+	if !strings.Contains(output, "Not present, skipped: .cursor/") {
 		t.Fatalf("output = %q, want skipped .cursor/", output)
 	}
 
