@@ -434,6 +434,55 @@ func TestSnapshotManager_Dematerialize(t *testing.T) {
 		}
 	})
 
+	t.Run("refuses reserved coordination name before replacing locks", func(t *testing.T) {
+		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+
+		sentinel := filepath.Join(storesDir, ".locks", "victim.lock")
+		if err := os.MkdirAll(filepath.Dir(sentinel), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(sentinel, []byte("held"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.Stat(sentinel)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		persistStore := filepath.Join(persistRoot, ".monodev", "persist", "stores", ".locks", "overlay")
+		if err := os.MkdirAll(persistStore, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(persistStore, "payload.txt"), []byte("remote"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := mgr.Materialize(".locks", repo, persistRoot); !errors.Is(err, stores.ErrReservedStoreID) {
+			t.Fatalf("Materialize error = %v, want ErrReservedStoreID", err)
+		}
+		if err := mgr.Dematerialize(".locks", persistRoot, repo); !errors.Is(err, stores.ErrReservedStoreID) {
+			t.Fatalf("Dematerialize error = %v, want ErrReservedStoreID", err)
+		}
+		if _, err := mgr.DiffAgainstLocalCopy(".locks", persistRoot, repo, hash.NewSHA256Hasher()); !errors.Is(err, stores.ErrReservedStoreID) {
+			t.Fatalf("DiffAgainstLocalCopy error = %v, want ErrReservedStoreID", err)
+		}
+
+		after, err := os.Stat(sentinel)
+		if err != nil {
+			t.Fatalf("lock sentinel missing: %v", err)
+		}
+		if !os.SameFile(before, after) {
+			t.Fatal("lock sentinel inode changed")
+		}
+		if _, err := os.Stat(filepath.Join(storesDir, ".locks", "overlay", "payload.txt")); !os.IsNotExist(err) {
+			t.Fatalf("dematerialize wrote into the coordination directory: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(persistRoot, ".monodev", "persist", "stores", ".locks", "victim.lock")); !os.IsNotExist(err) {
+			t.Fatalf("materialize copied the coordination directory: %v", err)
+		}
+	})
+
 	t.Run("rejects persisted symlink before replacing local store", func(t *testing.T) {
 		storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
 		defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()

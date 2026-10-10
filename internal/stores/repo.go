@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/lockfile"
@@ -27,6 +28,22 @@ import (
 // ErrLockUnsupported lets composite repositories preserve optional locking
 // when an in-memory/test repository does not implement StoreLocker.
 var ErrLockUnsupported = errors.New("store repository does not support locking")
+
+// lockDirectoryName is the coordination directory under a store root.
+// Lock files live here so deleting or replacing a store cannot drop a live
+// exclusion. The directory is not a store and must not be removed or relocated.
+const lockDirectoryName = ".locks"
+
+// ErrReservedStoreID is returned when a public store operation names the
+// coordination directory. Callers leave that directory in place.
+var ErrReservedStoreID = errors.New("reserved store coordination name")
+
+// ReservedStoreID reports whether id names the store-root coordination
+// directory. Comparison is case-insensitive so a case-insensitive volume
+// cannot unlink the live lock directory through another spelling.
+func ReservedStoreID(id string) bool {
+	return strings.EqualFold(id, lockDirectoryName)
+}
 
 // StoreRepo provides an interface for managing stores.
 type StoreRepo interface {
@@ -79,6 +96,18 @@ func NewFileStoreRepo(fs fsops.FS, storesDir string) *FileStoreRepo {
 	}
 }
 
+// validateStoreID applies identifier grammar and then reserves coordination
+// names. Both checks happen before any filesystem operation.
+func (r *FileStoreRepo) validateStoreID(id string) error {
+	if err := r.fs.ValidateIdentifier(id); err != nil {
+		return fmt.Errorf("invalid store ID: %w", err)
+	}
+	if ReservedStoreID(id) {
+		return fmt.Errorf("invalid store ID: %w", ErrReservedStoreID)
+	}
+	return nil
+}
+
 // List returns all store IDs.
 func (r *FileStoreRepo) List() ([]string, error) {
 	entries, err := os.ReadDir(r.storesDir)
@@ -91,7 +120,7 @@ func (r *FileStoreRepo) List() ([]string, error) {
 
 	var stores []string
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != ".locks" {
+		if entry.IsDir() && !ReservedStoreID(entry.Name()) {
 			stores = append(stores, entry.Name())
 		}
 	}
@@ -101,9 +130,8 @@ func (r *FileStoreRepo) List() ([]string, error) {
 
 // Exists checks if a store with the given ID exists.
 func (r *FileStoreRepo) Exists(id string) (bool, error) {
-	// Validate store ID for safety
-	if err := r.fs.ValidateIdentifier(id); err != nil {
-		return false, fmt.Errorf("invalid store ID: %w", err)
+	if err := r.validateStoreID(id); err != nil {
+		return false, err
 	}
 
 	storePath := filepath.Join(r.storesDir, id)
@@ -112,9 +140,8 @@ func (r *FileStoreRepo) Exists(id string) (bool, error) {
 
 // Create creates a new store with the given ID and metadata.
 func (r *FileStoreRepo) Create(id string, meta *StoreMeta) error {
-	// Validate store ID for safety
-	if err := r.fs.ValidateIdentifier(id); err != nil {
-		return fmt.Errorf("invalid store ID: %w", err)
+	if err := r.validateStoreID(id); err != nil {
+		return err
 	}
 
 	storePath := filepath.Join(r.storesDir, id)
@@ -155,9 +182,8 @@ func (r *FileStoreRepo) Create(id string, meta *StoreMeta) error {
 
 // LoadMeta loads the metadata for a store.
 func (r *FileStoreRepo) LoadMeta(id string) (*StoreMeta, error) {
-	// Validate store ID for safety
-	if err := r.fs.ValidateIdentifier(id); err != nil {
-		return nil, fmt.Errorf("invalid store ID: %w", err)
+	if err := r.validateStoreID(id); err != nil {
+		return nil, err
 	}
 
 	metaPath := filepath.Join(r.storesDir, id, "meta.json")
@@ -183,9 +209,8 @@ func (r *FileStoreRepo) LoadMeta(id string) (*StoreMeta, error) {
 
 // SaveMeta saves the metadata for a store.
 func (r *FileStoreRepo) SaveMeta(id string, meta *StoreMeta) error {
-	// Validate store ID for safety
-	if err := r.fs.ValidateIdentifier(id); err != nil {
-		return fmt.Errorf("invalid store ID: %w", err)
+	if err := r.validateStoreID(id); err != nil {
+		return err
 	}
 
 	metaPath := filepath.Join(r.storesDir, id, "meta.json")
@@ -205,9 +230,8 @@ func (r *FileStoreRepo) SaveMeta(id string, meta *StoreMeta) error {
 
 // LoadTrack loads the track file for a store.
 func (r *FileStoreRepo) LoadTrack(id string) (*TrackFile, error) {
-	// Validate store ID for safety
-	if err := r.fs.ValidateIdentifier(id); err != nil {
-		return nil, fmt.Errorf("invalid store ID: %w", err)
+	if err := r.validateStoreID(id); err != nil {
+		return nil, err
 	}
 
 	trackPath := filepath.Join(r.storesDir, id, "track.json")
@@ -234,9 +258,8 @@ func (r *FileStoreRepo) LoadTrack(id string) (*TrackFile, error) {
 
 // SaveTrack saves the track file for a store.
 func (r *FileStoreRepo) SaveTrack(id string, track *TrackFile) error {
-	// Validate store ID for safety
-	if err := r.fs.ValidateIdentifier(id); err != nil {
-		return fmt.Errorf("invalid store ID: %w", err)
+	if err := r.validateStoreID(id); err != nil {
+		return err
 	}
 
 	trackPath := filepath.Join(r.storesDir, id, "track.json")
@@ -258,9 +281,8 @@ func (r *FileStoreRepo) SaveTrack(id string, track *TrackFile) error {
 // Returns an empty string if the store ID is invalid.
 // Callers can check for an empty string to detect invalid store IDs.
 func (r *FileStoreRepo) OverlayRoot(id string) string {
-	// Validate store ID for safety even for read-only operations
-	// to prevent exposing internal paths to untrusted IDs
-	if err := r.fs.ValidateIdentifier(id); err != nil {
+	// Refuse invalid and reserved IDs before revealing a store path.
+	if err := r.validateStoreID(id); err != nil {
 		return ""
 	}
 	return filepath.Join(r.storesDir, id, "overlay")
@@ -268,9 +290,8 @@ func (r *FileStoreRepo) OverlayRoot(id string) string {
 
 // Delete deletes a store and all its contents.
 func (r *FileStoreRepo) Delete(id string) error {
-	// Validate store ID for safety
-	if err := r.fs.ValidateIdentifier(id); err != nil {
-		return fmt.Errorf("invalid store ID: %w", err)
+	if err := r.validateStoreID(id); err != nil {
+		return err
 	}
 
 	storePath := filepath.Join(r.storesDir, id)
@@ -284,10 +305,10 @@ func (r *FileStoreRepo) Delete(id string) error {
 
 // StoreLockKey returns the canonical name used to order multi-store locks.
 func (r *FileStoreRepo) StoreLockKey(id string) (string, error) {
-	if err := r.fs.ValidateIdentifier(id); err != nil {
-		return "", fmt.Errorf("invalid store ID: %w", err)
+	if err := r.validateStoreID(id); err != nil {
+		return "", err
 	}
-	path, err := filepath.Abs(filepath.Join(r.storesDir, ".locks", id+".lock"))
+	path, err := filepath.Abs(filepath.Join(r.storesDir, lockDirectoryName, id+".lock"))
 	if err != nil {
 		return "", fmt.Errorf("resolve store lock path: %w", err)
 	}

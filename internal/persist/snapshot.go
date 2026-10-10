@@ -31,6 +31,15 @@ func persistStoreDir(persistRoot, storeID string) string {
 	return filepath.Join(persistStoresDir(persistRoot), storeID)
 }
 
+// refuseReservedStoreID rejects store-root coordination names before any store
+// lookup or disk access, so a caller cannot replace the live lock directory.
+func refuseReservedStoreID(storeID string) error {
+	if stores.ReservedStoreID(storeID) {
+		return fmt.Errorf("invalid store ID: %w", stores.ErrReservedStoreID)
+	}
+	return nil
+}
+
 // overlayStoreDir is the on-disk store directory, the parent of OverlayRoot.
 // An empty overlay path is the safe failure for an invalid ID or a scope
 // lookup error. Reject it before filepath.Dir, which would turn "" into ".".
@@ -48,6 +57,9 @@ func (s *SnapshotManager) Materialize(storeID string, storeRepo stores.StoreRepo
 	// Validate store ID
 	if err := s.fs.ValidateIdentifier(storeID); err != nil {
 		return fmt.Errorf("invalid store ID: %w", err)
+	}
+	if err := refuseReservedStoreID(storeID); err != nil {
+		return err
 	}
 
 	// Check if store exists
@@ -102,6 +114,11 @@ func (s *SnapshotManager) Dematerialize(storeID string, persistRoot string, stor
 	// Validate store ID
 	if err := s.fs.ValidateIdentifier(storeID); err != nil {
 		return fmt.Errorf("invalid store ID: %w", err)
+	}
+	// Refuse a reserved coordination name before reading or replacing anything.
+	// It must not reach the rename that swaps a store directory.
+	if err := refuseReservedStoreID(storeID); err != nil {
+		return err
 	}
 
 	// Source path in persist directory
