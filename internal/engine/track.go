@@ -131,6 +131,9 @@ func (e *Engine) Track(ctx context.Context, req *TrackRequest) (*TrackResult, er
 			result.MissingPaths = append(result.MissingPaths, userPath)
 			continue
 		}
+		if err := validateManagedExcludePath(workspacePath, cwdRelPath, info.IsDir()); err != nil {
+			return nil, fmt.Errorf("invalid path %q: %w", userPath, err)
+		}
 
 		result.ResolvedPaths[userPath] = cwdRelPath
 

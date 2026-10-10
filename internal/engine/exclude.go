@@ -172,18 +172,16 @@ func (e *Engine) managedExcludeEntries(workspacePath string, ws *state.Workspace
 			return nil, fmt.Errorf("invalid managed path %q in ledger: %w", relPath, err)
 		}
 
-		repoRelative := relPath
-		if workspacePath != "." {
-			repoRelative = filepath.Join(workspacePath, relPath)
+		repoRelative, err := repoRelativeManagedPath(workspacePath, relPath)
+		if err != nil {
+			return nil, err
 		}
-		repoRelative = filepath.ToSlash(repoRelative)
-		if repoRelative == "." || strings.HasPrefix(repoRelative, "../") {
-			return nil, fmt.Errorf("invalid repository-relative managed path %q", repoRelative)
-		}
-
-		entry := "/" + escapeExcludePattern(repoRelative)
-		if ownership.Contents != nil {
-			entry += "/"
+		// Contents marks a copy-mode directory. The trailing slash keeps the
+		// rule directory-only and preserves a carriage return that would
+		// otherwise end the exclude line.
+		entry, err := managedExcludePattern(repoRelative, ownership.Contents != nil)
+		if err != nil {
+			return nil, err
 		}
 		entries = append(entries, entry)
 	}
@@ -191,15 +189,85 @@ func (e *Engine) managedExcludeEntries(workspacePath string, ws *state.Workspace
 	return entries, nil
 }
 
+// repoRelativeManagedPath is the path an exclude rule matches, relative to
+// the repository root. workspacePath is that workspace's directory (".", at
+// the root). relPath is workspace-relative.
+func repoRelativeManagedPath(workspacePath, relPath string) (string, error) {
+	workspacePath = filepath.Clean(workspacePath)
+	if workspacePath == "" {
+		workspacePath = "."
+	}
+	repoRelative := relPath
+	if workspacePath != "." {
+		repoRelative = filepath.Join(workspacePath, relPath)
+	}
+	repoRelative = filepath.ToSlash(repoRelative)
+	if repoRelative == "." || strings.HasPrefix(repoRelative, "../") {
+		return "", fmt.Errorf("invalid repository-relative managed path %q", repoRelative)
+	}
+	return repoRelative, nil
+}
+
+// managedExcludePattern returns the gitignore line for one managed path.
+// directory is true when the entry ends in a slash, which is how copy-mode
+// directories are recorded. The line selects that path and no other. A
+// newline or NUL cannot be stored in one line. A carriage return that would
+// end the line is stripped by Git before escapes are read, so the rule would
+// name a different path; a directory slash keeps that byte in the middle,
+// where Git preserves it.
+func managedExcludePattern(repoRelative string, directory bool) (string, error) {
+	if strings.Contains(repoRelative, "\n") || strings.ContainsRune(repoRelative, 0) {
+		return "", fmt.Errorf("%w: managed path %q cannot be represented as a git exclusion", ErrValidation, repoRelative)
+	}
+	entry := "/" + escapeExcludePattern(repoRelative)
+	if directory {
+		entry += "/"
+	}
+	if strings.HasSuffix(entry, "\r") {
+		return "", fmt.Errorf("%w: managed path %q cannot be represented as a git exclusion", ErrValidation, repoRelative)
+	}
+	return entry, nil
+}
+
+func validateManagedExcludePath(workspacePath, relPath string, directory bool) error {
+	repoRelative, err := repoRelativeManagedPath(workspacePath, relPath)
+	if err != nil {
+		return err
+	}
+	_, err = managedExcludePattern(repoRelative, directory)
+	return err
+}
+
+// escapeExcludePattern quotes characters that would make a gitignore rule
+// select a different path. Git strips unescaped spaces at the end of a
+// pattern line, so each trailing space is quoted. Interior spaces are kept.
 func escapeExcludePattern(path string) string {
-	replacer := strings.NewReplacer(
-		"\\", "\\\\",
-		"*", "\\*",
-		"?", "\\?",
-		"[", "\\[",
-		"]", "\\]",
-	)
-	return replacer.Replace(path)
+	var quoted strings.Builder
+	quoted.Grow(len(path))
+	for i := 0; i < len(path); i++ {
+		switch path[i] {
+		case '\\', '*', '?', '[', ']':
+			quoted.WriteByte('\\')
+			quoted.WriteByte(path[i])
+		default:
+			quoted.WriteByte(path[i])
+		}
+	}
+	escaped := quoted.String()
+	end := len(escaped)
+	for end > 0 && escaped[end-1] == ' ' {
+		end--
+	}
+	if end == len(escaped) {
+		return escaped
+	}
+	var out strings.Builder
+	out.Grow(len(escaped) + (len(escaped) - end))
+	out.WriteString(escaped[:end])
+	for i := end; i < len(escaped); i++ {
+		out.WriteString(`\ `)
+	}
+	return out.String()
 }
 
 func managedExcludeBlock(entries []string) []byte {
