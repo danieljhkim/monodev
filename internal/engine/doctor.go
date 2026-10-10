@@ -171,7 +171,7 @@ func (e *Engine) doctorScanTransactions(ctx context.Context, fix bool) ([]Doctor
 			}
 			continue
 		}
-		finding, err := e.doctorCheckOrphanedBackup(id, fix)
+		finding, err := e.doctorCheckOrphanedBackup(ctx, id, fix)
 		if err != nil {
 			return nil, err
 		}
@@ -243,11 +243,10 @@ func doctorTxnRecoveryText(phase string) string {
 }
 
 // doctorCheckOrphanedBackup reports a txn backup directory with no journal.
-// This is always safe to remove: the only way a directory can exist without
-// a journal is a crash between creating it and writing the initial journal,
-// or a completed recovery that removed the journal but not the directory.
-func (e *Engine) doctorCheckOrphanedBackup(id string, fix bool) (*DoctorFinding, error) {
-	_, txnDir, err := e.overlayTxnPaths(id)
+// The scan is only a snapshot: a writer may not have published its initial
+// journal yet. Repair must lock the workspace and recheck before deleting.
+func (e *Engine) doctorCheckOrphanedBackup(ctx context.Context, id string, fix bool) (*DoctorFinding, error) {
+	journalPath, txnDir, err := e.overlayTxnPaths(id)
 	if err != nil {
 		return nil, err
 	}
@@ -260,6 +259,32 @@ func (e *Engine) doctorCheckOrphanedBackup(id string, fix bool) (*DoctorFinding,
 		Fixable:     true,
 	}
 	if fix {
+		unlock, err := e.lockWorkspace(ctx, id, lockfile.Exclusive)
+		if err != nil {
+			finding.FixError = err.Error()
+			return finding, nil
+		}
+		defer unlock()
+
+		// Any journal, even an unreadable or malformed one, protects the
+		// backup. Transaction recovery belongs to doctorCheckTransaction.
+		if _, err := e.fs.Lstat(journalPath); err == nil {
+			return nil, nil
+		} else if !os.IsNotExist(err) {
+			finding.FixError = err.Error()
+			return finding, nil
+		}
+		info, err := e.fs.Lstat(txnDir)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		if err != nil {
+			finding.FixError = err.Error()
+			return finding, nil
+		}
+		if !info.IsDir() {
+			return nil, nil
+		}
 		if err := e.fs.RemoveAll(txnDir); err != nil && !os.IsNotExist(err) {
 			finding.FixError = err.Error()
 		} else {
