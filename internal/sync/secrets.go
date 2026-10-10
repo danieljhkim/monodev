@@ -15,6 +15,10 @@ import (
 const (
 	secretIgnoreFile = ".monodev-secretsignore"
 	secretMask       = "********"
+	// The keyword may be the whole name. A mandatory leading letter would
+	// consume its first character, so PASSWORD, SECRET, TOKEN, API_KEY, and
+	// APIKEY never reached the keyword. Prefixed names still require one.
+	secretNameKeyword = `secret|token|password|api[_-]?key`
 )
 
 var (
@@ -23,7 +27,7 @@ var (
 	openAIKeyPattern    = regexp.MustCompile(`\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b`)
 	anthropicKeyPattern = regexp.MustCompile(`\bsk-ant-api\d{2}-[A-Za-z0-9_-]{20,}\b`)
 	privateKeyPattern   = regexp.MustCompile(`-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----`)
-	assignmentPattern   = regexp.MustCompile(`(?i)\b[a-z][a-z0-9_-]*(?:secret|token|password|api[_-]?key)[a-z0-9_-]*\b\s*[:=]\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))`)
+	assignmentPattern   = regexp.MustCompile(`(?i)\b(?:` + secretNameKeyword + `|[a-z][a-z0-9_-]*(?:` + secretNameKeyword + `))[a-z0-9_-]*\b\s*[:=]\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))`)
 )
 
 // SecretFinding reports a credential-like value without retaining the value.

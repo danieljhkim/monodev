@@ -7,7 +7,10 @@ import (
 	"testing"
 )
 
-const syntheticAWSAccessKey = "AKIA1234567890ABCDEF"
+const (
+	syntheticAWSAccessKey      = "AKIA1234567890ABCDEF"
+	highEntropyAssignmentValue = "q7V!9mK2xR4pL8dN3wZ6cB1h"
+)
 
 func TestScanPersistedStoresDetectsSecretsWithoutRetainingValues(t *testing.T) {
 	storesRoot := t.TempDir()
@@ -44,9 +47,52 @@ func TestDetectSecretHighConfidenceRules(t *testing.T) {
 		{line: "OPENAI_API_KEY=" + openAIKey, want: "openai-api-key"},
 		{line: "ANTHROPIC_API_KEY=" + anthropicKey, want: "anthropic-api-key"},
 		{line: "-----BEGIN PRIVATE KEY-----", want: "private-key-pem"},
-		{line: "service_secret = q7V!9mK2xR4pL8dN3wZ6cB1h", want: "high-entropy-assignment"},
+		{line: "service_secret = " + highEntropyAssignmentValue, want: "high-entropy-assignment"},
 	} {
 		t.Run(testCase.want, func(t *testing.T) {
+			if got := detectSecret(testCase.line); got != testCase.want {
+				t.Fatalf("detectSecret(%q) = %q, want %q", testCase.line, got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestDetectSecretKeywordNameAssignments(t *testing.T) {
+	names := []string{"PASSWORD", "SECRET", "TOKEN", "API_KEY", "APIKEY"}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			line := name + "=" + highEntropyAssignmentValue
+			if got := detectSecret(line); got != "high-entropy-assignment" {
+				t.Fatalf("detectSecret(%q) = %q, want high-entropy-assignment", line, got)
+			}
+		})
+		t.Run("export "+name, func(t *testing.T) {
+			line := "export " + name + "=" + highEntropyAssignmentValue
+			if got := detectSecret(line); got != "high-entropy-assignment" {
+				t.Fatalf("detectSecret(%q) = %q, want high-entropy-assignment", line, got)
+			}
+		})
+	}
+
+	for _, testCase := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{name: "prefixed service_secret", line: "service_secret = " + highEntropyAssignmentValue, want: "high-entropy-assignment"},
+		{name: "prefixed my_password", line: "my_password=" + highEntropyAssignmentValue, want: "high-entropy-assignment"},
+		{name: "prefixed aws secret access key", line: "AWS_SECRET_ACCESS_KEY=" + highEntropyAssignmentValue, want: "high-entropy-assignment"},
+		{name: "api key hyphen", line: "API-KEY=" + highEntropyAssignmentValue, want: "high-entropy-assignment"},
+		{name: "quoted password", line: `PASSWORD="` + highEntropyAssignmentValue + `"`, want: "high-entropy-assignment"},
+		{name: "exactly 20 characters", line: "PASSWORD=" + highEntropyAssignmentValue[:20], want: "high-entropy-assignment"},
+		{name: "placeholder password", line: "PASSWORD=example-placeholder-token-value", want: ""},
+		{name: "placeholder api key fixture", line: "API_KEY = example-placeholder-token", want: ""},
+		{name: "short password", line: "PASSWORD=" + highEntropyAssignmentValue[:19], want: ""},
+		{name: "low entropy password", line: "PASSWORD=" + strings.Repeat("a", 24), want: ""},
+		{name: "keyword without assignment", line: "PASSWORD", want: ""},
+		{name: "unrelated name", line: "DATABASE_URL=" + highEntropyAssignmentValue, want: ""},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
 			if got := detectSecret(testCase.line); got != testCase.want {
 				t.Fatalf("detectSecret(%q) = %q, want %q", testCase.line, got, testCase.want)
 			}
