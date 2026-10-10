@@ -6,6 +6,90 @@ import (
 	"testing"
 )
 
+func TestHelpCommand_CommandPaths(t *testing.T) {
+	originalOut, originalErr := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr()
+	t.Cleanup(func() {
+		resetCommandFlags(rootCmd)
+		rootCmd.SetArgs(nil)
+		rootCmd.SetOut(originalOut)
+		rootCmd.SetErr(originalErr)
+	})
+	execute := func(args []string) (string, error) {
+		resetCommandFlags(rootCmd)
+		rootCmd.SetArgs(args)
+		var output bytes.Buffer
+		rootCmd.SetOut(&output)
+		rootCmd.SetErr(&output)
+		err := rootCmd.Execute()
+		return output.String(), err
+	}
+
+	for _, tt := range []struct {
+		name string
+		path []string
+		want []string
+	}{
+		{
+			name: "nested deletion command",
+			path: []string{"store", "rm"},
+			want: []string{"monodev store rm <store-id>", "Delete a store permanently", "--force", "--dry-run", "--help"},
+		},
+		{
+			name: "command group",
+			path: []string{"store"},
+			want: []string{"monodev store", "rm", "describe"},
+		},
+		{
+			name: "root",
+			want: []string{"monodev", "Workspace Lifecycle:", "CLI & Tooling:", "help"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := execute(append([]string{"help"}, tt.path...))
+			if err != nil {
+				t.Fatalf("help %q error = %v", tt.path, err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(output, want) {
+					t.Errorf("help %q output = %q, want %q", tt.path, output, want)
+				}
+			}
+			direct, err := execute(append(append([]string{}, tt.path...), "--help"))
+			if err != nil {
+				t.Fatalf("%q --help error = %v", tt.path, err)
+			}
+			if output != direct {
+				t.Errorf("help %q differs from --help:\nhelp: %s\n--help: %s", tt.path, output, direct)
+			}
+		})
+	}
+
+	for _, tt := range []struct {
+		name string
+		path []string
+		want string
+	}{
+		{name: "unknown root command", path: []string{"does-not-exist"}, want: "monodev"},
+		{name: "unknown nested command", path: []string{"store", "does-not-exist"}, want: "monodev store"},
+		{name: "unknown trailing segment", path: []string{"store", "rm", "does-not-exist"}, want: "monodev store rm"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := execute(append([]string{"help"}, tt.path...))
+			if err == nil {
+				t.Fatalf("help %q returned nil; output = %q", tt.path, output)
+			}
+			if !strings.Contains(err.Error(), "unknown command") ||
+				!strings.Contains(err.Error(), "does-not-exist") ||
+				!strings.Contains(err.Error(), tt.want) {
+				t.Errorf("help %q error = %q, want unknown command and parent %q", tt.path, err, tt.want)
+			}
+			if output != "" {
+				t.Errorf("help %q printed help for an unresolved path: %q", tt.path, output)
+			}
+		})
+	}
+}
+
 func TestRootCommand_Help(t *testing.T) {
 	rootCmd.SetArgs([]string{"--help"})
 	var buf bytes.Buffer
