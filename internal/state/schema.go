@@ -48,6 +48,14 @@ func ValidateSchemaVersion(filePath string, found, supported int) error {
 // schema without rebuilding the entire document. Updating only the fields the
 // migration owns preserves extension fields from older releases.
 func MigrateWorkspaceJSON(filePath string, data []byte) ([]byte, bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, false, fmt.Errorf("cannot load %s: workspace state must be a non-null JSON object: %w", filePath, err)
+	}
+	if raw == nil {
+		return nil, false, fmt.Errorf("cannot load %s: workspace state must be a non-null JSON object", filePath)
+	}
+
 	version, err := CheckSchemaVersion(filePath, data, WorkspaceSchemaVersion)
 	if err != nil {
 		return nil, false, err
@@ -62,10 +70,6 @@ func MigrateWorkspaceJSON(filePath string, data []byte) ([]byte, bool, error) {
 	}
 	workspace.MigrateDeprecatedStack()
 
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, false, fmt.Errorf("cannot migrate %s: %w", filePath, err)
-	}
 	applied, err := json.Marshal(workspace.Applied)
 	if err != nil {
 		return nil, false, fmt.Errorf("cannot migrate %s: %w", filePath, err)
