@@ -240,16 +240,31 @@ func (e *Engine) commitFilePath(
 		return nil
 	}
 
+	info, err := e.fs.Lstat(workspaceFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to stat workspace path %s: %w", cleanRelPath, err)
+	}
+
+	// A symlink-mode overlay already points at its stored content, so there is
+	// nothing to snapshot. Any other symlink still reaches the copier, which
+	// rejects it.
+	if info.Mode()&os.ModeSymlink != 0 {
+		owned, err := e.isOwnedOverlaySymlink(workspaceFilePath, storeFilePath, cleanRelPath, activeStore, workspaceState)
+		if err != nil {
+			return err
+		}
+		if owned {
+			result.Skipped = append(result.Skipped, cleanRelPath)
+			return nil
+		}
+	}
+
 	if dryRun {
 		result.Committed = append(result.Committed, cleanRelPath)
 		return nil
 	}
 
 	// Copy the file/directory to the store.
-	info, err := e.fs.Lstat(workspaceFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to stat workspace path %s: %w", cleanRelPath, err)
-	}
 	if info.IsDir() {
 		excluded := excludedDescendants(cleanRelPath, ignoredNewPaths)
 		if len(excluded) > 0 {
@@ -298,6 +313,28 @@ func (e *Engine) commitFilePath(
 
 	result.Committed = append(result.Committed, cleanRelPath)
 	return nil
+}
+
+// isOwnedOverlaySymlink reports whether the workspace symlink is the link that
+// a symlink-mode apply created for the active store: the workspace state
+// records symlink ownership by that store and the link target is exactly the
+// store's overlay path. Only the link itself is read, never its target.
+func (e *Engine) isOwnedOverlaySymlink(
+	workspaceFilePath string,
+	storeFilePath string,
+	relPath string,
+	activeStore string,
+	workspaceState *state.WorkspaceState,
+) (bool, error) {
+	ownership, ok := workspaceState.Paths[relPath]
+	if !ok || ownership.Type != "symlink" || ownership.Store != activeStore {
+		return false, nil
+	}
+	target, err := e.fs.Readlink(workspaceFilePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to read symlink %s: %w", relPath, err)
+	}
+	return filepath.Clean(target) == filepath.Clean(storeFilePath), nil
 }
 
 func (e *Engine) userIgnoredNewFiles(workspaceRoot, overlayRoot string, trackedPaths []stores.TrackedPath) (map[string]bool, error) {

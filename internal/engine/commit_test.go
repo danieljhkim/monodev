@@ -359,3 +359,162 @@ func TestCommitRejectsSymlinkedWorkspaceSourceAncestor(t *testing.T) {
 		t.Fatalf("store changed to %q, %v", got, err)
 	}
 }
+
+func (fx overlayTxnFixture) applySymlink(t *testing.T) {
+	t.Helper()
+	if _, err := fx.engine(t, nil, nil).Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreIDs: []string{fx.storeID}, Mode: "symlink", Force: true}); err != nil {
+		t.Skipf("symlink apply unavailable: %v", err)
+	}
+}
+
+func TestCommitSkipsAppliedSymlinkOverlay(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "a.txt", "nested/b.txt")
+	fx.applySymlink(t)
+	storeFile := filepath.Join(fx.overlayRoot, "a.txt")
+	before, err := os.ReadFile(storeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := fx.engine(t, nil, nil).Commit(context.Background(), &CommitRequest{CWD: fx.repoRoot, All: true})
+	if err != nil {
+		t.Fatalf("Commit applied symlinks: %v", err)
+	}
+	if len(result.Committed) != 0 || len(result.Skipped) != 2 {
+		t.Fatalf("result = committed %v skipped %v, want both skipped", result.Committed, result.Skipped)
+	}
+	for _, rel := range fx.files {
+		target, err := os.Readlink(filepath.Join(fx.repoRoot, rel))
+		if err != nil || target != filepath.Join(fx.overlayRoot, rel) {
+			t.Fatalf("%s link = %q, %v; want overlay path", rel, target, err)
+		}
+	}
+	after, err := os.ReadFile(storeFile)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("store content = %q, %v; want %q", after, err, before)
+	}
+	ws, err := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir).LoadWorkspace(fx.workspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ws.Paths["a.txt"].Type; got != "symlink" {
+		t.Fatalf("ownership type = %q, want symlink retained", got)
+	}
+}
+
+func TestCommitDryRunReportsAppliedSymlinkSkipped(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "a.txt")
+	fx.applySymlink(t)
+	result, err := fx.engine(t, nil, nil).Commit(context.Background(), &CommitRequest{CWD: fx.repoRoot, All: true, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Committed) != 0 || len(result.Skipped) != 1 || result.Skipped[0] != "a.txt" {
+		t.Fatalf("result = committed %v skipped %v", result.Committed, result.Skipped)
+	}
+}
+
+func TestCommitStillRejectsNonOwnedSymlinks(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside-secret-sentinel"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, fx overlayTxnFixture, link string)
+	}{
+		{"retargeted outside store", func(t *testing.T, fx overlayTxnFixture, link string) {
+			replaceWithSymlink(t, link, outside)
+		}},
+		{"retargeted to other overlay file", func(t *testing.T, fx overlayTxnFixture, link string) {
+			replaceWithSymlink(t, link, filepath.Join(fx.overlayRoot, "other.txt"))
+		}},
+		{"unowned in copy mode", func(t *testing.T, fx overlayTxnFixture, link string) {
+			// state records copy ownership, so even a link at the overlay path is not owned
+			ws := loadWorkspaceForTest(t, fx)
+			ws.Paths["a.txt"] = state.PathOwnership{Store: fx.storeID, Type: "copy"}
+			saveWorkspaceForTest(t, fx, ws)
+		}},
+		{"owned by another store", func(t *testing.T, fx overlayTxnFixture, link string) {
+			ws := loadWorkspaceForTest(t, fx)
+			own := ws.Paths["a.txt"]
+			own.Store = "other-store"
+			ws.Paths["a.txt"] = own
+			saveWorkspaceForTest(t, fx, ws)
+		}},
+		{"no ownership record", func(t *testing.T, fx overlayTxnFixture, link string) {
+			ws := loadWorkspaceForTest(t, fx)
+			delete(ws.Paths, "a.txt")
+			saveWorkspaceForTest(t, fx, ws)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := newOverlayTxnFixture(t, "a.txt")
+			fx.applySymlink(t)
+			before, err := os.ReadFile(filepath.Join(fx.overlayRoot, "a.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.setup(t, fx, filepath.Join(fx.repoRoot, "a.txt"))
+
+			result, err := fx.engine(t, nil, nil).Commit(context.Background(), &CommitRequest{CWD: fx.repoRoot, All: true})
+			if err == nil || !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("Commit error = %v, result %+v; want symlink refusal", err, result)
+			}
+			after, err := os.ReadFile(filepath.Join(fx.overlayRoot, "a.txt"))
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("store content = %q, %v; want unchanged %q", after, err, before)
+			}
+		})
+	}
+}
+
+func TestCommitCopiesReplacedRegularFileOverSymlinkOwnership(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "a.txt")
+	fx.applySymlink(t)
+	link := filepath.Join(fx.repoRoot, "a.txt")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(link, []byte("edited"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := fx.engine(t, nil, nil).Commit(context.Background(), &CommitRequest{CWD: fx.repoRoot, All: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Skipped) != 0 || len(result.Committed) != 1 {
+		t.Fatalf("result = committed %v skipped %v", result.Committed, result.Skipped)
+	}
+	got, err := os.ReadFile(filepath.Join(fx.overlayRoot, "a.txt"))
+	if err != nil || string(got) != "edited" {
+		t.Fatalf("store content = %q, %v", got, err)
+	}
+}
+
+func replaceWithSymlink(t *testing.T, link, target string) {
+	t.Helper()
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func loadWorkspaceForTest(t *testing.T, fx overlayTxnFixture) *state.WorkspaceState {
+	t.Helper()
+	ws, err := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir).LoadWorkspace(fx.workspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ws
+}
+
+func saveWorkspaceForTest(t *testing.T, fx overlayTxnFixture, ws *state.WorkspaceState) {
+	t.Helper()
+	if err := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir).SaveWorkspace(fx.workspaceID, ws); err != nil {
+		t.Fatal(err)
+	}
+}
