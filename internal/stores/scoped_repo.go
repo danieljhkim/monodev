@@ -26,6 +26,28 @@ func NewScopedRepo(global, component StoreRepo) StoreRepo {
 	return &scopedRepo{global: global, component: component}
 }
 
+// RepoLocalLister lists only the stores that belong to the current
+// repository, excluding stores in a shared root (~/.monodev or MONODEV_ROOT)
+// that other repositories can also see.
+type RepoLocalLister interface {
+	ListRepoLocal() ([]string, error)
+}
+
+// NewSharedRepo wraps a store root that is shared across repositories, with
+// no repo-local scope: every store resolves through it, but none counts as
+// repo-local.
+func NewSharedRepo(global StoreRepo) StoreRepo {
+	return &scopedRepo{global: global}
+}
+
+// ListRepoLocal returns the component-scope stores only.
+func (r *scopedRepo) ListRepoLocal() ([]string, error) {
+	if r.component == nil {
+		return []string{}, nil
+	}
+	return r.component.List()
+}
+
 func (r *scopedRepo) defaultRepo() StoreRepo {
 	if r.component != nil {
 		return r.component

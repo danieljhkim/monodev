@@ -19,11 +19,13 @@ var pushCmd = &cobra.Command{
 Stores are pushed to a separate Git orphan branch at monodev/persist
 by default. This allows sharing stores across machines and teams.
 
-If no store IDs are specified, pushes all local stores. With --with-workspace,
-omitting store IDs pushes only the current workspace reference.
+If no store IDs are specified, pushes this repository's stores (those under
+<repo>/.monodev). Stores in ~/.monodev or MONODEV_ROOT are shared across
+repositories and are pushed only when named. With --with-workspace, omitting
+store IDs pushes only the current workspace reference.
 
 Examples:
-  # Push all local stores
+  # Push this repository's stores
   monodev push
 
   # Push a single store
@@ -140,13 +142,13 @@ func printPushResult(result *sync.PushResult, requestedStoreIDs []string) {
 	if len(result.PushedStores) > 0 {
 		if result.DryRun {
 			if len(requestedStoreIDs) == 0 {
-				PrintInfo(fmt.Sprintf("Would push all stores (%d):", len(result.PushedStores)))
+				PrintInfo(fmt.Sprintf("Would push repo-local stores (%d):", len(result.PushedStores)))
 			} else {
 				PrintInfo("Would push stores:")
 			}
 		} else {
 			if len(requestedStoreIDs) == 0 {
-				PrintSuccess(fmt.Sprintf("Pushed all stores (%d):", len(result.PushedStores)))
+				PrintSuccess(fmt.Sprintf("Pushed repo-local stores (%d):", len(result.PushedStores)))
 			} else {
 				PrintSuccess("Pushed stores:")
 			}

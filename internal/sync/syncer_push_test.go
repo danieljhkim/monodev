@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/remote"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -322,4 +323,47 @@ func captureStandardStreams(t *testing.T, fn func()) (stdout, stderr string) {
 	_ = stdoutReader.Close()
 	_ = stderrReader.Close()
 	return stdoutBuffer.String(), stderrBuffer.String()
+}
+
+func TestSyncer_PushStoreWithoutIDsSkipsSharedStores(t *testing.T) {
+	repoRoot, _, syncer, _, _, _, cleanup := setupSyncerTest(t)
+	defer cleanup()
+
+	fs := fsops.NewRealFS()
+	global := stores.NewFileStoreRepo(fs, t.TempDir())
+	component := stores.NewFileStoreRepo(fs, t.TempDir())
+	now := time.Now()
+	for repo, id := range map[stores.StoreRepo]string{global: "other-repo-store", component: "local-store"} {
+		if err := repo.Create(id, stores.NewStoreMeta(id, now)); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+		if err := os.MkdirAll(repo.OverlayRoot(id), 0755); err != nil {
+			t.Fatalf("overlay dir %s: %v", id, err)
+		}
+	}
+
+	syncer.storeRepo = stores.NewScopedRepo(global, component)
+	result, err := syncer.PushStore(context.Background(), &PushRequest{RepoRoot: repoRoot, Remote: "origin", DryRun: true})
+	if err != nil {
+		t.Fatalf("PushStore: %v", err)
+	}
+	if len(result.PushedStores) != 1 || result.PushedStores[0] != "local-store" {
+		t.Fatalf("PushedStores = %v, want [local-store]", result.PushedStores)
+	}
+
+	// A shared root alone has nothing repo-local, so a bare push must refuse
+	// rather than publish another repository's stores.
+	syncer.storeRepo = stores.NewSharedRepo(global)
+	if _, err := syncer.PushStore(context.Background(), &PushRequest{RepoRoot: repoRoot, Remote: "origin", DryRun: true}); err == nil || !strings.Contains(err.Error(), "no repo-local stores") {
+		t.Fatalf("PushStore with shared root only: err = %v, want no repo-local stores", err)
+	}
+
+	// Naming a shared store still pushes it.
+	result, err = syncer.PushStore(context.Background(), &PushRequest{RepoRoot: repoRoot, Remote: "origin", DryRun: true, StoreIDs: []string{"other-repo-store"}})
+	if err != nil {
+		t.Fatalf("PushStore named shared store: %v", err)
+	}
+	if len(result.PushedStores) != 1 || result.PushedStores[0] != "other-repo-store" {
+		t.Fatalf("PushedStores = %v, want [other-repo-store]", result.PushedStores)
+	}
 }

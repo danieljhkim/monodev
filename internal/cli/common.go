@@ -84,7 +84,12 @@ func scopedSyncerRepos(fs fsops.FS, scopedPaths *config.ScopedPaths) (stores.Sto
 	globalStores := stores.NewFileStoreRepo(fs, scopedPaths.Global.Stores)
 	globalState := state.NewFileStateStore(fs, scopedPaths.Global.Workspaces)
 	if scopedPaths.Component == nil {
-		return globalStores, globalState
+		// Without a component scope the global root is repo-local only when
+		// MONODEV_ROOT points at this repo's .monodev.
+		if scopedPaths.HasRepoContext {
+			return globalStores, globalState
+		}
+		return stores.NewSharedRepo(globalStores), globalState
 	}
 	componentStores := stores.NewFileStoreRepo(fs, scopedPaths.Component.Stores)
 	componentState := state.NewFileStateStore(fs, scopedPaths.Component.Workspaces)

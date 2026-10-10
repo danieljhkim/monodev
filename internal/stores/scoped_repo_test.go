@@ -97,3 +97,40 @@ func TestScopedRepo_PrefersComponentAndCreatesInComponent(t *testing.T) {
 		t.Fatal("new store should not be created in global scope")
 	}
 }
+
+func TestScopedRepo_ListRepoLocalExcludesSharedStores(t *testing.T) {
+	fs := fsops.NewRealFS()
+	global := NewFileStoreRepo(fs, t.TempDir())
+	component := NewFileStoreRepo(fs, t.TempDir())
+	now := time.Now()
+	if err := global.Create("shared-store", NewStoreMeta("shared-store", now)); err != nil {
+		t.Fatal(err)
+	}
+	if err := component.Create("local-store", NewStoreMeta("local-store", now)); err != nil {
+		t.Fatal(err)
+	}
+
+	scoped, ok := NewScopedRepo(global, component).(RepoLocalLister)
+	if !ok {
+		t.Fatal("scoped repo does not implement RepoLocalLister")
+	}
+	local, err := scoped.ListRepoLocal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(local) != 1 || local[0] != "local-store" {
+		t.Fatalf("ListRepoLocal = %v, want [local-store]", local)
+	}
+
+	shared := NewSharedRepo(global)
+	local, err = shared.(RepoLocalLister).ListRepoLocal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(local) != 0 {
+		t.Fatalf("shared ListRepoLocal = %v, want none", local)
+	}
+	if exists, err := shared.Exists("shared-store"); err != nil || !exists {
+		t.Fatalf("shared Exists(shared-store) = %v, %v; want true", exists, err)
+	}
+}

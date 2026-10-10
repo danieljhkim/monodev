@@ -238,8 +238,10 @@ monodev push my-store --allow-secrets
 monodev push my-store --remote origin
 ```
 
-No store IDs: push all local stores, unless `--with-workspace` is set with no
-IDs, which pushes only the current workspace reference. `--force` overwrites
+No store IDs: push this repository's stores (`<repo>/.monodev/stores/`), unless
+`--with-workspace` is set with no IDs, which pushes only the current workspace
+reference. Stores in `~/.monodev` or `MONODEV_ROOT` are shared across
+repositories, so push them by name. `--force` overwrites
 remote. `--allow-secrets` pushes after a secret-scan finding. `--remote`
 overrides the configured remote.
 

@@ -4,7 +4,18 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+
+	"github.com/danieljhkim/monodev/internal/stores"
 )
+
+// listRepoLocalStores lists the stores a bare push publishes. A store repo
+// without scopes is a single repo-local root, so all of its stores count.
+func (s *Syncer) listRepoLocalStores() ([]string, error) {
+	if lister, ok := s.storeRepo.(stores.RepoLocalLister); ok {
+		return lister.ListRepoLocal()
+	}
+	return s.storeRepo.List()
+}
 
 // pushStore implements the push operation for stores.
 func (s *Syncer) pushStore(ctx context.Context, req *PushRequest) (*PushResult, error) {
@@ -16,20 +27,21 @@ func (s *Syncer) pushStore(ctx context.Context, req *PushRequest) (*PushResult, 
 		return nil, err
 	}
 
-	// If no store IDs specified, push all local stores
+	// With no store IDs, push only this repository's stores. Stores in a
+	// shared root are visible to every repository and must be named.
 	storeIDs := req.StoreIDs
 	if len(storeIDs) == 0 && !req.WithWorkspace {
 		if err := checkContext(ctx); err != nil {
 			return nil, err
 		}
-		allStores, err := s.storeRepo.List()
+		localStores, err := s.listRepoLocalStores()
 		if err != nil {
-			return nil, fmt.Errorf("failed to list local stores: %w", err)
+			return nil, fmt.Errorf("failed to list repo-local stores: %w", err)
 		}
-		if len(allStores) == 0 {
-			return nil, fmt.Errorf("no stores found to push")
+		if len(localStores) == 0 {
+			return nil, fmt.Errorf("no repo-local stores to push; stores in ~/.monodev or MONODEV_ROOT are shared across repositories, so name them: monodev push <store-id>")
 		}
-		storeIDs = allStores
+		storeIDs = localStores
 	}
 
 	// Load or create remote config
