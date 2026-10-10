@@ -297,6 +297,73 @@ func TestSyncer_PushStoreSecretScanAbortsBeforeCommitAndAllowsExplicitOverride(t
 	}
 }
 
+func TestSyncer_PushStoreKeywordNameSecretRefusesBeforeCommit(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		allowSecrets bool
+		wantError    bool
+	}{
+		{name: "blocks keyword-named secret", wantError: true},
+		{name: "allows explicit override", allowSecrets: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repoRoot, _, syncer, git, storeRepo, _, cleanup := setupSyncerTest(t)
+			defer cleanup()
+
+			storeID := "password-store"
+			if err := storeRepo.Create(storeID, stores.NewStoreMeta("Password Store", time.Now())); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			secretPath := filepath.Join(storeRepo.OverlayRoot(storeID), ".env")
+			secretLine := "export PASSWORD=" + highEntropyAssignmentValue + "\n"
+			if err := os.WriteFile(secretPath, []byte(secretLine), 0600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			var err error
+			stdout, stderr := captureStandardStreams(t, func() {
+				_, err = syncer.PushStore(context.Background(), &PushRequest{
+					RepoRoot:     repoRoot,
+					StoreIDs:     []string{storeID},
+					Remote:       "origin",
+					AllowSecrets: testCase.allowSecrets,
+				})
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+				}
+			})
+			if testCase.wantError {
+				if err == nil {
+					t.Fatal("PushStore() error = nil, want secret scan failure")
+				}
+				got := err.Error()
+				if !strings.Contains(got, "password-store/overlay/.env:1") || !strings.Contains(got, "high-entropy-assignment") || !strings.Contains(got, secretMask) {
+					t.Fatalf("PushStore() error = %q, want file, line, rule, and mask", got)
+				}
+				if strings.Contains(got, highEntropyAssignmentValue) {
+					t.Fatalf("PushStore() error leaked raw secret: %q", err)
+				}
+				if strings.Contains(stdout, highEntropyAssignmentValue) || strings.Contains(stderr, highEntropyAssignmentValue) {
+					t.Fatalf("stdout/stderr leaked raw secret: stdout=%q stderr=%q", stdout, stderr)
+				}
+				if len(git.CommitCalls) != 0 || len(git.PushCalls) != 0 {
+					t.Fatalf("secret scan created persistence history: commits=%d pushes=%d", len(git.CommitCalls), len(git.PushCalls))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("PushStore() error = %v, want nil with AllowSecrets", err)
+			}
+			if strings.Contains(stdout, highEntropyAssignmentValue) || strings.Contains(stderr, highEntropyAssignmentValue) {
+				t.Fatalf("stdout/stderr leaked raw secret: stdout=%q stderr=%q", stdout, stderr)
+			}
+			if len(git.CommitCalls) != 1 || len(git.PushCalls) != 1 {
+				t.Fatalf("explicit override did not commit and push: commits=%d pushes=%d", len(git.CommitCalls), len(git.PushCalls))
+			}
+		})
+	}
+}
+
 func captureStandardStreams(t *testing.T, fn func()) (stdout, stderr string) {
 	t.Helper()
 	oldStdout, oldStderr := os.Stdout, os.Stderr
