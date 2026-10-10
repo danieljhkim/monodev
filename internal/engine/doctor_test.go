@@ -154,6 +154,144 @@ func TestDoctor_OrphanedBackupDirectoryIsPrunedByFix(t *testing.T) {
 	}
 }
 
+func TestDoctor_OrphanRepairRechecksScanAfterLock(t *testing.T) {
+	for _, transition := range []string{"prepared journal", "malformed journal", "empty journal", "dangling journal", "directory removed", "directory replaced", "still orphaned"} {
+		t.Run(transition, func(t *testing.T) {
+			fx := newOverlayTxnFixture(t, "a.txt")
+			store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
+			repairStore := &doctorTransitionStateStore{FileStateStore: store}
+			eng := fx.engine(t, nil, repairStore)
+			journalPath, txnDir, err := eng.overlayTxnPaths(fx.workspaceID)
+			if err != nil {
+				t.Fatalf("txn paths: %v", err)
+			}
+			if err := os.MkdirAll(txnDir, 0700); err != nil {
+				t.Fatalf("seed txn directory: %v", err)
+			}
+			backupPath := filepath.Join(txnDir, "original")
+			if err := os.WriteFile(backupPath, []byte("last recoverable original"), 0600); err != nil {
+				t.Fatalf("seed backup: %v", err)
+			}
+
+			transitioned := false
+			// doctor has already classified the directory as orphaned when
+			// it asks for the repair lock. Model a writer completing first.
+			repairStore.beforeRepair = func() {
+				transitioned = true
+				writer, err := store.LockWorkspace(context.Background(), fx.workspaceID, lockfile.Exclusive)
+				if err != nil {
+					t.Fatalf("lock writer: %v", err)
+				}
+				defer func() {
+					if err := writer.Close(); err != nil {
+						t.Errorf("unlock writer: %v", err)
+					}
+				}()
+				switch transition {
+				case "prepared journal":
+					err = eng.writeOverlayTxn(journalPath, &overlayTxn{
+						Kind: overlayTxnApply, WorkspaceID: fx.workspaceID,
+						WorkspaceRoot: fx.repoRoot, Phase: overlayTxnPrepared,
+					})
+				case "malformed journal":
+					err = os.WriteFile(journalPath, []byte("invalid journal"), 0600)
+				case "empty journal":
+					err = os.WriteFile(journalPath, nil, 0600)
+				case "dangling journal":
+					err = os.Symlink(filepath.Join(fx.workspacesDir, "missing"), journalPath)
+				case "directory removed", "directory replaced":
+					err = os.RemoveAll(txnDir)
+					if err == nil && transition == "directory replaced" {
+						err = os.WriteFile(txnDir, []byte("replacement"), 0600)
+					}
+				}
+				if err != nil {
+					t.Fatalf("apply scan-to-fix transition: %v", err)
+				}
+			}
+
+			findings, err := eng.doctorScanTransactions(context.Background(), true)
+			if err != nil {
+				t.Fatalf("scan and repair transactions: %v", err)
+			}
+			if !transitioned {
+				t.Fatal("repair did not request the exclusive workspace lock")
+			}
+			if transition == "still orphaned" {
+				if len(findings) != 1 || !findings[0].Fixed || findings[0].FixError != "" {
+					t.Fatalf("expected successful orphan repair, got %+v", findings)
+				}
+				if _, err := os.Lstat(txnDir); !os.IsNotExist(err) {
+					t.Fatalf("genuine orphan was not removed: %v", err)
+				}
+				return
+			}
+			if len(findings) != 0 {
+				t.Fatalf("stale orphan diagnosis must not be reported as fixed: %+v", findings)
+			}
+			if strings.HasSuffix(transition, "journal") {
+				contents, err := os.ReadFile(backupPath)
+				if err != nil || string(contents) != "last recoverable original" {
+					t.Fatalf("journaled backup was changed or lost: %q, %v", contents, err)
+				}
+				if _, err := os.Lstat(journalPath); err != nil {
+					t.Fatalf("journal was removed: %v", err)
+				}
+			}
+			if transition == "directory replaced" {
+				contents, err := os.ReadFile(txnDir)
+				if err != nil || string(contents) != "replacement" {
+					t.Fatalf("replacement was removed: %q, %v", contents, err)
+				}
+			}
+		})
+	}
+}
+
+func TestDoctor_OrphanRepairPreservesBackupWhenWorkspaceLocked(t *testing.T) {
+	for _, mode := range []lockfile.Mode{lockfile.Shared, lockfile.Exclusive} {
+		t.Run(mode.String(), func(t *testing.T) {
+			fx := newOverlayTxnFixture(t)
+			store := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
+			eng := fx.engine(t, nil, store)
+			_, txnDir, err := eng.overlayTxnPaths(fx.workspaceID)
+			if err != nil {
+				t.Fatalf("txn paths: %v", err)
+			}
+			if err := os.MkdirAll(txnDir, 0700); err != nil {
+				t.Fatalf("seed txn directory: %v", err)
+			}
+			backupPath := filepath.Join(txnDir, "original")
+			if err := os.WriteFile(backupPath, []byte("original"), 0600); err != nil {
+				t.Fatalf("seed backup: %v", err)
+			}
+			writer, err := store.LockWorkspace(context.Background(), fx.workspaceID, mode)
+			if err != nil {
+				t.Fatalf("hold workspace lock: %v", err)
+			}
+			defer func() {
+				if err := writer.Close(); err != nil {
+					t.Errorf("unlock workspace: %v", err)
+				}
+			}()
+			// Cancellation makes contention deterministic without sleeps.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			finding, err := eng.doctorCheckOrphanedBackup(ctx, fx.workspaceID, true)
+			if err != nil {
+				t.Fatalf("repair orphan: %v", err)
+			}
+			if finding == nil || finding.Fixed || !strings.Contains(finding.FixError, context.Canceled.Error()) {
+				t.Fatalf("expected unfixed contention finding, got %+v", finding)
+			}
+			contents, err := os.ReadFile(backupPath)
+			if err != nil || string(contents) != "original" {
+				t.Fatalf("live workspace backup was changed or lost: %q, %v", contents, err)
+			}
+		})
+	}
+}
+
 // TestDoctor_LedgerEntryForDeletedStoreIsPrunedByFix covers: a ledger entry
 // naming a deleted store is reported and pruned by --fix.
 func TestDoctor_LedgerEntryForDeletedStoreIsPrunedByFix(t *testing.T) {
