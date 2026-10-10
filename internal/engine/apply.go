@@ -131,6 +131,13 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		}, fmt.Errorf("%w: %d conflicts detected", ErrConflict, len(plan.Conflicts))
 	}
 
+	// syncManagedExcludes runs only after the overlay transaction commits,
+	// and its failure is a warning. Refuse an unrepresentable name here so
+	// the ledger and workspace bytes stay unchanged.
+	if err := e.validateManagedExcludeOps(workspacePath, req.Mode, plan.Operations); err != nil {
+		return nil, err
+	}
+
 	if req.DryRun {
 		return &ApplyResult{
 			Plan:            plan,
@@ -241,6 +248,29 @@ func (e *Engine) resolveApplyStores(workspaceState *state.WorkspaceState, storeI
 		}
 	}
 	return storeIDs, applyRepo, chosen.Scope, nil
+}
+
+// validateManagedExcludeOps refuses an apply that would record a managed
+// name Git cannot exclude exactly. Copy-mode directories are the only
+// operations whose exclude entry ends in a slash.
+func (e *Engine) validateManagedExcludeOps(workspacePath, mode string, ops []planner.Operation) error {
+	for _, op := range ops {
+		if op.Type == planner.OpRemove {
+			continue
+		}
+		directory := false
+		if mode == "copy" {
+			info, err := e.fs.Lstat(op.SourcePath)
+			if err != nil {
+				return fmt.Errorf("failed to inspect %s: %w", op.RelPath, err)
+			}
+			directory = info.IsDir()
+		}
+		if err := validateManagedExcludePath(workspacePath, op.RelPath, directory); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // pathOwnersAfterOps is the ledger projection of a plan: the store that owns

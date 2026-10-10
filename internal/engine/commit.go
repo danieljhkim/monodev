@@ -131,11 +131,31 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 		ignoredNewPaths = nil
 	}
 
+	relPaths := make([]string, 0)
 	if req.All {
-		// Commit all tracked paths (CWD-relative)
 		for _, trackedPath := range track.Tracked {
+			relPaths = append(relPaths, trackedPath.Path)
+		}
+	} else {
+		for _, rawPath := range req.Paths {
+			cwdRelPath, err := resolveToWorkspaceRelative(rawPath, req.CWD, root)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve path %q: %w", rawPath, err)
+			}
+			relPaths = append(relPaths, cwdRelPath)
+		}
+	}
+	// Refuse names that cannot become one exact git exclusion before any
+	// store copy or ledger write. A later exclude sync would only warn.
+	if err := e.validateCommitPathsRepresentable(workspacePath, workspaceRoot, relPaths); err != nil {
+		return nil, err
+	}
+
+	if req.All {
+		for _, relPath := range relPaths {
 			if err := e.commitFilePath(
-				trackedPath.Path,
+				relPath,
+				workspacePath,
 				workspaceRoot,
 				overlayRoot,
 				workspaceState.ActiveStore,
@@ -156,14 +176,10 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 		}
 		result.Removed = removed
 	} else {
-		// Commit specific paths — resolve to workspace-relative first
-		for _, rawPath := range req.Paths {
-			cwdRelPath, err := resolveToWorkspaceRelative(rawPath, req.CWD, root)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve path %q: %w", rawPath, err)
-			}
+		for _, relPath := range relPaths {
 			if err := e.commitFilePath(
-				cwdRelPath,
+				relPath,
+				workspacePath,
 				workspaceRoot,
 				overlayRoot,
 				workspaceState.ActiveStore,
@@ -208,12 +224,35 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	return result, nil
 }
 
+// validateCommitPathsRepresentable reports paths Git cannot exclude exactly.
+// Missing paths are skipped so a later commit can record them as missing.
+func (e *Engine) validateCommitPathsRepresentable(workspacePath, workspaceRoot string, relPaths []string) error {
+	for _, relPath := range relPaths {
+		if err := e.fs.ValidateRelPath(relPath); err != nil {
+			return fmt.Errorf("invalid path %q: %w", relPath, err)
+		}
+		cleanRelPath := filepath.Clean(relPath)
+		info, err := e.fs.Lstat(filepath.Join(workspaceRoot, cleanRelPath))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("failed to stat workspace path %s: %w", cleanRelPath, err)
+		}
+		if err := validateManagedExcludePath(workspacePath, cleanRelPath, info.IsDir()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // commitFilePath processes a single file path for commit.
 // It validates, copies, and updates workspace state for the given path.
 // Returns nil on success, or an error if the operation failed.
 // Updates result with committed/missing paths accordingly.
 func (e *Engine) commitFilePath(
 	relPath string,
+	workspacePath string,
 	workspaceRoot string,
 	overlayRoot string,
 	activeStore string,
@@ -248,6 +287,9 @@ func (e *Engine) commitFilePath(
 	info, err := e.fs.Lstat(workspaceFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to stat workspace path %s: %w", cleanRelPath, err)
+	}
+	if err := validateManagedExcludePath(workspacePath, cleanRelPath, info.IsDir()); err != nil {
+		return err
 	}
 
 	// A symlink-mode overlay already points at its stored content, so there is
