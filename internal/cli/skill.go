@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/danieljhkim/monodev/internal/engine"
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
 
@@ -52,6 +53,10 @@ var skillCommandPaths = [][]string{
 var (
 	skillTarget string
 	skillForce  bool
+
+	// skillBeforeWrite runs between the preflight and the first write. Tests
+	// use it to replace paths deterministically.
+	skillBeforeWrite func()
 )
 
 var skillCmd = &cobra.Command{
@@ -171,26 +176,33 @@ func runSkillInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Refuse before writing anything so a partial run never leaves one
-	// target rewritten and another untouched.
-	if !skillForce {
-		for _, relPath := range paths {
-			if _, err := os.Lstat(filepath.Join(cwd, relPath)); err == nil {
-				return fmt.Errorf("%s already exists; rerun with --force to rewrite it", relPath)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("failed to inspect %s: %w", relPath, err)
-			}
+	// Inspect every target without following symlinks and refuse before
+	// writing anything, so a partial run never leaves one target rewritten
+	// and another untouched, and a linked ancestor never redirects a write.
+	fs := fsops.NewRealFS()
+	for _, relPath := range paths {
+		exists, err := fs.PreflightFileWithinRoot(cwd, relPath)
+		if err != nil {
+			return fmt.Errorf("refusing to write %s: %w", relPath, err)
 		}
+		if exists && !skillForce {
+			return fmt.Errorf("%s already exists; rerun with --force to rewrite it", relPath)
+		}
+	}
+
+	if skillBeforeWrite != nil {
+		skillBeforeWrite()
 	}
 
 	content := []byte(renderSkill(rootCmd))
 	var toTrack, toCommit []string
 	for _, relPath := range paths {
-		absPath := filepath.Join(cwd, relPath)
-		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-			return fmt.Errorf("failed to create %s: %w", filepath.Dir(relPath), err)
-		}
-		if err := os.WriteFile(absPath, content, 0o644); err != nil {
+		// Writes re-open every ancestor with O_NOFOLLOW, so a path replaced
+		// after the preflight is refused or replaced, never followed.
+		if err := fs.WriteFileWithinRoot(cwd, relPath, content, 0o644, skillForce); err != nil {
+			if errors.Is(err, fsops.ErrWriteTargetExists) {
+				return fmt.Errorf("%s already exists; rerun with --force to rewrite it", relPath)
+			}
 			return fmt.Errorf("failed to write %s: %w", relPath, err)
 		}
 		if covering := coveringTrackedPath(status.TrackedPaths, relPath); covering != "" {
