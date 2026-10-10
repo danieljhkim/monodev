@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -907,5 +908,44 @@ func TestBuildApplyPlan_PathOwnershipTracking(t *testing.T) {
 	}
 	if storeMap["script.sh"] != "store2" {
 		t.Errorf("expected script.sh from store2, got %q", storeMap["script.sh"])
+	}
+}
+
+// TestBuildApplyPlan_AcceptsDotDotPrefixedFilenames uses the real filesystem
+// validator: ".."-prefixed filenames are contained and must reach the plan.
+func TestBuildApplyPlan_AcceptsDotDotPrefixedFilenames(t *testing.T) {
+	repoRoot := t.TempDir()
+	overlayRoot := t.TempDir()
+	tracked := []string{"..draft.txt", "notes/..draft.txt"}
+	for _, rel := range tracked {
+		path := filepath.Join(overlayRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatalf("failed to create overlay dir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("overlay"), 0600); err != nil {
+			t.Fatalf("failed to write overlay file: %v", err)
+		}
+	}
+
+	storeRepo := newMockStoreRepo()
+	track := stores.NewTrackFile()
+	for _, rel := range tracked {
+		track.Tracked = append(track.Tracked, stores.TrackedPath{Path: rel, Kind: "file"})
+	}
+	storeRepo.setTrack("store1", track)
+	storeRepo.setOverlayRoot("store1", overlayRoot)
+	workspace := state.NewWorkspaceState("repo1", ".", "copy")
+
+	plan, err := BuildApplyPlan(workspace, []string{"store1"}, "copy", repoRoot, storeRepo, fsops.NewRealFS(), false)
+	if err != nil {
+		t.Fatalf("BuildApplyPlan failed: %v", err)
+	}
+	if len(plan.Operations) != len(tracked) {
+		t.Fatalf("expected %d operations, got %d", len(tracked), len(plan.Operations))
+	}
+	for i, rel := range tracked {
+		if plan.Operations[i].RelPath != rel {
+			t.Errorf("operation %d RelPath = %q, want %q", i, plan.Operations[i].RelPath, rel)
+		}
 	}
 }
