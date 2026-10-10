@@ -47,10 +47,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return config.NotInGitRepositoryError(err)
 	}
+	if err := config.ValidateRepoLocalRoot(repoRoot); err != nil {
+		return err
+	}
 
 	// 2. Check if .monodev already exists
 	monodevPath := filepath.Join(repoRoot, config.RepoLocalDirName)
-	if info, err := os.Stat(monodevPath); err == nil && info.IsDir() {
+	if info, err := os.Lstat(monodevPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("unsafe symlinked repo-local path %s", config.RepoLocalDirName)
+	} else if err == nil && info.IsDir() {
 		if !initForce {
 			return fmt.Errorf(".monodev already exists at %s\nUse --force to reinitialize", monodevPath)
 		}

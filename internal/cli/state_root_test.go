@@ -150,6 +150,68 @@ func TestInitForceRemainsIdempotent(t *testing.T) {
 	}
 }
 
+func TestInitSucceedsThroughSymlinkedRepositoryAncestor(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MONODEV_ROOT", "")
+
+	base := t.TempDir()
+	realParent := filepath.Join(base, "real-parent")
+	repo := initGitRepo(t, filepath.Join(realParent, "repo"), "https://example.com/monodev.git")
+	aliasParent := filepath.Join(base, "parent-alias")
+	if err := os.Symlink(realParent, aliasParent); err != nil {
+		t.Fatal(err)
+	}
+	aliasRepo := filepath.Join(aliasParent, filepath.Base(repo))
+	chdir(t, aliasRepo)
+	t.Setenv("PWD", aliasRepo)
+
+	runCLI(t, "init")
+	for _, name := range []string{"stores", "workspaces"} {
+		if info, err := os.Stat(filepath.Join(repo, config.RepoLocalDirName, name)); err != nil || !info.IsDir() {
+			t.Fatalf("repo-local %s missing through symlinked ancestor: info %v, error %v", name, info, err)
+		}
+	}
+}
+
+func TestInitReportsRepoLocalSymlinksClearly(t *testing.T) {
+	for _, entry := range []string{config.RepoLocalDirName, "stores", "workspaces"} {
+		t.Run(entry, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("MONODEV_ROOT", "")
+			repo := initGitRepo(t, filepath.Join(t.TempDir(), "repo"), "https://example.com/monodev.git")
+			outside := filepath.Join(t.TempDir(), "outside")
+			if err := os.Mkdir(outside, 0700); err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(repo, config.RepoLocalDirName)
+			linkPath := root
+			if entry != config.RepoLocalDirName {
+				if err := os.Mkdir(root, 0700); err != nil {
+					t.Fatal(err)
+				}
+				linkPath = filepath.Join(root, entry)
+			}
+			if err := os.Symlink(outside, linkPath); err != nil {
+				t.Fatal(err)
+			}
+			chdir(t, repo)
+
+			err := runCLIErr(t, "init")
+			if err == nil {
+				t.Fatal("expected init to refuse a symlinked repo-local path")
+			}
+			got := strings.ToLower(err.Error())
+			if !strings.Contains(got, "symlink") || !strings.Contains(got, strings.ToLower(entry)) {
+				t.Errorf("error = %q, want the offending symlink path %q", err, entry)
+			}
+			if strings.Contains(got, "not a directory") {
+				t.Errorf("error = %q, must not report a misleading not-a-directory failure", err)
+			}
+		})
+	}
+}
+
 func TestInitForceJSONOutputIsParseable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
