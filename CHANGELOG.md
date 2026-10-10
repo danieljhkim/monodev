@@ -11,12 +11,29 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-09
+
+v0.3.0 was tagged but never published: its Linux builds failed, so no release
+or Homebrew update went out. Upgrading from 0.2.8 also picks up the
+[0.3.0](#030--2026-08-30) breaking changes below.
+
+### Added
+- `monodev store clone <source> <destination>` copies a saved store into an independent store without activating it.
+- Releases ship archives for macOS (arm64, amd64) and Linux (amd64, arm64) with a `SHA256SUMS` file, Bash/Zsh/Fish completions and a man page.
+
 ### Changed
-- Table cells and label values now print in the terminal's default foreground instead of dark gray; labels are bold, and only placeholders and separators stay dimmed.
+- `push` with no store IDs pushes only this repository's stores (`<repo>/.monodev`). Stores in `~/.monodev` or `MONODEV_ROOT` are shared across repositories and are pushed only when named; a bare push with no repo-local stores now errors.
+- `sync` commits, pushes and pulls only the current workspace's active store, not every store.
+- Table cells and label values print in the terminal's default foreground instead of dark gray; labels are bold, and only placeholders and separators stay dimmed.
 
 ### Fixed
-- `push` with no store IDs now pushes only this repository's stores (`<repo>/.monodev`). It no longer publishes every store in `~/.monodev` or `MONODEV_ROOT`, which other repositories share; name those to push them.
 - `unapply` no longer forgets the active store when it removes the workspace's last overlay, so a bare `apply` restores it instead of failing with `no active store set`.
+- `unapply --dry-run` applies the same drift validation as a real unapply.
+- `commit` drops untracked sibling files from copied-directory snapshots and keeps their ownership manifests; `save` filters ignored files the same way.
+- `diff` and `status` compare against the selected nested workspace root, and `diff` shows final-newline changes.
+- Workspaces that share one repository no longer overwrite each other's `.git/info/exclude` entries.
+- `apply --json` exits non-zero when the apply is refused.
+- Unknown subcommands under command groups (such as `monodev remote foo`) now error instead of printing help.
 
 ## [0.3.0] — 2026-08-30
 

@@ -270,8 +270,8 @@ monodev sync --allow-secrets
 
 Commit all tracked paths from the active store for the current workspace, then
 push and pull that same store, in that order. It does not synchronize other
-local or remote stores. To synchronize every store explicitly, use `monodev
-push` or `monodev pull` with no store IDs. Fails if no remote is configured;
+local or remote stores. To push every repo-local store, use `monodev push`
+with no store IDs; `monodev pull` with no IDs pulls every remote store. Fails if no remote is configured;
 run `monodev remote use origin` first.
 
 ---
