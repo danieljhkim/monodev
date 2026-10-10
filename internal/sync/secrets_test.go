@@ -100,6 +100,64 @@ func TestDetectSecretKeywordNameAssignments(t *testing.T) {
 	}
 }
 
+func TestDetectSecretChecksAssignmentsAfterRejectedMatches(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		line string
+	}{
+		{name: "placeholder", line: "PASSWORD=placeholder API_KEY=" + highEntropyAssignmentValue},
+		{name: "short", line: "PASSWORD=short API_KEY=" + highEntropyAssignmentValue},
+		{name: "low entropy", line: "PASSWORD=" + strings.Repeat("a", 24) + " API_KEY=" + highEntropyAssignmentValue},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := detectSecret(testCase.line); got != "high-entropy-assignment" {
+				t.Fatalf("detectSecret(%q) = %q, want high-entropy-assignment", testCase.line, got)
+			}
+		})
+	}
+}
+
+func TestDetectSecretChecksHighConfidenceTokensAfterPlaceholders(t *testing.T) {
+	githubPlaceholder := "ghp_example" + strings.Repeat("a", 29)
+	openAIPlaceholder := "sk-proj-example-placeholder-value"
+	anthropicPlaceholder := "sk-ant-api03-example" + strings.Repeat("a", 20)
+	awsPlaceholder := "AKIAEXAMPLE123456789"
+
+	for _, testCase := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{name: "aws", line: awsPlaceholder + " AKIA1234567890ABCDEF", want: "aws-access-key"},
+		{name: "github", line: githubPlaceholder + " ghp_" + strings.Repeat("b", 36), want: "github-token"},
+		{name: "anthropic", line: anthropicPlaceholder + " sk-ant-api03-" + strings.Repeat("b", 24), want: "anthropic-api-key"},
+		{name: "openai", line: openAIPlaceholder + " sk-proj-" + strings.Repeat("b", 24), want: "openai-api-key"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := detectSecret(testCase.line); got != testCase.want {
+				t.Fatalf("detectSecret(%q) = %q, want %q", testCase.line, got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestScanPersistedStoresFindsAssignmentAfterPlaceholder(t *testing.T) {
+	storesRoot := t.TempDir()
+	line := "PASSWORD=placeholder API_KEY=" + highEntropyAssignmentValue + "\n"
+	writeScanFixture(t, storesRoot, "demo", "overlay/config.sh", line)
+
+	finding, err := scanPersistedStores(storesRoot)
+	if err != nil {
+		t.Fatalf("scanPersistedStores() error = %v", err)
+	}
+	if finding == nil {
+		t.Fatal("scanPersistedStores() finding = nil, want later high-entropy assignment")
+	}
+	if finding.Path != "demo/overlay/config.sh" || finding.Line != 1 || finding.Rule != "high-entropy-assignment" {
+		t.Fatalf("finding = %#v, want demo/overlay/config.sh:1 high-entropy-assignment", finding)
+	}
+}
+
 func TestScanPersistedStoresSkipsBinariesAndFalsePositiveFixtureCorpus(t *testing.T) {
 	storesRoot := t.TempDir()
 	writeScanFixture(t, storesRoot, "demo", "overlay/main.go", "package demo\n\nconst encodedFixture = \"QWxhZGRpbjpvcGVuIHNlc2FtZQ==\"\n")

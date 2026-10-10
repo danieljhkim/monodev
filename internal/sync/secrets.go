@@ -152,20 +152,23 @@ func detectSecret(line string) string {
 		return "private-key-pem"
 	}
 
-	match := assignmentPattern.FindStringSubmatch(line)
-	if match == nil {
-		return ""
+	for _, match := range assignmentPattern.FindAllStringSubmatch(line, -1) {
+		value := firstNonEmpty(match[1:])
+		if isPlaceholder(value) || len(value) < 20 || shannonEntropy(value) < 3.5 {
+			continue
+		}
+		return "high-entropy-assignment"
 	}
-	value := firstNonEmpty(match[1:])
-	if isPlaceholder(value) || len(value) < 20 || shannonEntropy(value) < 3.5 {
-		return ""
-	}
-	return "high-entropy-assignment"
+	return ""
 }
 
 func nonPlaceholderMatch(pattern *regexp.Regexp, line string) bool {
-	match := pattern.FindString(line)
-	return match != "" && !isPlaceholder(match)
+	for _, match := range pattern.FindAllString(line, -1) {
+		if !isPlaceholder(match) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstNonEmpty(values []string) string {
