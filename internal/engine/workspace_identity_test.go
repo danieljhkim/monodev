@@ -704,3 +704,190 @@ func mustFingerprint(t *testing.T, root string) string {
 	}
 	return fp
 }
+
+// seedLegacyWorkspace creates dev-store and stores the legacy workspace
+// fixture under its legacy ID. It returns the legacy and current IDs.
+func seedLegacyWorkspace(t *testing.T, eng *Engine, stateStore *state.FileStateStore, repoDir string) (legacyID, currentID string) {
+	t.Helper()
+	if err := eng.CreateStore(context.Background(), &CreateStoreRequest{CWD: repoDir, StoreID: "dev-store", Name: "dev-store", Scope: "global"}); err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	fp := mustFingerprint(t, repoDir)
+	currentID = state.ComputeWorkspaceID(fp, ".")
+	if err := stateStore.DeleteWorkspace(currentID); err != nil {
+		t.Fatalf("delete current workspace: %v", err)
+	}
+
+	absRoot, rawURL, err := gitx.NewRealGitRepo().GetFingerprintComponents(repoDir)
+	if err != nil {
+		t.Fatalf("GetFingerprintComponents: %v", err)
+	}
+	legacyFP := gitx.LegacyFingerprint(absRoot, rawURL)
+	legacyID = state.ComputeWorkspaceID(legacyFP, ".")
+	fixture, err := os.ReadFile(filepath.Join("testdata", "legacy_workspace.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	replaced := strings.NewReplacer("LEGACY_FINGERPRINT", legacyFP, "LEGACY_ABSOLUTE_PATH", absRoot).Replace(string(fixture))
+	var ws state.WorkspaceState
+	if err := json.Unmarshal([]byte(replaced), &ws); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	if err := stateStore.SaveWorkspace(legacyID, &ws); err != nil {
+		t.Fatalf("save legacy workspace: %v", err)
+	}
+	return legacyID, currentID
+}
+
+// snapshotWorkspaceDir maps every file name in the workspaces directory to
+// its bytes so tests can assert that nothing was created, deleted or changed.
+func snapshotWorkspaceDir(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		snap[entry.Name()] = string(data)
+	}
+	return snap
+}
+
+func assertWorkspaceDirUnchanged(t *testing.T, dir string, before map[string]string) {
+	t.Helper()
+	after := snapshotWorkspaceDir(t, dir)
+	if len(after) != len(before) {
+		t.Fatalf("workspace records changed: before %d files, after %d files", len(before), len(after))
+	}
+	for name, data := range before {
+		got, ok := after[name]
+		if !ok {
+			t.Fatalf("workspace record %s was deleted", name)
+		}
+		if got != data {
+			t.Fatalf("workspace record %s bytes changed", name)
+		}
+	}
+}
+
+func TestPreviewWorkspaceState_ResolvesLegacyIDInMemory(t *testing.T) {
+	repoDir := setupGitRepoWithRemote(t, "git@github.com:org/legacy-preview.git")
+	eng, stateStore, workspacesDir := setupIdentityEngine(t)
+	legacyID, currentID := seedLegacyWorkspace(t, eng, stateStore, repoDir)
+	before := snapshotWorkspaceDir(t, workspacesDir)
+
+	fp := mustFingerprint(t, repoDir)
+	loaded, gotID, err := eng.PreviewWorkspaceState(repoDir, fp, ".", "copy")
+	if err != nil {
+		t.Fatalf("PreviewWorkspaceState: %v", err)
+	}
+	if gotID != currentID {
+		t.Errorf("workspace ID = %q, want %q", gotID, currentID)
+	}
+	if loaded.ActiveStore != "dev-store" || !loaded.Applied || loaded.Paths["Makefile"].Store != "dev-store" {
+		t.Errorf("legacy ledger not preserved in memory: %+v", loaded)
+	}
+	if loaded.Repo != fp {
+		t.Errorf("Repo = %q, want current fingerprint", loaded.Repo)
+	}
+	assertWorkspaceDirUnchanged(t, workspacesDir, before)
+	if _, ok := before[legacyID+".json"]; !ok {
+		t.Fatalf("legacy record %s.json missing from snapshot", legacyID)
+	}
+}
+
+func TestDryRunAndReadOnlyCommands_DoNotMigrateLegacyWorkspace(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name    string
+		run     func(eng *Engine, repoDir string) error
+		wantErr bool
+	}{
+		{
+			name: "apply dry-run success",
+			run: func(eng *Engine, repoDir string) error {
+				_, err := eng.Apply(ctx, &ApplyRequest{CWD: repoDir, Mode: "copy", DryRun: true})
+				return err
+			},
+		},
+		{
+			name: "apply dry-run refusal",
+			run: func(eng *Engine, repoDir string) error {
+				_, err := eng.Apply(ctx, &ApplyRequest{CWD: repoDir, Mode: "symlink", DryRun: true})
+				return err
+			},
+			wantErr: true,
+		},
+		{
+			name: "commit dry-run success",
+			run: func(eng *Engine, repoDir string) error {
+				_, err := eng.Commit(ctx, &CommitRequest{CWD: repoDir, All: true, DryRun: true})
+				return err
+			},
+		},
+		{
+			name: "commit dry-run refusal",
+			run: func(eng *Engine, repoDir string) error {
+				_, err := eng.Commit(ctx, &CommitRequest{CWD: repoDir, Paths: []string{"../outside"}, DryRun: true})
+				return err
+			},
+			wantErr: true,
+		},
+		{
+			name: "diff success",
+			run: func(eng *Engine, repoDir string) error {
+				_, err := eng.Diff(ctx, &DiffRequest{CWD: repoDir})
+				return err
+			},
+		},
+		{
+			name: "diff refusal",
+			run: func(eng *Engine, repoDir string) error {
+				_, err := eng.Diff(ctx, &DiffRequest{CWD: repoDir, StoreID: "missing-store"})
+				return err
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoDir := setupGitRepoWithRemote(t, "git@github.com:org/legacy-dry-run.git")
+			eng, stateStore, workspacesDir := setupIdentityEngine(t)
+			seedLegacyWorkspace(t, eng, stateStore, repoDir)
+			before := snapshotWorkspaceDir(t, workspacesDir)
+
+			err := tt.run(eng, repoDir)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected the command to be refused")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertWorkspaceDirUnchanged(t, workspacesDir, before)
+		})
+	}
+}
+
+func TestApply_ActualRunStillMigratesLegacyWorkspace(t *testing.T) {
+	repoDir := setupGitRepoWithRemote(t, "git@github.com:org/legacy-apply.git")
+	eng, stateStore, workspacesDir := setupIdentityEngine(t)
+	legacyID, currentID := seedLegacyWorkspace(t, eng, stateStore, repoDir)
+
+	if _, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoDir, Mode: "copy"}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspacesDir, legacyID+".json")); !os.IsNotExist(err) {
+		t.Errorf("legacy workspace file still present: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspacesDir, currentID+".json")); err != nil {
+		t.Errorf("migrated workspace file missing: %v", err)
+	}
+}

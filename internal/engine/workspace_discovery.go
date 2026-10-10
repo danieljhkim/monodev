@@ -31,14 +31,33 @@ func (e *Engine) DiscoverWorkspace(cwd string) (root, fingerprint, workspacePath
 	return root, fingerprint, workspacePath, nil
 }
 
+// LoadOrCreateWorkspaceState resolves the workspace record for mutating
+// commands. A record stored under a legacy workspace ID is migrated to the
+// current ID on disk. Callers must hold the workspace lock exclusively.
 func (e *Engine) LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, mode string) (*state.WorkspaceState, string, error) {
+	return e.loadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, mode, true)
+}
+
+// PreviewWorkspaceState resolves the workspace record for dry-run and
+// read-only commands. A legacy record is returned migrated in memory only;
+// nothing is saved, deleted, or otherwise written to the state store.
+func (e *Engine) PreviewWorkspaceState(root, repoFingerprint, workspacePath, mode string) (*state.WorkspaceState, string, error) {
+	return e.loadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, mode, false)
+}
+
+func (e *Engine) loadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, mode string, persistMigration bool) (*state.WorkspaceState, string, error) {
 	resolved, err := e.resolveWorkspaceState(root, repoFingerprint, workspacePath)
 	if err != nil {
 		return nil, state.ComputeWorkspaceID(repoFingerprint, workspacePath), err
 	}
 	if resolved.state != nil && resolved.foundID != resolved.currentID {
-		if err := e.migrateWorkspaceRecord(resolved.store, resolved.state, resolved.foundID, resolved.currentID, repoFingerprint, root, workspacePath); err != nil {
-			return nil, resolved.currentID, err
+		if persistMigration {
+			if err := e.migrateWorkspaceRecord(resolved.store, resolved.state, resolved.foundID, resolved.currentID, repoFingerprint, root, workspacePath); err != nil {
+				return nil, resolved.currentID, err
+			}
+		} else {
+			applyWorkspaceIdentity(resolved.state, repoFingerprint, root, workspacePath)
+			resolved.state.MigrateDeprecatedStack()
 		}
 	}
 	if resolved.state == nil {
@@ -137,9 +156,7 @@ func (e *Engine) migrateWorkspaceRecord(store state.StateStore, ws *state.Worksp
 		return fmt.Errorf("failed to migrate workspace %s: no state store", oldID)
 	}
 	migrated := state.CloneWorkspaceState(ws)
-	migrated.Repo = repoFingerprint
-	migrated.WorkspacePath = workspacePath
-	migrated.AbsolutePath = filepath.Join(root, workspacePath)
+	applyWorkspaceIdentity(migrated, repoFingerprint, root, workspacePath)
 	if err := store.SaveWorkspace(newID, migrated); err != nil {
 		return fmt.Errorf("failed to migrate workspace %s: %w", oldID, err)
 	}
@@ -148,9 +165,15 @@ func (e *Engine) migrateWorkspaceRecord(store state.StateStore, ws *state.Worksp
 			return fmt.Errorf("failed to remove legacy workspace %s: %w", oldID, err)
 		}
 	}
-	ws.Repo = migrated.Repo
-	ws.WorkspacePath = migrated.WorkspacePath
-	ws.AbsolutePath = migrated.AbsolutePath
+	applyWorkspaceIdentity(ws, repoFingerprint, root, workspacePath)
 	ws.MigrateDeprecatedStack()
 	return nil
+}
+
+// applyWorkspaceIdentity rewrites the identity fields of a legacy record to
+// the current workspace in memory.
+func applyWorkspaceIdentity(ws *state.WorkspaceState, repoFingerprint, root, workspacePath string) {
+	ws.Repo = repoFingerprint
+	ws.WorkspacePath = workspacePath
+	ws.AbsolutePath = filepath.Join(root, workspacePath)
 }
