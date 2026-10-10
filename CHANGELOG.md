@@ -11,6 +11,9 @@ clarity over ceremony. Versions are pre-1.0 and may evolve rapidly.
 
 ## [Unreleased]
 
+### Changed
+- Table cells and label values now print in the terminal's default foreground instead of dark gray; labels are bold, and only placeholders and separators stay dimmed.
+
 ### Fixed
 - `unapply` no longer forgets the active store when it removes the workspace's last overlay, so a bare `apply` restores it instead of failing with `no active store set`.
 
