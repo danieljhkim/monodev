@@ -218,7 +218,9 @@ func runRemoteShow(cmd *cobra.Command, args []string) error {
 	gitPersist := remote.NewRealGitPersistence()
 	remoteURL, err := gitPersist.GetRemoteURL(cmd.Context(), repoRoot, config.Remote)
 	if err != nil {
-		PrintWarning(fmt.Sprintf("Remote %q not found in repository", config.Remote))
+		if !jsonOutput {
+			PrintWarning(fmt.Sprintf("Remote %q not found in repository", config.Remote))
+		}
 		remoteURL = "(not found)"
 	}
 
