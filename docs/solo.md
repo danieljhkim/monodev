@@ -72,7 +72,8 @@ monodev unapply api-dev
 monodev unapply --all
 ```
 
-Later stores win path conflicts. `--force` overrides unmanaged destinations.
+Later stores win when they track the same path. A copied directory and a nested
+path from another store are both kept. `--force` overrides unmanaged destinations.
 
 ## Inspect and repair
 

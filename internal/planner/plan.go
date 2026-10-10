@@ -47,6 +47,11 @@ type Conflict struct {
 
 	// Incoming describes what the plan wants to create
 	Incoming string
+
+	// Blocking reports a conflict --force must not override. Hierarchy
+	// overlaps that cannot be applied without deleting another store's
+	// path are blocking: apply stops before it changes the workspace.
+	Blocking bool `json:"blocking,omitempty"`
 }
 
 // Operation type constants
@@ -70,6 +75,34 @@ func NewApplyPlan(stores []string) *ApplyPlan {
 // HasConflicts returns true if the plan has any conflicts.
 func (p *ApplyPlan) HasConflicts() bool {
 	return len(p.Conflicts) > 0
+}
+
+// FirstBlockingConflict returns the first conflict --force must not override.
+func (p *ApplyPlan) FirstBlockingConflict() (Conflict, bool) {
+	if p == nil {
+		return Conflict{}, false
+	}
+	for _, conflict := range p.Conflicts {
+		if conflict.Blocking {
+			return conflict, true
+		}
+	}
+	return Conflict{}, false
+}
+
+// insertBeforeDescendants places op immediately before the first operation
+// whose path is nested inside op. Ancestor copies then run before descendant
+// copies, so replacing a directory cannot drop a path installed later.
+func (p *ApplyPlan) insertBeforeDescendants(op Operation) {
+	for i, existing := range p.Operations {
+		if IsStrictDescendant(existing.RelPath, op.RelPath) {
+			p.Operations = append(p.Operations, Operation{})
+			copy(p.Operations[i+1:], p.Operations[i:])
+			p.Operations[i] = op
+			return
+		}
+	}
+	p.AddOperation(op)
 }
 
 // AddOperation adds an operation to the plan.

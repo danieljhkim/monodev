@@ -131,6 +131,7 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 	for _, relPath := range removed {
 		delete(final.Paths, relPath)
 	}
+	pruneManifestsUnderRemoved(final.Paths, removed)
 	// Keep the state file while it still records an active store, so a bare
 	// `apply` after a full unapply re-applies the same store.
 	deleteState := len(final.Paths) == 0 && final.ActiveStore == ""
@@ -167,7 +168,9 @@ func (e *Engine) Unapply(ctx context.Context, req *UnapplyRequest) (*UnapplyResu
 }
 
 // validateManagedPath validates that a path is still managed by monodev.
-func (e *Engine) validateManagedPath(absPath, relPath string, ownership state.PathOwnership) error {
+// ledger is the full ownership map. Files owned by another store inside a
+// copied directory are not drift in this path.
+func (e *Engine) validateManagedPath(absPath, relPath string, ownership state.PathOwnership, ledger map[string]state.PathOwnership) error {
 	exists, err := e.fs.Exists(absPath)
 	if err != nil {
 		return fmt.Errorf("failed to check if path exists: %w", err)
@@ -188,7 +191,7 @@ func (e *Engine) validateManagedPath(absPath, relPath string, ownership state.Pa
 		if !info.IsDir() {
 			return fmt.Errorf("%w: %w: copied directory %s is no longer a directory; %s", ErrValidation, ErrDrift, relPath, forceUnapplyHint)
 		}
-		return e.validateCopiedDirectory(absPath, relPath, ownership)
+		return e.validateCopiedDirectory(absPath, relPath, ownership, ledger)
 	}
 
 	if ownership.Checksum == "" {

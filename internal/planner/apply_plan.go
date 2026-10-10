@@ -3,11 +3,18 @@ package planner
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
+
+// pathClaim is one tracked path already accepted into this plan.
+type pathClaim struct {
+	store string
+	kind  string
+}
 
 // BuildApplyPlan generates a deterministic plan to apply store overlays.
 func BuildApplyPlan(
@@ -26,9 +33,10 @@ func BuildApplyPlan(
 	// For subdirectory workspaces, paths are applied relative to the workspace dir.
 	applyRoot := filepath.Join(repoRoot, workspace.WorkspacePath)
 
-	// Track which paths have been claimed by which stores
-	// This helps with store-to-store precedence
-	pathOwners := make(map[string]string)
+	// Track which paths have been claimed by which stores.
+	// Identical paths use later-store precedence. A copied directory and a
+	// nested path are both kept: the more specific path wins that subtree.
+	pathOwners := make(map[string]pathClaim)
 
 	// For each store in order
 	for _, storeID := range orderedStores {
@@ -82,31 +90,38 @@ func BuildApplyPlan(
 				continue
 			}
 
-			// Check if this path was already claimed by an earlier store
-			// Use relPath as the key for tracking ownership
-			if previousStore, exists := pathOwners[relPath]; exists {
-				// Later store takes precedence - add remove operation first
-				removeOp := Operation{
+			conflicts, coversDescendants := hierarchyForPath(pathOwners, relPath, pathType, mode, storeID)
+			if len(conflicts) > 0 {
+				for _, conflict := range conflicts {
+					plan.AddConflict(conflict)
+				}
+				continue
+			}
+
+			var prelude []Operation
+			if previous, exists := pathOwners[relPath]; exists {
+				// Later store takes the identical path. Nested paths claimed
+				// under a replaced directory stay and are installed after it.
+				prelude = append(prelude, Operation{
 					Type:       OpRemove,
 					SourcePath: "",
 					DestPath:   destPath,
 					RelPath:    relPath,
-					Store:      previousStore,
-				}
-				plan.AddOperation(removeOp)
+					Store:      previous.store,
+				})
+				delete(pathOwners, relPath)
 			} else if force {
 				// When force is enabled, check if destination exists (unmanaged or from previous apply)
 				// If so, we need to remove it first before creating the new overlay
 				destExists, err := fs.Exists(destPath)
 				if err == nil && destExists {
-					removeOp := Operation{
+					prelude = append(prelude, Operation{
 						Type:       OpRemove,
 						SourcePath: "",
 						DestPath:   destPath,
 						RelPath:    relPath,
 						Store:      "", // unknown/unmanaged
-					}
-					plan.AddOperation(removeOp)
+					})
 				}
 			}
 
@@ -129,12 +144,80 @@ func BuildApplyPlan(
 					Store:      storeID,
 				}
 			}
-			plan.AddOperation(op)
+			if coversDescendants {
+				for _, pre := range prelude {
+					plan.insertBeforeDescendants(pre)
+				}
+				plan.insertBeforeDescendants(op)
+			} else {
+				for _, pre := range prelude {
+					plan.AddOperation(pre)
+				}
+				plan.AddOperation(op)
+			}
 
 			// Mark this path as claimed by this store (use relative path)
-			pathOwners[relPath] = storeID
+			pathOwners[relPath] = pathClaim{store: storeID, kind: pathType}
 		}
 	}
 
 	return plan, nil
+}
+
+// hierarchyForPath decides how relPath relates to paths already in the plan.
+// A copied directory may contain another store's path. Every other nesting
+// (a path inside a file, or any nesting in symlink mode) is a blocking
+// conflict. coversDescendants is true when relPath is a copied directory that
+// must be installed before those nested paths.
+func hierarchyForPath(owners map[string]pathClaim, relPath, pathType, mode, storeID string) (conflicts []Conflict, coversDescendants bool) {
+	keys := make([]string, 0, len(owners))
+	for key := range owners {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		claim := owners[key]
+		if key == relPath {
+			continue
+		}
+		switch {
+		case IsStrictDescendant(relPath, key):
+			if mode == "copy" && claim.kind == "directory" {
+				continue
+			}
+			conflicts = append(conflicts, hierarchyConflict(relPath, pathType, storeID, key, claim, mode))
+		case IsStrictDescendant(key, relPath):
+			if mode == "copy" && pathType == "directory" {
+				coversDescendants = true
+				continue
+			}
+			conflicts = append(conflicts, hierarchyConflict(relPath, pathType, storeID, key, claim, mode))
+		}
+	}
+	return conflicts, coversDescendants
+}
+
+func hierarchyConflict(relPath, pathType, storeID, otherRel string, claim pathClaim, mode string) Conflict {
+	reason := fmt.Sprintf("path %s from store %s overlaps %s %s from store %s", relPath, storeID, claim.kind, otherRel, claim.store)
+	existing := claim.kind
+	incoming := pathType
+	if mode == "symlink" && (pathType == "directory" || claim.kind == "directory") {
+		reason += "; symlink apply cannot share a nested path between stores"
+		if claim.kind == "directory" {
+			existing = "directory-symlink"
+		}
+		if pathType == "directory" {
+			incoming = "directory-symlink"
+		}
+	} else {
+		reason += "; only a copied directory can contain another store's path"
+	}
+	return Conflict{
+		Path:     relPath,
+		Reason:   reason,
+		Existing: existing,
+		Incoming: incoming,
+		Blocking: true,
+	}
 }

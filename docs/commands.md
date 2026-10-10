@@ -30,8 +30,15 @@ monodev apply --dry-run
 ```
 
 No arguments: apply the active store. Store IDs: apply in argument order; later
-stores win path conflicts. `--force` (`-f`) overrides conflicts. `--dry-run`
-prints the plan and writes nothing.
+stores win when they track the same path. A copied directory and a path inside
+it from another store are both kept, in either order: the more specific path is
+owned by its store, and the directory owner does not own that nested path.
+Unapply of either store leaves the other store's files in place.
+
+A path inside a file, or any nested overlap in symlink mode, is a conflict.
+Apply stops before it changes the workspace, and `--force` does not override
+that conflict. `--force` (`-f`) still overrides unmanaged destinations and mode
+or type mismatches. `--dry-run` prints the plan and writes nothing.
 
 ### unapply
 
@@ -44,8 +51,12 @@ monodev unapply --dry-run
 ```
 
 No arguments: remove paths owned by the active store. Store IDs: remove only
-those owners. `--all` removes every applied overlay in this workspace and cannot
-be combined with store IDs. `--force` (`-f`), `--dry-run`.
+those owners. Removing a copied directory leaves nested paths that another
+applied store still owns, and drops those paths from the directory manifest so
+the ledger matches the files left on disk. `--all` removes every applied overlay
+in this workspace and cannot be combined with store IDs. `--force` (`-f`)
+removes a drifted copy anyway, but still keeps another store's owned paths.
+`--dry-run`.
 
 ### status
 

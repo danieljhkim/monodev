@@ -21,7 +21,10 @@ var applyCmd = &cobra.Command{
 	Long: `Apply one or more stores to the current working directory.
 
 With no arguments, applies the active store. With store IDs, applies those
-stores in argument order. Later stores take precedence on path conflicts.`,
+stores in argument order. Later stores take precedence on the same path. A
+copied directory and a nested path from another store are both kept. A path
+inside a file, or nested paths in symlink mode, conflict before any change;
+--force does not override that conflict.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		eng, err := newEngine()
@@ -53,11 +56,19 @@ stores in argument order. Later stores take precedence on path conflicts.`,
 					return err
 				}
 				PrintSection("Conflicts Detected")
+				blocking := false
 				for _, conflict := range result.Plan.Conflicts {
 					PrintError(fmt.Sprintf("%s: %s", conflict.Path, conflict.Reason))
+					if conflict.Blocking {
+						blocking = true
+					}
 				}
 				fmt.Println()
-				PrintWarning("Use --force to override conflicts.")
+				if blocking {
+					PrintWarning("Hierarchy conflicts stop apply before any change. --force does not override them.")
+				} else {
+					PrintWarning("Use --force to override conflicts.")
+				}
 			}
 			return err
 		}

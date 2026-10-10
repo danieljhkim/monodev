@@ -7,6 +7,7 @@
 // Key responsibilities:
 //   - Generate ApplyPlan with ordered operations
 //   - Detect conflicts (unmanaged files, type mismatches, mode mismatches)
-//   - Handle store-to-store precedence and overrides
+//   - Handle store-to-store precedence and overrides, including a copied
+//     directory and a nested path owned by another store
 //   - Validate path safety before operations
 package planner

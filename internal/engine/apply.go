@@ -13,8 +13,10 @@ import (
 )
 
 // Apply applies one or more stores to the workspace in argument order.
-// With no StoreIDs, it applies the active store. Later stores win path
-// conflicts, matching the retired stack precedence rule.
+// With no StoreIDs, it applies the active store. Later stores win identical
+// paths. A copied directory and a nested path from another store are both
+// kept; the nested path stays owned by its store. Unsafe nesting conflicts
+// before any file changes, including with --force.
 func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, error) {
 	if err := checkContext(ctx); err != nil {
 		return nil, err
@@ -104,6 +106,15 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 		return nil, err
 	}
 
+	if conflict, blocked := plan.FirstBlockingConflict(); blocked {
+		return &ApplyResult{
+			Plan:            plan,
+			Applied:         []planner.Operation{},
+			WorkspaceID:     workspaceID,
+			RepoFingerprint: repoFingerprint,
+			WorkspacePath:   workspacePath,
+		}, fmt.Errorf("%w: %s", ErrConflict, conflict.Reason)
+	}
 	if plan.HasConflicts() && !req.Force {
 		return &ApplyResult{
 			Plan:            plan,
@@ -136,9 +147,10 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 			if final.Paths == nil {
 				final.Paths = map[string]state.PathOwnership{}
 			}
+			owners := pathOwnersAfterOps(plan.Operations)
 			for _, op := range plan.Operations {
 				if op.Type != planner.OpRemove {
-					final.Paths[op.RelPath] = e.ownershipForAppliedPath(op, req.Mode)
+					final.Paths[op.RelPath] = e.ownershipForAppliedPath(op, req.Mode, owners)
 				} else {
 					delete(final.Paths, op.RelPath)
 				}
@@ -223,4 +235,19 @@ func (e *Engine) resolveApplyStores(workspaceState *state.WorkspaceState, storeI
 		}
 	}
 	return storeIDs, applyRepo, chosen.Scope, nil
+}
+
+// pathOwnersAfterOps is the ledger projection of a plan: the store that owns
+// each path after removes and creates. Directory manifests use it to exclude
+// nested paths owned by another store.
+func pathOwnersAfterOps(ops []planner.Operation) map[string]string {
+	owners := make(map[string]string)
+	for _, op := range ops {
+		if op.Type == planner.OpRemove {
+			delete(owners, op.RelPath)
+			continue
+		}
+		owners[op.RelPath] = op.Store
+	}
+	return owners
 }
