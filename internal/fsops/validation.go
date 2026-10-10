@@ -36,9 +36,12 @@ func (fs *RealFS) ValidateRelPath(relPath string) error {
 		return fmt.Errorf("invalid path: must be relative, got absolute path %q", cleaned)
 	}
 
-	// Reject path traversal attempts
-	if strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, string(filepath.Separator)+"..") {
-		return fmt.Errorf("invalid path: path traversal not allowed in %q", cleaned)
+	// Reject path traversal attempts. Only an exact ".." component escapes the
+	// root; names such as "..draft.txt" are ordinary filenames.
+	for _, part := range strings.Split(cleaned, string(filepath.Separator)) {
+		if part == ".." {
+			return fmt.Errorf("invalid path: path traversal not allowed in %q", cleaned)
+		}
 	}
 
 	return nil

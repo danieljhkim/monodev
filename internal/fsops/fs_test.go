@@ -63,6 +63,31 @@ func TestRealFS_ValidateRelPath(t *testing.T) {
 			path:      "a/b/c/d/e/f/g.txt",
 			wantError: false,
 		},
+		{
+			name:      "filename beginning with two dots",
+			path:      "..draft.txt",
+			wantError: false,
+		},
+		{
+			name:      "nested filename beginning with two dots",
+			path:      "notes/..draft.txt",
+			wantError: false,
+		},
+		{
+			name:      "parent directory alone",
+			path:      "..",
+			wantError: true,
+		},
+		{
+			name:      "parent directory after dot-dot filename",
+			path:      "..draft/../../x",
+			wantError: true,
+		},
+		{
+			name:      "traversal after nested dot-dot filename",
+			path:      "notes/..draft/../../../etc/hosts",
+			wantError: true,
+		},
 	}
 
 	for _, tt := range tests {

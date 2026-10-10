@@ -518,3 +518,37 @@ func saveWorkspaceForTest(t *testing.T, fx overlayTxnFixture, ws *state.Workspac
 		t.Fatal(err)
 	}
 }
+
+// TestCommit_AcceptsDotDotPrefixedFilenames verifies that filenames beginning
+// with ".." are contained ordinary names: they are applied and committed
+// through the real filesystem instead of being refused as traversal.
+func TestCommit_AcceptsDotDotPrefixedFilenames(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "..draft.txt", "notes/..draft.txt")
+	fx.seedApplied(t)
+	fx.requireUserFile(t, "notes/..draft.txt", "user-edited")
+
+	if _, err := fx.engine(t, nil, nil).Commit(context.Background(), &CommitRequest{CWD: fx.repoRoot, All: true}); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(fx.overlayRoot, "notes", "..draft.txt"))
+	if err != nil || string(got) != "user-edited" {
+		t.Fatalf("overlay notes/..draft.txt = %q, %v; want user-edited", got, err)
+	}
+}
+
+// TestTrack_AcceptsDotDotPrefixedFilenames verifies that Track saves a
+// ".."-prefixed filename beneath the workspace without a traversal refusal.
+func TestTrack_AcceptsDotDotPrefixedFilenames(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "a.txt")
+	fx.seedApplied(t)
+	fx.requireUserFile(t, "notes/..draft.txt", "user-draft")
+
+	result, err := fx.engine(t, nil, nil).Track(context.Background(), &TrackRequest{CWD: fx.repoRoot, Paths: []string{"notes/..draft.txt"}})
+	if err != nil {
+		t.Fatalf("Track: %v", err)
+	}
+	if got := result.ResolvedPaths["notes/..draft.txt"]; got != "notes/..draft.txt" {
+		t.Fatalf("ResolvedPaths = %v, want notes/..draft.txt resolved", result.ResolvedPaths)
+	}
+}
