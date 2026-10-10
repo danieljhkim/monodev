@@ -122,6 +122,51 @@ func TestBuildApplyPlan_RejectsPathInsideGitDirectory(t *testing.T) {
 	}
 }
 
+func TestBuildApplyPlan_RejectsGitCaseAliasOnCaseInsensitiveFilesystem(t *testing.T) {
+	repoRoot := t.TempDir()
+	hooks := filepath.Join(repoRoot, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0700); err != nil {
+		t.Fatalf("failed to create hooks dir: %v", err)
+	}
+	sentinel := filepath.Join(hooks, "pre-commit")
+	if err := os.WriteFile(sentinel, []byte("original"), 0700); err != nil {
+		t.Fatalf("failed to write sentinel: %v", err)
+	}
+	_, probeErr := os.Stat(filepath.Join(repoRoot, ".GIT", "hooks", "pre-commit"))
+	caseInsensitive := probeErr == nil
+
+	for _, tracked := range []string{".GIT/hooks/pre-commit", ".Git/hooks/pre-commit", ".github/workflows/ci.yml", ".git-hooks/pre-commit"} {
+		fs := newMockFS()
+		storeRepo := newMockStoreRepo()
+		workspace := state.NewWorkspaceState("repo1", ".", "copy")
+		track := stores.NewTrackFile()
+		track.Tracked = []stores.TrackedPath{{Path: tracked, Kind: "file"}}
+		storeRepo.setTrack("untrusted-store", track)
+		storeRepo.setOverlayRoot("untrusted-store", "/stores/untrusted-store/overlay")
+		fs.setExists("/stores/untrusted-store/overlay/"+tracked, true)
+
+		plan, err := BuildApplyPlan(workspace, []string{"untrusted-store"}, "copy", repoRoot, storeRepo, fs, false)
+		aliasesGit := caseInsensitive && strings.HasPrefix(strings.ToLower(tracked), ".git/")
+		if aliasesGit {
+			if err == nil || !strings.Contains(err.Error(), "repository .git directory") {
+				t.Errorf("BuildApplyPlan(%q) error = %v, want repository .git directory rejection", tracked, err)
+			}
+			if plan != nil {
+				t.Errorf("BuildApplyPlan(%q) plan = %#v, want nil", tracked, plan)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("BuildApplyPlan(%q) unexpectedly failed: %v", tracked, err)
+		}
+	}
+
+	content, err := os.ReadFile(sentinel)
+	if err != nil || string(content) != "original" {
+		t.Fatalf("sentinel content = %q, error = %v; want unchanged", content, err)
+	}
+}
+
 func TestBuildApplyPlan_MultipleStores_Precedence(t *testing.T) {
 	fs := newMockFS()
 	storeRepo := newMockStoreRepo()

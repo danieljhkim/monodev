@@ -603,3 +603,115 @@ func requireSymlink(t *testing.T, oldname, newname string) {
 		t.Skipf("symlink creation is not supported in this environment: %v", err)
 	}
 }
+
+// gitAliasFixture builds a repository root with a real .git/hooks sentinel and
+// reports whether the filesystem resolves ".GIT" to the same directory.
+func gitAliasFixture(t *testing.T) (root, sentinel string, caseInsensitive bool) {
+	t.Helper()
+	root = t.TempDir()
+	hooks := filepath.Join(root, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0700); err != nil {
+		t.Fatalf("failed to create hooks dir: %v", err)
+	}
+	sentinel = filepath.Join(hooks, "pre-commit")
+	if err := os.WriteFile(sentinel, []byte("original"), 0700); err != nil {
+		t.Fatalf("failed to write sentinel: %v", err)
+	}
+	_, err := os.Stat(filepath.Join(root, ".GIT", "hooks", "pre-commit"))
+	return root, sentinel, err == nil
+}
+
+func requireSentinelUnchanged(t *testing.T, root, sentinel string) {
+	t.Helper()
+	content, err := os.ReadFile(sentinel)
+	if err != nil || string(content) != "original" {
+		t.Fatalf("sentinel content = %q, error = %v; want unchanged", content, err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".git", "hooks"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("hooks entries = %v, error = %v; want only the sentinel", entries, err)
+	}
+}
+
+func TestValidatePathOutsideGitDir_CaseAliases(t *testing.T) {
+	root, _, caseInsensitive := gitAliasFixture(t)
+
+	for _, alias := range []string{".GIT", ".Git", ".gIt"} {
+		err := ValidatePathOutsideGitDir(root, filepath.Join(root, alias, "hooks", "sentinel"))
+		if caseInsensitive && err == nil {
+			t.Errorf("alias %q was not rejected on a case-insensitive filesystem", alias)
+		}
+		if !caseInsensitive && err != nil {
+			t.Errorf("alias %q rejected on a case-sensitive filesystem: %v", alias, err)
+		}
+	}
+	for _, ordinary := range []string{".github/workflows/ci.yml", ".git-hooks/pre-commit", "sub/.GIT/x"} {
+		if err := ValidatePathOutsideGitDir(root, filepath.Join(root, ordinary)); err != nil {
+			t.Errorf("ordinary path %q rejected: %v", ordinary, err)
+		}
+	}
+}
+
+func TestRealFS_RootConfinedPrimitivesRejectGitCaseAliases(t *testing.T) {
+	root, sentinel, caseInsensitive := gitAliasFixture(t)
+	if !caseInsensitive {
+		t.Skip("filesystem is case-sensitive; .GIT is not an alias of .git")
+	}
+	fs := NewRealFS()
+	source := filepath.Join(t.TempDir(), "source.txt")
+	if err := os.WriteFile(source, []byte("malicious"), 0700); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	for _, alias := range []string{".GIT", ".Git"} {
+		for _, rel := range []string{alias + "/hooks/pre-commit", alias + "/hooks/post-checkout", alias + "/config", alias} {
+			if err := fs.CopyWithinRoot(root, rel, source); err == nil {
+				t.Errorf("CopyWithinRoot(%q) succeeded, want rejection", rel)
+			}
+			if err := fs.SymlinkWithinRoot(root, rel, "target"); err == nil {
+				t.Errorf("SymlinkWithinRoot(%q) succeeded, want rejection", rel)
+			}
+			if err := fs.RemoveAllWithinRoot(root, rel); err == nil {
+				t.Errorf("RemoveAllWithinRoot(%q) succeeded, want rejection", rel)
+			}
+		}
+	}
+
+	requireSentinelUnchanged(t, root, sentinel)
+	if _, err := os.Stat(filepath.Join(root, ".git", "config")); !os.IsNotExist(err) {
+		t.Fatalf("config was created through alias: %v", err)
+	}
+}
+
+func TestRealFS_RootConfinedPrimitivesAllowSimilarlyNamedPaths(t *testing.T) {
+	root, sentinel, caseInsensitive := gitAliasFixture(t)
+	fs := NewRealFS()
+	source := filepath.Join(t.TempDir(), "source.txt")
+	if err := os.WriteFile(source, []byte("benign"), 0600); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	rels := []string{".github/workflows/ci.yml", ".git-hooks/pre-commit", ".gitignore", "nested/.GIT-notes/x"}
+	if !caseInsensitive {
+		// A distinct directory on a case-sensitive filesystem is ordinary.
+		rels = append(rels, ".GIT/hooks/pre-commit")
+	}
+	for _, rel := range rels {
+		if err := fs.CopyWithinRoot(root, rel, source); err != nil {
+			t.Errorf("CopyWithinRoot(%q) failed: %v", rel, err)
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil || string(content) != "benign" {
+			t.Errorf("content of %q = %q, error = %v", rel, content, err)
+		}
+	}
+	if err := fs.RemoveAllWithinRoot(root, ".github"); err != nil {
+		t.Errorf("RemoveAllWithinRoot(.github) failed: %v", err)
+	}
+
+	content, err := os.ReadFile(sentinel)
+	if err != nil || string(content) != "original" {
+		t.Fatalf("sentinel content = %q, error = %v; want unchanged", content, err)
+	}
+}

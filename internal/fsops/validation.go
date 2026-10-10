@@ -1,6 +1,7 @@
 package fsops
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,6 +46,11 @@ func (fs *RealFS) ValidateRelPath(relPath string) error {
 
 // ValidatePathOutsideGitDir rejects paths targeting the repository's Git metadata.
 // The target path is expected to be absolute or relative to repoRoot consistently.
+//
+// The lexical comparison is followed by an identity check on the first
+// component below repoRoot, so a name that the filesystem resolves to the real
+// .git directory (for example ".GIT" on a case-insensitive volume) is rejected
+// too, while ordinary names such as ".github" or ".git-hooks" are not.
 func ValidatePathOutsideGitDir(repoRoot, targetPath string) error {
 	gitDir := filepath.Join(repoRoot, ".git")
 	relToGitDir, err := filepath.Rel(gitDir, targetPath)
@@ -53,6 +59,33 @@ func ValidatePathOutsideGitDir(repoRoot, targetPath string) error {
 	}
 
 	if relToGitDir == "." || (relToGitDir != ".." && !strings.HasPrefix(relToGitDir, ".."+string(filepath.Separator))) {
+		return fmt.Errorf("path resolves inside repository .git directory")
+	}
+
+	relToRoot, err := filepath.Rel(repoRoot, targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to compare path with repository root: %w", err)
+	}
+	if relToRoot == "." || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	first := strings.SplitN(relToRoot, string(filepath.Separator), 2)[0]
+
+	gitInfo, err := os.Lstat(gitDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect repository .git directory: %w", err)
+	}
+	firstInfo, err := os.Lstat(filepath.Join(repoRoot, first))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect path component %q: %w", first, err)
+	}
+	if os.SameFile(gitInfo, firstInfo) {
 		return fmt.Errorf("path resolves inside repository .git directory")
 	}
 
