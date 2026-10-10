@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -164,6 +165,10 @@ func promptConfirm(prompt string) bool {
 
 // outputDeleteJSON outputs the delete result in JSON format.
 func outputDeleteJSON(result *engine.DeleteStoreResult, err error) error {
+	return outputDeleteJSONTo(os.Stdout, result, err)
+}
+
+func outputDeleteJSONTo(w io.Writer, result *engine.DeleteStoreResult, err error) error {
 	output := map[string]any{
 		"success": err == nil,
 	}
@@ -192,7 +197,10 @@ func outputDeleteJSON(result *engine.DeleteStoreResult, err error) error {
 		output["error"] = err.Error()
 	}
 
-	encoder := json.NewEncoder(os.Stdout)
+	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(output)
+	if encodeErr := encoder.Encode(output); encodeErr != nil {
+		return encodeErr
+	}
+	return err
 }
