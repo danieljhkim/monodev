@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/danieljhkim/monodev/internal/hash"
 	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
 )
@@ -38,7 +39,7 @@ func (e *Engine) ownershipForAppliedPath(op planner.Operation, mode string) stat
 		return ownership
 	}
 
-	checksum, err := e.hasher.HashFile(op.DestPath)
+	checksum, err := hash.HashManagedFile(e.hasher, op.DestPath)
 	if err == nil {
 		ownership.Checksum = checksum
 	}
@@ -70,7 +71,7 @@ func (e *Engine) copyDirFileChecksums(root string) (map[string]string, error) {
 			files[rel] = "non-regular"
 			return nil
 		}
-		checksum, err := e.hasher.HashFile(pathName)
+		checksum, err := hash.HashManagedFile(e.hasher, pathName)
 		if err != nil {
 			return err
 		}

@@ -508,3 +508,26 @@ func (f *cancelAfterCopyFS) CopyWithinRoot(root, relPath, src string) error {
 	})
 	return err
 }
+
+func TestApplyRejectsSymlinkedStoreSourceAncestor(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "nested/private.txt")
+	fx.requireUserFile(t, "nested/private.txt", "original workspace")
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "private.txt"), []byte("outside-secret-sentinel"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ancestor := filepath.Join(fx.overlayRoot, "nested")
+	if err := os.Rename(ancestor, ancestor+"-original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fx.engine(t, nil, nil).Apply(context.Background(), &ApplyRequest{CWD: fx.repoRoot, StoreIDs: []string{fx.storeID}, Mode: "copy", Force: true})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Apply source rejection = %v", err)
+	}
+	if got := fx.readWorkspace(t, "nested/private.txt"); got != "original workspace" {
+		t.Fatalf("workspace changed to %q", got)
+	}
+}

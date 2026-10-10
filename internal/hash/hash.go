@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/danieljhkim/monodev/internal/fsops"
 )
 
 // Hasher provides an abstraction for file hashing operations.
@@ -37,6 +39,29 @@ func (h *SHA256Hasher) HashFile(path string) (string, error) {
 		_ = file.Close()
 	}()
 
+	return hashReader(file)
+}
+
+// HashManagedFile hashes without following any source symlink component.
+func (h *SHA256Hasher) HashManagedFile(path string) (string, error) {
+	file, err := fsops.OpenRegularSource(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	return hashReader(file)
+}
+
+// HashManagedFile uses traversal-safe hashing when supported by the provider.
+// Test and custom hash providers retain their existing implementation.
+func HashManagedFile(h Hasher, path string) (string, error) {
+	if managed, ok := h.(interface{ HashManagedFile(string) (string, error) }); ok {
+		return managed.HashManagedFile(path)
+	}
+	return h.HashFile(path)
+}
+
+func hashReader(file io.Reader) (string, error) {
 	hasher := sha256.New()
 	if _, err := io.Copy(hasher, file); err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)

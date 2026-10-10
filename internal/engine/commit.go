@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/danieljhkim/monodev/internal/fsops"
+	"github.com/danieljhkim/monodev/internal/hash"
 	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
@@ -256,9 +257,10 @@ func (e *Engine) commitFilePath(
 		}
 		contents = &state.DirContents{Files: files}
 	} else {
-		hash, err := e.hasher.HashFile(workspaceFilePath)
+		// Hash the saved snapshot rather than reopening the mutable workspace source.
+		sum, err := hash.HashManagedFile(e.hasher, storeFilePath)
 		if err == nil {
-			checksum = hash
+			checksum = sum
 		}
 	}
 

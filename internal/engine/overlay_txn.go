@@ -523,7 +523,7 @@ func restoreTree(src, dst string) error {
 }
 
 func copyRegularFile(src, dst string) error {
-	srcFile, err := os.Open(src)
+	srcFile, err := fsops.OpenRegularSource(src)
 	if err != nil {
 		return err
 	}
