@@ -15,6 +15,7 @@ import (
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/gitx"
 	"github.com/danieljhkim/monodev/internal/hash"
+	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -195,6 +196,314 @@ func TestWorkspaceRepair_ListAndRebind(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workspacesDir, orphanID+".json")); !os.IsNotExist(err) {
 		t.Error("orphan file still present after rebind")
+	}
+}
+
+// rebindTransitionStateStore runs beforeLock inside the first moment
+// LockWorkspace is entered, before the underlying lock is acquired. That is
+// the preflight-to-lock window RebindWorkspace must revalidate.
+type rebindTransitionStateStore struct {
+	*state.FileStateStore
+	beforeLock func()
+}
+
+func (s *rebindTransitionStateStore) LockWorkspace(ctx context.Context, id string, mode lockfile.Mode) (*lockfile.Lock, error) {
+	if mode == lockfile.Exclusive && s.beforeLock != nil {
+		s.beforeLock()
+	}
+	return s.FileStateStore.LockWorkspace(ctx, id, mode)
+}
+
+func setupRebindTransitionEngine(t *testing.T, beforeLock func()) (*Engine, *state.FileStateStore, string) {
+	t.Helper()
+	root := t.TempDir()
+	workspaces := filepath.Join(root, "workspaces")
+	storesDir := filepath.Join(root, "stores")
+	if err := os.MkdirAll(workspaces, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(storesDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	fs := fsops.NewRealFS()
+	stateStore := state.NewFileStateStore(fs, workspaces)
+	eng := New(
+		gitx.NewRealGitRepo(),
+		stores.NewFileStoreRepo(fs, storesDir),
+		&rebindTransitionStateStore{FileStateStore: stateStore, beforeLock: beforeLock},
+		fs,
+		hash.NewSHA256Hasher(),
+		clock.NewFakeClock(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)),
+		config.Paths{
+			Root:       root,
+			Stores:     storesDir,
+			Workspaces: workspaces,
+			Config:     filepath.Join(root, "config.yaml"),
+		},
+	)
+	return eng, stateStore, workspaces
+}
+
+func seedRebindOrphan(t *testing.T, stateStore *state.FileStateStore, repoDir string) (orphanID string, orphan *state.WorkspaceState) {
+	t.Helper()
+	orphanFP := "pre-repair-fingerprint"
+	orphanID = state.ComputeWorkspaceID(orphanFP, ".")
+	orphan = state.NewWorkspaceState(orphanFP, ".", "copy")
+	orphan.AbsolutePath = repoDir
+	orphan.ActiveStore = "old-store"
+	orphan.Paths = map[string]state.PathOwnership{
+		"old.txt": {Store: "old-store", Type: "copy", Checksum: "old"},
+	}
+	if err := stateStore.SaveWorkspace(orphanID, orphan); err != nil {
+		t.Fatalf("save orphan: %v", err)
+	}
+	return orphanID, orphan
+}
+
+func TestRebindWorkspace_RefusesTargetCreatedBeforeLockWithoutForce(t *testing.T) {
+	repoDir := setupGitRepoWithRemote(t, "https://github.com/org/repair-race.git")
+	fp := mustFingerprint(t, repoDir)
+	var stateStore *state.FileStateStore
+	var orphanID string
+	fired := false
+	eng, stateStore, workspacesDir := setupRebindTransitionEngine(t, func() {
+		if fired {
+			return
+		}
+		fired = true
+		targetID := state.ComputeWorkspaceID(fp, ".")
+		target := state.NewWorkspaceState(fp, ".", "copy")
+		target.AbsolutePath = repoDir
+		target.ActiveStore = "concurrent-store"
+		target.Paths = map[string]state.PathOwnership{
+			"new.txt": {Store: "concurrent-store", Type: "copy", Checksum: "new"},
+		}
+		if err := stateStore.SaveWorkspace(targetID, target); err != nil {
+			t.Fatalf("save concurrent target: %v", err)
+		}
+	})
+	orphanID, _ = seedRebindOrphan(t, stateStore, repoDir)
+	targetID := state.ComputeWorkspaceID(fp, ".")
+
+	_, err := eng.RebindWorkspace(context.Background(), &RebindWorkspaceRequest{
+		CWD:         repoDir,
+		WorkspaceID: orphanID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already exists") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("RebindWorkspace error = %v, want existing-target refusal", err)
+	}
+	if !fired {
+		t.Fatal("rebind did not acquire the exclusive workspace lock")
+	}
+
+	target, err := stateStore.LoadWorkspace(targetID)
+	if err != nil {
+		t.Fatalf("load target: %v", err)
+	}
+	if target.ActiveStore != "concurrent-store" {
+		t.Fatalf("target ActiveStore = %q, want concurrent-store", target.ActiveStore)
+	}
+	if _, ok := target.Paths["new.txt"]; !ok {
+		t.Fatalf("concurrent target ledger was replaced: %+v", target.Paths)
+	}
+	if _, ok := target.Paths["old.txt"]; ok {
+		t.Fatalf("stale source ledger overwrote the target: %+v", target.Paths)
+	}
+
+	source, err := stateStore.LoadWorkspace(orphanID)
+	if err != nil {
+		t.Fatalf("load source: %v", err)
+	}
+	if source.ActiveStore != "old-store" {
+		t.Fatalf("source ActiveStore = %q, want old-store", source.ActiveStore)
+	}
+	if _, err := os.Stat(filepath.Join(workspacesDir, orphanID+".json")); err != nil {
+		t.Fatalf("source record missing after refused rebind: %v", err)
+	}
+}
+
+func TestRebindWorkspace_MigratesSourceUpdatedBeforeLock(t *testing.T) {
+	repoDir := setupGitRepoWithRemote(t, "https://github.com/org/repair-source.git")
+	fp := mustFingerprint(t, repoDir)
+	var stateStore *state.FileStateStore
+	var orphanID string
+	fired := false
+	eng, stateStore, workspacesDir := setupRebindTransitionEngine(t, func() {
+		if fired {
+			return
+		}
+		fired = true
+		fresh, err := stateStore.LoadWorkspace(orphanID)
+		if err != nil {
+			t.Fatalf("reload source in hook: %v", err)
+		}
+		fresh.ActiveStoreScope = "global"
+		fresh.Paths["extra.txt"] = state.PathOwnership{Store: "old-store", Type: "copy", Checksum: "extra"}
+		if err := stateStore.SaveWorkspace(orphanID, fresh); err != nil {
+			t.Fatalf("save fresh source: %v", err)
+		}
+	})
+	orphanID, _ = seedRebindOrphan(t, stateStore, repoDir)
+	currentID := state.ComputeWorkspaceID(fp, ".")
+
+	result, err := eng.RebindWorkspace(context.Background(), &RebindWorkspaceRequest{
+		CWD:         repoDir,
+		WorkspaceID: orphanID,
+	})
+	if err != nil {
+		t.Fatalf("RebindWorkspace: %v", err)
+	}
+	if !fired {
+		t.Fatal("rebind did not acquire the exclusive workspace lock")
+	}
+	if result.NewWorkspaceID != currentID {
+		t.Fatalf("NewWorkspaceID = %s, want %s", result.NewWorkspaceID, currentID)
+	}
+	if result.ActiveStore != "old-store" || result.AppliedPaths != 2 {
+		t.Fatalf("result = %+v, want fresh source ledger", result)
+	}
+
+	rebound, err := stateStore.LoadWorkspace(currentID)
+	if err != nil {
+		t.Fatalf("load rebound workspace: %v", err)
+	}
+	if rebound.ActiveStoreScope != "global" {
+		t.Fatalf("ActiveStoreScope = %q, want concurrent source scope", rebound.ActiveStoreScope)
+	}
+	if rebound.Paths["old.txt"].Checksum != "old" || rebound.Paths["extra.txt"].Checksum != "extra" {
+		t.Fatalf("fresh source ledger not migrated: %+v", rebound.Paths)
+	}
+	if _, err := os.Stat(filepath.Join(workspacesDir, orphanID+".json")); !os.IsNotExist(err) {
+		t.Fatal("orphan file still present after rebind")
+	}
+}
+
+func TestRebindWorkspace_ForceUsesFreshSourceWithoutDiscardingConcurrentChanges(t *testing.T) {
+	repoDir := setupGitRepoWithRemote(t, "https://github.com/org/repair-force.git")
+	fp := mustFingerprint(t, repoDir)
+	var stateStore *state.FileStateStore
+	var orphanID string
+	fired := false
+	eng, stateStore, _ := setupRebindTransitionEngine(t, func() {
+		if fired {
+			return
+		}
+		fired = true
+		fresh, err := stateStore.LoadWorkspace(orphanID)
+		if err != nil {
+			t.Fatalf("reload source in hook: %v", err)
+		}
+		fresh.ActiveStoreScope = "global"
+		fresh.Paths["extra.txt"] = state.PathOwnership{Store: "old-store", Type: "copy", Checksum: "extra"}
+		if err := stateStore.SaveWorkspace(orphanID, fresh); err != nil {
+			t.Fatalf("save fresh source: %v", err)
+		}
+		targetID := state.ComputeWorkspaceID(fp, ".")
+		target := state.NewWorkspaceState(fp, ".", "copy")
+		target.AbsolutePath = repoDir
+		target.ActiveStore = "concurrent-store"
+		target.Applied = true
+		target.Paths = map[string]state.PathOwnership{
+			"new.txt": {Store: "concurrent-store", Type: "copy", Checksum: "new"},
+		}
+		if err := stateStore.SaveWorkspace(targetID, target); err != nil {
+			t.Fatalf("save concurrent target: %v", err)
+		}
+	})
+	orphanID, _ = seedRebindOrphan(t, stateStore, repoDir)
+	currentID := state.ComputeWorkspaceID(fp, ".")
+
+	result, err := eng.RebindWorkspace(context.Background(), &RebindWorkspaceRequest{
+		CWD:         repoDir,
+		WorkspaceID: orphanID,
+		Force:       true,
+	})
+	if err != nil {
+		t.Fatalf("RebindWorkspace: %v", err)
+	}
+	if !fired {
+		t.Fatal("rebind did not acquire the exclusive workspace lock")
+	}
+	if result.ActiveStore != "old-store" || result.AppliedPaths != 2 {
+		t.Fatalf("result = %+v, want fresh source rather than the stale snapshot or the target", result)
+	}
+
+	rebound, err := stateStore.LoadWorkspace(currentID)
+	if err != nil {
+		t.Fatalf("load rebound workspace: %v", err)
+	}
+	if rebound.ActiveStore != "old-store" || rebound.ActiveStoreScope != "global" {
+		t.Fatalf("identity fields = store %q scope %q, want old-store/global", rebound.ActiveStore, rebound.ActiveStoreScope)
+	}
+	if rebound.Paths["old.txt"].Checksum != "old" || rebound.Paths["extra.txt"].Checksum != "extra" {
+		t.Fatalf("concurrent source ledger discarded: %+v", rebound.Paths)
+	}
+	if _, ok := rebound.Paths["new.txt"]; ok {
+		t.Fatalf("force kept the overwritten target path: %+v", rebound.Paths)
+	}
+	if rebound.Repo != fp {
+		t.Fatalf("Repo = %q, want current fingerprint", rebound.Repo)
+	}
+}
+
+func TestRebindWorkspace_RelocksWhenSourcePathChangesBeforeLock(t *testing.T) {
+	repoDir := setupGitRepoWithRemote(t, "https://github.com/org/repair-relock.git")
+	fp := mustFingerprint(t, repoDir)
+	var stateStore *state.FileStateStore
+	var orphanID string
+	lockCalls := 0
+	eng, stateStore, _ := setupRebindTransitionEngine(t, func() {
+		lockCalls++
+		switch lockCalls {
+		case 1:
+			fresh, err := stateStore.LoadWorkspace(orphanID)
+			if err != nil {
+				t.Fatalf("reload source in hook: %v", err)
+			}
+			fresh.WorkspacePath = "nested"
+			if err := stateStore.SaveWorkspace(orphanID, fresh); err != nil {
+				t.Fatalf("save relocated source: %v", err)
+			}
+		case 3:
+			targetID := state.ComputeWorkspaceID(fp, "nested")
+			target := state.NewWorkspaceState(fp, "nested", "copy")
+			target.AbsolutePath = repoDir
+			target.ActiveStore = "concurrent-store"
+			target.Paths = map[string]state.PathOwnership{
+				"new.txt": {Store: "concurrent-store", Type: "copy", Checksum: "new"},
+			}
+			if err := stateStore.SaveWorkspace(targetID, target); err != nil {
+				t.Fatalf("save relocated target: %v", err)
+			}
+		}
+	})
+	orphanID, _ = seedRebindOrphan(t, stateStore, repoDir)
+	targetID := state.ComputeWorkspaceID(fp, "nested")
+
+	_, err := eng.RebindWorkspace(context.Background(), &RebindWorkspaceRequest{
+		CWD:         repoDir,
+		WorkspaceID: orphanID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("RebindWorkspace error = %v, want refusal of the target at the fresh path", err)
+	}
+	if lockCalls < 3 {
+		t.Fatalf("lock acquisitions = %d, want a second lock set for the fresh target", lockCalls)
+	}
+
+	target, err := stateStore.LoadWorkspace(targetID)
+	if err != nil {
+		t.Fatalf("load relocated target: %v", err)
+	}
+	if target.ActiveStore != "concurrent-store" || target.Paths["new.txt"].Checksum != "new" {
+		t.Fatalf("relocated target changed: %+v", target)
+	}
+	source, err := stateStore.LoadWorkspace(orphanID)
+	if err != nil {
+		t.Fatalf("load source: %v", err)
+	}
+	if source.WorkspacePath != "nested" || source.ActiveStore != "old-store" {
+		t.Fatalf("source was migrated despite the fresh target: %+v", source)
 	}
 }
 
