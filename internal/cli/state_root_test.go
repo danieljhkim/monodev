@@ -150,6 +150,74 @@ func TestInitForceRemainsIdempotent(t *testing.T) {
 	}
 }
 
+func TestInitForceJSONOutputIsParseable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MONODEV_ROOT", "")
+
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+
+	runCLI(t, "init")
+	runCLI(t, "checkout", "-n", "keep")
+	storeDir := filepath.Join(repo, config.RepoLocalDirName, "stores", "keep")
+	if _, err := os.Stat(storeDir); err != nil {
+		t.Fatalf("expected store before reinit: %v", err)
+	}
+
+	out := runCLI(t, "init", "--force", "--json")
+
+	var result struct {
+		Initialized bool   `json:"initialized"`
+		Path        string `json:"path"`
+	}
+	dec := json.NewDecoder(strings.NewReader(out))
+	if err := dec.Decode(&result); err != nil {
+		t.Fatalf("init --force --json stdout is not JSON: %v\n%s", err, out)
+	}
+	if dec.More() {
+		t.Fatalf("init --force --json stdout has trailing content:\n%s", out)
+	}
+	if !result.Initialized {
+		t.Errorf("initialized = false, want true\n%s", out)
+	}
+	if want := filepath.Join(repo, config.RepoLocalDirName); !samePath(t, result.Path, want) {
+		t.Errorf("path = %q, want %q", result.Path, want)
+	}
+	if _, err := os.Stat(storeDir); err != nil {
+		t.Errorf("existing store lost after init --force --json: %v", err)
+	}
+}
+
+func TestInitForcePlainOutputReportsReinitialization(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MONODEV_ROOT", "")
+
+	repo := initGitRepo(t, t.TempDir(), "https://example.com/monodev.git")
+	chdir(t, repo)
+
+	runCLI(t, "init")
+	out := runCLI(t, "init", "--force")
+
+	if !strings.Contains(out, "reinitializing with --force") {
+		t.Errorf("plain init --force output missing reinitialization notice:\n%s", out)
+	}
+	if !strings.Contains(out, "Initialized .monodev") {
+		t.Errorf("plain init --force output missing success message:\n%s", out)
+	}
+}
+
+func samePath(t *testing.T, a, b string) bool {
+	t.Helper()
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	return ra == rb
+}
+
 func seedHomeStore(t *testing.T, home, id string) {
 	t.Helper()
 	storesDir := filepath.Join(home, config.RepoLocalDirName, "stores")
