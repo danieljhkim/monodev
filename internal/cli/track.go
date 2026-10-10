@@ -57,7 +57,7 @@ func resolveAgentPresetPaths(workspace fs.FS) (found, missing []string, err erro
 var trackCmd = &cobra.Command{
 	Use:   "track [path]...",
 	Short: "Track paths in the active store",
-	Long:  `Add paths to the active store's track file. Paths are resolved relative to the repository root. Use --agents to track existing agent context paths.`,
+	Long:  `Add paths to the active store's track file. Paths are resolved relative to the current workspace directory, not the repository root. A path that escapes that directory is rejected. Use --agents to track existing agent context paths.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		agents, err := cmd.Flags().GetBool("agents")
 		if err != nil {
