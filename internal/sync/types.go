@@ -97,6 +97,11 @@ type PullRequest struct {
 	// Force indicates whether to overwrite a local store whose content
 	// differs from what is about to be pulled.
 	Force bool
+
+	// SkipFetch restores from the persistence work tree as it already is on
+	// disk, without contacting the remote. Callers set it after FetchPersistence
+	// or when reusing a work tree an earlier push or pull materialized.
+	SkipFetch bool
 }
 
 // PullResult contains the result of a pull operation.

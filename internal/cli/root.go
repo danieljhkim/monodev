@@ -159,6 +159,9 @@ func init() {
 	}
 	rootCmd.AddCommand(versionCmd)
 
+	skillCmd.GroupID = "cli-tooling"
+	rootCmd.AddCommand(skillCmd)
+
 	// Add help command to CLI & Tooling group
 	helpCmd := &cobra.Command{
 		Use:     "help [command]",
@@ -221,6 +224,7 @@ See each sub-command's help for details on how to use the generated script.`,
 	workspaceCmd.GroupID = "workspace-lifecycle"
 	diffCmd.GroupID = "workspace-lifecycle"
 	doctorCmd.GroupID = "workspace-lifecycle"
+	contextCmd.GroupID = "workspace-lifecycle"
 	rootCmd.AddCommand(applyCmd)
 	rootCmd.AddCommand(unapplyCmd)
 	rootCmd.AddCommand(ejectCmd)
@@ -229,6 +233,7 @@ See each sub-command's help for details on how to use the generated script.`,
 	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(diffCmd)
 	rootCmd.AddCommand(doctorCmd)
+	rootCmd.AddCommand(contextCmd)
 
 	// Store Operations commands
 	storeCmd.GroupID = "store-operations"

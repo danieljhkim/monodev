@@ -29,6 +29,12 @@ type CommitRequest struct {
 
 	// DryRun shows what would be committed without actually committing
 	DryRun bool
+
+	// Adopt treats the committed paths as applied overlays. The workspace
+	// bytes equal the snapshot just taken, so the workspace is marked applied
+	// for the active store and the paths join the managed .git/info/exclude
+	// block, exactly as if apply had written them.
+	Adopt bool
 }
 
 // CommitResult represents the result of a commit operation.
@@ -44,6 +50,10 @@ type CommitResult struct {
 
 	// Removed is the list of paths that were removed from the store (no longer tracked)
 	Removed []string
+
+	// Warnings contains non-fatal follow-up issues, such as an unavailable
+	// repository-local exclude file when adopting paths.
+	Warnings []string `json:",omitempty"`
 }
 
 // Commit copies workspace files to the active store and records them in workspace state.
@@ -172,8 +182,21 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 		// Commit workspace state to record managed paths
 		// NOTE: We do NOT set applied=true here - that's only done by the apply command
 		// This allows tracking which files are managed even before overlays are created
+		adopt := req.Adopt && len(result.Committed) > 0
+		if adopt {
+			if !workspaceState.Applied {
+				workspaceState.Mode = "copy"
+			}
+			workspaceState.Applied = true
+			if workspaceState.GetAppliedStore(workspaceState.ActiveStore) == nil {
+				workspaceState.AddAppliedStore(workspaceState.ActiveStore, workspaceState.Mode)
+			}
+		}
 		if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 			return nil, fmt.Errorf("failed to save workspace state: %w", err)
+		}
+		if adopt {
+			result.Warnings = appendExcludeWarning(result.Warnings, e.syncManagedExcludes(ctx, root, workspaceID, workspacePath, workspaceState))
 		}
 	}
 
