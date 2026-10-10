@@ -7,7 +7,7 @@ cancellation, and process restart. Journals written by the retired
 
 ## Journal
 
-Each mutating operation writes a journal beside workspace state:
+Each mutating operation writes a journal in the global workspace directory:
 
 - `<workspaces>/<workspace-id>.txn.json` — durable intent and phase
 - `<workspaces>/<workspace-id>.txn/` — backups of overwritten destination trees
@@ -17,6 +17,15 @@ Each mutating operation writes a journal beside workspace state:
 Journals are keyed by workspace ID, so a linked git worktree's journal is
 independent of the main checkout's — see
 [docs/worktrees.md](worktrees.md).
+
+Journal schema version 3 records `stateScope` (`global` or `component`).
+The ledger stays in its existing scope; a global record wins duplicate IDs.
+The global workspace lock coordinates the shared journal, and component-owned
+operations also hold the component workspace lock. Recovery uses the recorded
+scope even when the ledger is absent after a committed deletion. Journals from
+older versions resolve the owner using the same global-first lookup.
+A pending journal with an owner that conflicts with the current ledger is
+refused to avoid applying another scope's transaction to it.
 
 Dry-run never writes a journal and never mutates the workspace.
 

@@ -8,7 +8,6 @@ import (
 	"sort"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
-	"github.com/danieljhkim/monodev/internal/state"
 )
 
 type userIgnoreChecker interface {
@@ -44,8 +43,7 @@ func (e *Engine) DiscoverNewTracked(ctx context.Context, req *DiscoverNewTracked
 		return nil, fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceID := state.ComputeWorkspaceID(fingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	_, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, fingerprint, workspacePath, lockfile.Shared)
 	if err != nil {
 		return nil, err
 	}

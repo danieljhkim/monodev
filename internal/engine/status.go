@@ -23,8 +23,7 @@ func (e *Engine) Status(ctx context.Context, req *StatusRequest) (*StatusResult,
 		return nil, fmt.Errorf("failed to get fingerprint components: %w", err)
 	}
 
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	_, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, repoFingerprint, workspacePath, lockfile.Shared)
 	if err != nil {
 		return nil, err
 	}

@@ -430,14 +430,14 @@ func TestOverlayTxn_LoadsLegacyFixtureAndRejectsFutureSchema(t *testing.T) {
 		t.Fatalf("journal migration is not idempotent:\nfirst:  %s\nsecond: %s", first, second)
 	}
 
-	if err := os.WriteFile(journalPath, []byte(`{"schemaVersion":3}`), 0600); err != nil {
+	if err := os.WriteFile(journalPath, []byte(`{"schemaVersion":4}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	_, err = eng.loadOverlayTxn(journalPath)
 	if err == nil {
 		t.Fatal("load future journal error = nil, want refusal")
 	}
-	for _, want := range []string{journalPath, "schemaVersion 3", "supported schemaVersion 2", "upgrade monodev"} {
+	for _, want := range []string{journalPath, "schemaVersion 4", "supported schemaVersion 3", "upgrade monodev"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("load future journal error = %q, want %q", err, want)
 		}
@@ -478,7 +478,7 @@ func TestOverlayTxn_PreparedRecoverySynchronizesExcludeLedger(t *testing.T) {
 		t.Fatalf("seed stale exclude block: %v", err)
 	}
 
-	warnings, err := eng.recoverWorkspaceOverlay(context.Background(), fx.workspaceID, fx.repoRoot, fx.repoRoot, ".")
+	warnings, err := eng.recoverWorkspaceOverlay(context.Background(), eng.stateStore, fx.workspaceID, fx.repoRoot, fx.repoRoot, ".")
 	if err != nil {
 		t.Fatalf("recover prepared journal: %v", err)
 	}

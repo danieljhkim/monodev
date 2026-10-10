@@ -31,7 +31,7 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	workspaceStore, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, repoFingerprint, workspacePath, lockfile.Exclusive)
 	if err != nil {
 		return nil, err
 	}
@@ -55,12 +55,12 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	workspaceRoot := filepath.Join(root, workspacePath)
 	var excludeWarnings []string
 	if !req.DryRun {
-		recoveryWarnings, recoverErr := e.recoverWorkspaceOverlay(ctx, workspaceID, root, workspaceRoot, workspacePath)
+		recoveryWarnings, recoverErr := e.recoverWorkspaceOverlay(ctx, workspaceStore, workspaceID, root, workspaceRoot, workspacePath)
 		if recoverErr != nil {
 			return nil, recoverErr
 		}
 		excludeWarnings = append(excludeWarnings, recoveryWarnings...)
-		reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
+		reloaded, reloadErr := workspaceStore.LoadWorkspace(workspaceID)
 		if reloadErr == nil {
 			workspaceState = reloaded
 			workspaceState.AbsolutePath = workspaceRoot
@@ -151,10 +151,11 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	appliedOps := append([]planner.Operation{}, plan.Operations...)
 	var finalState *state.WorkspaceState
 	if err := e.runOverlayTxn(ctx, overlayTxnRequest{
-		kind:          overlayTxnApply,
-		workspaceID:   workspaceID,
-		workspaceRoot: workspaceRoot,
-		ops:           plan.Operations,
+		workspaceStore: workspaceStore,
+		kind:           overlayTxnApply,
+		workspaceID:    workspaceID,
+		workspaceRoot:  workspaceRoot,
+		ops:            plan.Operations,
 		finalize: func() (*state.WorkspaceState, bool, error) {
 			final := state.CloneWorkspaceState(workspaceState)
 			if final.Paths == nil {

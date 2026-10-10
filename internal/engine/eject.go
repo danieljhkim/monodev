@@ -36,13 +36,13 @@ func (e *Engine) Eject(ctx context.Context, req *EjectRequest) (*EjectResult, er
 	if req.DryRun {
 		lockMode = lockfile.Shared
 	}
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockMode)
+	workspaceStore, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, repoFingerprint, workspacePath, lockMode)
 	if err != nil {
 		return nil, err
 	}
 	defer unlockWorkspace()
 
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+	workspaceState, err := workspaceStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: workspace has no managed paths", ErrStateMissing)
@@ -58,11 +58,11 @@ func (e *Engine) Eject(ctx context.Context, req *EjectRequest) (*EjectResult, er
 	}
 
 	workspaceRoot := filepath.Join(root, workspacePath)
-	warnings, recoverErr := e.recoverWorkspaceOverlay(ctx, workspaceID, root, workspaceRoot, workspacePath)
+	warnings, recoverErr := e.recoverWorkspaceOverlay(ctx, workspaceStore, workspaceID, root, workspaceRoot, workspacePath)
 	if recoverErr != nil {
 		return nil, recoverErr
 	}
-	reloaded, reloadErr := e.stateStore.LoadWorkspace(workspaceID)
+	reloaded, reloadErr := workspaceStore.LoadWorkspace(workspaceID)
 	if reloadErr != nil {
 		if os.IsNotExist(reloadErr) {
 			// A committed interrupted eject has already detached the ledger. Its
@@ -89,10 +89,11 @@ func (e *Engine) Eject(ctx context.Context, req *EjectRequest) (*EjectResult, er
 		return nil, err
 	}
 	if err := e.runOverlayTxn(ctx, overlayTxnRequest{
-		kind:          overlayTxnEject,
-		workspaceID:   workspaceID,
-		workspaceRoot: workspaceRoot,
-		ops:           ops,
+		workspaceStore: workspaceStore,
+		kind:           overlayTxnEject,
+		workspaceID:    workspaceID,
+		workspaceRoot:  workspaceRoot,
+		ops:            ops,
 		finalize: func() (*state.WorkspaceState, bool, error) {
 			return nil, true, nil
 		},

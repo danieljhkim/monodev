@@ -259,7 +259,9 @@ func (e *Engine) doctorCheckOrphanedBackup(ctx context.Context, id string, fix b
 		Fixable:     true,
 	}
 	if fix {
-		unlock, err := e.lockWorkspace(ctx, id, lockfile.Exclusive)
+		// Only the global coordinator protects these global backup paths.
+		// Do not decode a newly appeared journal before the existence recheck.
+		unlock, err := lockWorkspace(ctx, e.stateStore, id, lockfile.Exclusive)
 		if err != nil {
 			finding.FixError = err.Error()
 			return finding, nil
@@ -312,7 +314,7 @@ func (e *Engine) doctorScanWorkspaceStates(ctx context.Context, fix bool) ([]Doc
 
 		ids := make([]string, 0, len(entries))
 		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.HasSuffix(entry.Name(), ".txn.json") {
 				continue
 			}
 			ids = append(ids, strings.TrimSuffix(entry.Name(), ".json"))

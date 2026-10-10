@@ -32,6 +32,11 @@ any unrelated top-level fields through later state saves. Overlay transaction
 journals version 2 rename the old `version` header to `schemaVersion` without
 changing recovery data.
 
+Overlay journals version 3 record the workspace ledger scope. Earlier journals
+resolve their owner with global-first workspace lookup. Older binaries refuse
+version 3 journals, preventing them from recovering a component transaction
+into global state.
+
 ## Operator action
 
 When a compatibility error names a higher `schemaVersion`, install and rerun

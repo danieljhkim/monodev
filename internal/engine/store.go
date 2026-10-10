@@ -123,8 +123,7 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	workspaceStore, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, repoFingerprint, workspacePath, lockfile.Exclusive)
 	if err != nil {
 		return err
 	}
@@ -158,7 +157,7 @@ func (e *Engine) UseStore(ctx context.Context, req *UseStoreRequest) error {
 	}
 	workspaceState.ActiveStore = req.StoreID
 	workspaceState.ActiveStoreScope = resolvedScope
-	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
+	if err := workspaceStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return fmt.Errorf("failed to save workspace state: %w", err)
 	}
 
@@ -173,8 +172,7 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 		return fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
-	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Exclusive)
+	workspaceStore, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, repoFingerprint, workspacePath, lockfile.Exclusive)
 	if err != nil {
 		return err
 	}
@@ -221,7 +219,7 @@ func (e *Engine) CreateStore(ctx context.Context, req *CreateStoreRequest) error
 	workspaceState.ActiveStoreScope = scope
 
 	// Save workspace state
-	if err := e.stateStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
+	if err := workspaceStore.SaveWorkspace(workspaceID, workspaceState); err != nil {
 		return fmt.Errorf("failed to save workspace state: %w", err)
 	}
 
@@ -388,18 +386,18 @@ func (e *Engine) DescribeStore(ctx context.Context, storeID string) ([]ScopedSto
 // GetActiveStoreID returns the active store ID and scope for the given working directory.
 // Returns ErrNoActiveStore if no store is currently active.
 func (e *Engine) GetActiveStoreID(ctx context.Context, cwd string) (storeID, scope string, err error) {
-	_, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(cwd)
+	root, repoFingerprint, workspacePath, err := e.DiscoverWorkspace(cwd)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to discover workspace: %w", err)
 	}
 
 	workspaceID := state.ComputeWorkspaceID(repoFingerprint, workspacePath)
-	unlockWorkspace, err := e.lockWorkspace(ctx, workspaceID, lockfile.Shared)
+	workspaceStore, unlockWorkspace, err := e.lockWorkspaceIdentity(ctx, root, repoFingerprint, workspacePath, lockfile.Shared)
 	if err != nil {
 		return "", "", err
 	}
 	defer unlockWorkspace()
-	workspaceState, err := e.stateStore.LoadWorkspace(workspaceID)
+	workspaceState, err := workspaceStore.LoadWorkspace(workspaceID)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", "", ErrNoActiveStore
