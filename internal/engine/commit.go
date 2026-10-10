@@ -80,7 +80,12 @@ func (e *Engine) Commit(ctx context.Context, req *CommitRequest) (*CommitResult,
 	}
 	defer unlockWorkspace()
 
-	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, "copy")
+	// Dry-run resolves a legacy workspace record in memory only.
+	loadWorkspace := e.LoadOrCreateWorkspaceState
+	if req.DryRun {
+		loadWorkspace = e.PreviewWorkspaceState
+	}
+	workspaceState, _, err := loadWorkspace(root, repoFingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}

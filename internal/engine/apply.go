@@ -37,7 +37,13 @@ func (e *Engine) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, er
 	}
 	defer unlockWorkspace()
 
-	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, repoFingerprint, workspacePath, req.Mode)
+	// Dry-run planning resolves a legacy workspace record in memory only; the
+	// on-disk migration is reserved for commands that mutate state.
+	loadWorkspace := e.LoadOrCreateWorkspaceState
+	if req.DryRun {
+		loadWorkspace = e.PreviewWorkspaceState
+	}
+	workspaceState, _, err := loadWorkspace(root, repoFingerprint, workspacePath, req.Mode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create workspace state: %w", err)
 	}

@@ -30,8 +30,9 @@ func (e *Engine) Diff(ctx context.Context, req *DiffRequest) (*DiffResult, error
 	}
 	defer unlockWorkspace()
 
-	// Load or create workspace state
-	workspaceState, _, err := e.LoadOrCreateWorkspaceState(root, fingerprint, workspacePath, "copy")
+	// Diff is read-only: resolve a legacy workspace record in memory without
+	// migrating it on disk.
+	workspaceState, _, err := e.PreviewWorkspaceState(root, fingerprint, workspacePath, "copy")
 	if err != nil {
 		return nil, err
 	}
