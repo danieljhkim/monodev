@@ -892,3 +892,43 @@ func requireNoSnapshotTempDirs(t *testing.T, parent string) {
 		}
 	}
 }
+
+func TestSnapshotsRejectSymlinkedSourceAncestors(t *testing.T) {
+	for _, materialize := range []bool{true, false} {
+		t.Run(map[bool]string{true: "materialize", false: "dematerialize"}[materialize], func(t *testing.T) {
+			storesDir, persistRoot, _, repo, mgr := setupTestEnv(t)
+			defer func() { _ = os.RemoveAll(filepath.Dir(storesDir)) }()
+			const storeID = "test-store"
+			createTestStore(t, repo, storeID)
+			if err := mgr.Materialize(storeID, repo, persistRoot); err != nil {
+				t.Fatal(err)
+			}
+			ancestor, dest := storesDir, persistStoreDir(persistRoot, storeID)
+			if !materialize {
+				ancestor, dest = filepath.Dir(persistStoreDir(persistRoot, storeID)), filepath.Join(storesDir, storeID)
+			}
+			original, err := os.ReadFile(filepath.Join(dest, "overlay/test.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(ancestor, ancestor+"-outside"); err != nil {
+				t.Fatal(err)
+			}
+			requireSymlink(t, ancestor+"-outside", ancestor)
+			if err := os.WriteFile(filepath.Join(ancestor+"-outside", storeID, "overlay/test.txt"), []byte("outside-secret-sentinel"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if materialize {
+				err = mgr.Materialize(storeID, repo, persistRoot)
+			} else {
+				err = mgr.Dematerialize(storeID, persistRoot, repo)
+			}
+			if err == nil || !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("snapshot error = %v", err)
+			}
+			if got, err := os.ReadFile(filepath.Join(dest, "overlay/test.txt")); err != nil || string(got) != string(original) {
+				t.Fatalf("destination changed to %q, %v", got, err)
+			}
+		})
+	}
+}

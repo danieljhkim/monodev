@@ -180,3 +180,27 @@ func TestFakeHasher(t *testing.T) {
 		}
 	})
 }
+
+func TestSHA256HasherManagedSourceRejectsLinks(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(base, "outside")
+	if err := os.Mkdir(outside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "file"), []byte("outside-secret-sentinel"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := HashManagedFile(NewSHA256Hasher(), filepath.Join(link, "file")); err == nil {
+		t.Fatal("managed hash followed source ancestor")
+	}
+	if _, err := HashManagedFile(NewSHA256Hasher(), outside); err == nil {
+		t.Fatal("managed hash accepted a directory")
+	}
+	if _, err := HashManagedFile(NewSHA256Hasher(), filepath.Join(outside, "file")); err != nil {
+		t.Fatal(err)
+	}
+}

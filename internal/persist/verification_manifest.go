@@ -147,11 +147,11 @@ func (s *SnapshotManager) DiffAgainstLocalCopy(storeID, persistRoot string, stor
 			changedSet[relPath] = struct{}{}
 			continue
 		}
-		localHash, err := hasher.HashFile(filepath.Join(localPath, filepath.FromSlash(relPath)))
+		localHash, err := hash.HashManagedFile(hasher, filepath.Join(localPath, filepath.FromSlash(relPath)))
 		if err != nil {
 			return nil, fmt.Errorf("store %q path %s: failed to hash local file: %w", storeID, relPath, err)
 		}
-		persistHash, err := hasher.HashFile(filepath.Join(persistPath, filepath.FromSlash(relPath)))
+		persistHash, err := hash.HashManagedFile(hasher, filepath.Join(persistPath, filepath.FromSlash(relPath)))
 		if err != nil {
 			return nil, fmt.Errorf("store %q path %s: failed to hash persisted file: %w", storeID, relPath, err)
 		}
@@ -193,7 +193,7 @@ func (s *SnapshotManager) writeVerificationManifest(storeID, storePath string, h
 	}
 	for _, relPath := range relPaths {
 		absPath := filepath.Join(storePath, filepath.FromSlash(relPath))
-		sum, err := hasher.HashFile(absPath)
+		sum, err := hash.HashManagedFile(hasher, absPath)
 		if err != nil {
 			return fmt.Errorf("store %q path %s: failed to hash persisted file: %w", storeID, absPath, err)
 		}
@@ -266,7 +266,7 @@ func (s *SnapshotManager) verifyManifestFiles(storeID, storePath string, manifes
 			return fmt.Errorf("store %q path %s: missing persisted file", storeID, absPath)
 		}
 
-		actualHash, err := hasher.HashFile(absPath)
+		actualHash, err := hash.HashManagedFile(hasher, absPath)
 		if err != nil {
 			return fmt.Errorf("store %q path %s: failed to hash persisted file: %w", storeID, absPath, err)
 		}

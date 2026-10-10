@@ -22,90 +22,68 @@ import (
 // swapped into place, so a failed copy never truncates or partially overwrites
 // the live destination.
 func (fs *RealFS) Copy(src, dst string) error {
-	if err := ValidateCopySource(src); err != nil {
-		return err
-	}
-
-	srcInfo, err := os.Lstat(src)
-	if err != nil {
-		return fmt.Errorf("failed to stat source: %w", err)
-	}
-
-	if srcInfo.IsDir() {
-		return fs.copyDir(src, dst, filepath.Clean(src))
-	}
-	return fs.copyFile(src, dst, srcInfo.Mode(), ".")
+	return fs.copySource(src, dst, nil)
 }
 
-// CopyExcept copies a directory like Copy, except that source-relative paths
-// in excluded are omitted from the staged snapshot. The destination is only
-// replaced after the filtered copy completes successfully.
+// CopyExcept copies a directory like Copy, omitting source-relative exclusions.
 func (fs *RealFS) CopyExcept(src, dst string, excluded map[string]bool) error {
-	if len(excluded) == 0 {
-		return fs.Copy(src, dst)
-	}
+	return fs.copySource(src, dst, excluded)
+}
 
-	srcInfo, err := os.Lstat(src)
+func (fs *RealFS) copySource(src, dst string, excluded map[string]bool) error {
+	source, err := openCopySource(src)
 	if err != nil {
-		return fmt.Errorf("failed to stat source: %w", err)
+		return err
 	}
-	if srcInfo.Mode()&os.ModeSymlink != 0 {
-		return unsafeSymlinkError(".")
+	defer func() { _ = source.Close() }()
+	info, err := source.Stat()
+	if err != nil {
+		return err
 	}
-	if !srcInfo.IsDir() {
+	if len(excluded) > 0 && !info.IsDir() {
 		return fmt.Errorf("CopyExcept requires a directory source: %q", src)
 	}
+	if err := validateSourceHandle(source, ".", excluded); err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return writeFileAtomically(dst, source, privateFileMode(info.Mode()))
+	}
+
 	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
 		return fmt.Errorf("failed to create parent directory: %w", err)
 	}
-
 	staged, err := os.MkdirTemp(filepath.Dir(dst), ".monodev-copy-*")
 	if err != nil {
 		return fmt.Errorf("failed to create staged copy: %w", err)
 	}
-	stagedReady := true
+	success := false
 	defer func() {
-		if stagedReady {
+		if !success {
 			_ = os.RemoveAll(staged)
 		}
 	}()
-
-	if err := fs.copyDirContentsExcept(src, staged, filepath.Clean(src), excluded); err != nil {
+	if err := fs.copySourceContents(source, staged, ".", excluded); err != nil {
 		return err
 	}
 	if err := replacePath(dst, staged); err != nil {
 		return err
 	}
-	stagedReady = false
+	success = true
 	return nil
 }
 
-// copyFile copies a single file from src to dst.
-func (fs *RealFS) copyFile(src, dst string, mode os.FileMode, relPath string) error {
-	// Defensive check: verify source is not a directory
-	srcInfo, err := os.Lstat(src)
-	if err != nil {
-		return fmt.Errorf("failed to stat source: %w", err)
-	}
-	if srcInfo.Mode()&os.ModeSymlink != 0 {
-		return unsafeSymlinkError(relPath)
-	}
-	if srcInfo.IsDir() {
-		return fmt.Errorf("copyFile called on directory %q - this is a bug", src)
-	}
-	if !srcInfo.Mode().IsRegular() {
-		return fmt.Errorf("unsupported source file type at %q", relPath)
-	}
-
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("failed to open source: %w", err)
-	}
-	defer func() {
-		_ = srcFile.Close()
-	}()
-
-	return writeFileAtomically(dst, srcFile, privateFileMode(mode))
+func (fs *RealFS) copySourceContents(source *os.File, dst, relPath string, excluded map[string]bool) error {
+	return walkSourceChildren(source, relPath, excluded, func(child *os.File, info os.FileInfo, childRel string) error {
+		dstPath := filepath.Join(dst, filepath.Base(childRel))
+		if info.IsDir() {
+			if err := os.Mkdir(dstPath, 0700); err != nil {
+				return err
+			}
+			return fs.copySourceContents(child, dstPath, childRel, excluded)
+		}
+		return writeFileAtomically(dstPath, child, privateFileMode(info.Mode()))
+	})
 }
 
 // writeFileAtomically writes r to dst via a sibling temp file + rename so a
@@ -146,124 +124,6 @@ func writeFileAtomically(dst string, r io.Reader, mode os.FileMode) error {
 		return err
 	}
 	success = true
-	return nil
-}
-
-// copyDir recursively copies a directory from src to dst.
-func (fs *RealFS) copyDir(src, dst, root string) error {
-	srcInfo, err := os.Lstat(src)
-	if err != nil {
-		return fmt.Errorf("failed to stat source directory: %w", err)
-	}
-	if srcInfo.Mode()&os.ModeSymlink != 0 {
-		relPath, relErr := copyRelPath(root, src)
-		if relErr != nil {
-			return relErr
-		}
-		return unsafeSymlinkError(relPath)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
-		return fmt.Errorf("failed to create parent directory: %w", err)
-	}
-
-	staged, err := os.MkdirTemp(filepath.Dir(dst), ".monodev-copy-*")
-	if err != nil {
-		return fmt.Errorf("failed to create staged copy: %w", err)
-	}
-	stagedReady := true
-	defer func() {
-		if stagedReady {
-			_ = os.RemoveAll(staged)
-		}
-	}()
-
-	if err := fs.copyDirContents(src, staged, root); err != nil {
-		return err
-	}
-	if err := replacePath(dst, staged); err != nil {
-		return err
-	}
-	stagedReady = false
-	return nil
-}
-
-func (fs *RealFS) copyDirContents(src, dst, root string) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return fmt.Errorf("failed to read source directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
-		relPath, err := copyRelPath(root, srcPath)
-		if err != nil {
-			return err
-		}
-
-		info, err := os.Lstat(srcPath)
-		if err != nil {
-			return fmt.Errorf("failed to get entry info for %q: %w", relPath, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return unsafeSymlinkError(relPath)
-		}
-
-		if info.IsDir() {
-			if err := os.MkdirAll(dstPath, 0700); err != nil {
-				return fmt.Errorf("failed to create destination directory: %w", err)
-			}
-			if err := fs.copyDirContents(srcPath, dstPath, root); err != nil {
-				return err
-			}
-		} else {
-			if err := fs.copyFile(srcPath, dstPath, info.Mode(), relPath); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func (fs *RealFS) copyDirContentsExcept(src, dst, root string, excluded map[string]bool) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return fmt.Errorf("failed to read source directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
-		relPath, err := copyRelPath(root, srcPath)
-		if err != nil {
-			return err
-		}
-		if excluded[filepath.Clean(relPath)] {
-			continue
-		}
-
-		info, err := os.Lstat(srcPath)
-		if err != nil {
-			return fmt.Errorf("failed to get entry info for %q: %w", relPath, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return unsafeSymlinkError(relPath)
-		}
-		if info.IsDir() {
-			if err := os.MkdirAll(dstPath, 0700); err != nil {
-				return fmt.Errorf("failed to create destination directory: %w", err)
-			}
-			if err := fs.copyDirContentsExcept(srcPath, dstPath, root, excluded); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := fs.copyFile(srcPath, dstPath, info.Mode(), relPath); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -321,48 +181,12 @@ func privateFileMode(mode os.FileMode) os.FileMode {
 // destination mutation happens. Symlinks are rejected by relative path so store
 // snapshot operations never read link targets across local/persist boundaries.
 func ValidateCopySource(src string) error {
-	root := filepath.Clean(src)
-	return validateCopySource(root, root)
-}
-
-func validateCopySource(root, path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("failed to stat source: %w", err)
-	}
-
-	relPath, err := copyRelPath(root, path)
+	source, err := openCopySource(src)
 	if err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return unsafeSymlinkError(relPath)
-	}
-	if !info.IsDir() {
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("unsupported source file type at %q", relPath)
-		}
-		return nil
-	}
-
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return fmt.Errorf("failed to read source directory %q: %w", relPath, err)
-	}
-	for _, entry := range entries {
-		if err := validateCopySource(root, filepath.Join(path, entry.Name())); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func copyRelPath(root, path string) (string, error) {
-	relPath, err := filepath.Rel(root, path)
-	if err != nil {
-		return "", fmt.Errorf("failed to derive relative path for %s: %w", path, err)
-	}
-	return filepath.ToSlash(relPath), nil
+	defer func() { _ = source.Close() }()
+	return validateSourceHandle(source, ".", nil)
 }
 
 func unsafeSymlinkError(relPath string) error {
@@ -374,17 +198,20 @@ func unsafeSymlinkError(relPath string) error {
 // so neither an existing symlink nor a concurrent replacement can redirect a
 // mutation outside the workspace or into aliased Git metadata.
 func (fs *RealFS) CopyWithinRoot(root, relPath, src string) error {
-	if err := ValidateCopySource(src); err != nil {
+	source, err := openCopySource(src)
+	if err != nil {
 		return err
 	}
-
+	defer func() { _ = source.Close() }()
+	if err := validateSourceHandle(source, ".", nil); err != nil {
+		return err
+	}
 	parent, name, closeParent, err := fs.openConfinedParent(root, relPath, true)
 	if err != nil {
 		return err
 	}
 	defer closeParent()
-
-	return fs.copyAt(src, parent, name, ".")
+	return fs.copyAt(source, parent, name, ".")
 }
 
 // RemoveAllWithinRoot removes relPath without following any destination
@@ -464,30 +291,18 @@ func (fs *RealFS) openConfinedParent(root, relPath string, create bool) (int, st
 	return currentFD, parts[len(parts)-1], closeParent, nil
 }
 
-func (fs *RealFS) copyAt(src string, parentFD int, name, relPath string) error {
-	srcInfo, err := os.Lstat(src)
+func (fs *RealFS) copyAt(source *os.File, parentFD int, name, relPath string) error {
+	info, err := source.Stat()
 	if err != nil {
 		return fmt.Errorf("failed to stat source: %w", err)
 	}
-	if srcInfo.Mode()&os.ModeSymlink != 0 {
-		return unsafeSymlinkError(relPath)
+	if info.IsDir() {
+		return fs.copyDirAt(source, parentFD, name, relPath)
 	}
-	if srcInfo.IsDir() {
-		return fs.copyDirAt(src, parentFD, name, relPath)
-	}
-	if !srcInfo.Mode().IsRegular() {
-		return fmt.Errorf("unsupported source file type at %q", relPath)
-	}
-	return copyFileAt(src, parentFD, name, srcInfo.Mode())
+	return copyFileAt(source, parentFD, name, info.Mode())
 }
 
-func copyFileAt(src string, parentFD int, name string, mode os.FileMode) error {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("failed to open source: %w", err)
-	}
-	defer func() { _ = srcFile.Close() }()
-
+func copyFileAt(srcFile *os.File, parentFD int, name string, mode os.FileMode) error {
 	tmpName, tmpFD, err := createExclusiveAt(parentFD, ".monodev-copy-", unix.O_CREAT|unix.O_EXCL|unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, uint32(privateFileMode(mode)))
 	if err != nil {
 		return err
@@ -526,7 +341,7 @@ func copyFileAt(src string, parentFD int, name string, mode os.FileMode) error {
 	return nil
 }
 
-func (fs *RealFS) copyDirAt(src string, parentFD int, name, relPath string) error {
+func (fs *RealFS) copyDirAt(source *os.File, parentFD int, name, relPath string) error {
 	tmpName, err := mkdirExclusiveAt(parentFD, ".monodev-copy-")
 	if err != nil {
 		return err
@@ -544,15 +359,10 @@ func (fs *RealFS) copyDirAt(src string, parentFD int, name, relPath string) erro
 	}
 	defer func() { _ = unix.Close(tmpFD) }()
 
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return fmt.Errorf("failed to read source directory %q: %w", relPath, err)
-	}
-	for _, entry := range entries {
-		childRel := filepath.Join(relPath, entry.Name())
-		if err := fs.copyAt(filepath.Join(src, entry.Name()), tmpFD, entry.Name(), childRel); err != nil {
-			return err
-		}
+	if err := walkSourceChildren(source, relPath, nil, func(child *os.File, _ os.FileInfo, childRel string) error {
+		return fs.copyAt(child, tmpFD, filepath.Base(childRel), childRel)
+	}); err != nil {
+		return err
 	}
 	if err := replaceAt(parentFD, name, tmpName); err != nil {
 		return err

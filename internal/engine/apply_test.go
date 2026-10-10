@@ -234,8 +234,10 @@ func TestApply_ForceRejectsSymlinkedParentBeforeRemovingTarget(t *testing.T) {
 	eng := newRealOverlayEngine(repoRoot, overlayRoot, track, newMockStateStore())
 
 	_, err := eng.Apply(context.Background(), &ApplyRequest{CWD: repoRoot, StoreIDs: []string{"untrusted-store"}, Mode: "copy", Force: true})
-	if err == nil || !strings.Contains(err.Error(), "symlinked destination ancestor") {
-		t.Fatalf("Apply --force error = %v, want symlinked destination ancestor rejection", err)
+	// Source-safe transaction backup can reject the ancestor before the
+	// destination guard runs; either refusal must preserve the outside target.
+	if err == nil || !strings.Contains(err.Error(), "symlink") || !strings.Contains(err.Error(), "escape") {
+		t.Fatalf("Apply --force error = %v, want symlinked ancestor rejection", err)
 	}
 	content, readErr := os.ReadFile(target)
 	if readErr != nil {

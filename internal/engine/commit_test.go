@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/danieljhkim/monodev/internal/config"
@@ -318,5 +319,42 @@ func TestCleanupOrphanedFiles_DryRunMatchesRemovalWithoutMutating(t *testing.T) 
 	}
 	if _, err := os.Stat(filepath.Join(overlayRoot, "notes", "b")); !os.IsNotExist(err) {
 		t.Fatalf("real cleanup retained orphan, stat error = %v", err)
+	}
+}
+
+func TestCommitRejectsSymlinkedWorkspaceSourceAncestor(t *testing.T) {
+	fx := newOverlayTxnFixture(t, "nested/private.txt")
+	fx.seedApplied(t)
+	stateStore := state.NewFileStateStore(fsops.NewRealFS(), fx.workspacesDir)
+	ws, err := stateStore.LoadWorkspace(fx.workspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.ActiveStore = fx.storeID
+	if err := stateStore.SaveWorkspace(fx.workspaceID, ws); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(filepath.Join(fx.overlayRoot, "nested/private.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "private.txt"), []byte("outside-secret-sentinel"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ancestor := filepath.Join(fx.repoRoot, "nested")
+	if err := os.Rename(ancestor, ancestor+"-original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fx.engine(t, nil, nil).Commit(context.Background(), &CommitRequest{CWD: fx.repoRoot, All: true})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("Commit source rejection = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(fx.overlayRoot, "nested/private.txt"))
+	if err != nil || string(got) != string(original) {
+		t.Fatalf("store changed to %q, %v", got, err)
 	}
 }
