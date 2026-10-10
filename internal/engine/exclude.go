@@ -107,7 +107,7 @@ func (e *Engine) managedExcludeEntriesForGitDir(repoRoot, gitDir, currentWorkspa
 		}
 	}
 	err = e.forEachWorkspaceState(func(workspaceID string, ws *state.WorkspaceState) error {
-		if ws == nil || !ws.Applied || ws.AbsolutePath == "" || len(ws.Paths) == 0 {
+		if ws == nil || ws.AbsolutePath == "" || len(ws.Paths) == 0 {
 			return nil
 		}
 		if workspaceID == currentWorkspaceID {
@@ -143,6 +143,15 @@ func (e *Engine) managedExcludeEntries(workspacePath string, ws *state.Workspace
 	if ws == nil || len(ws.Paths) == 0 {
 		return nil, nil
 	}
+	// Store selection can clear Applied without removing installed overlays.
+	// Paths also contains committed intent, so only owners in AppliedStores
+	// contribute exclusions. Ledgers predating that list use Applied instead;
+	// an explicitly empty list means no stores remain applied.
+	legacyApplied := ws.AppliedStores == nil && ws.Applied
+	appliedStores := make(map[string]bool, len(ws.AppliedStores))
+	for _, applied := range ws.AppliedStores {
+		appliedStores[applied.Store] = true
+	}
 
 	workspacePath = filepath.Clean(workspacePath)
 	if workspacePath == "" {
@@ -156,6 +165,9 @@ func (e *Engine) managedExcludeEntries(workspacePath string, ws *state.Workspace
 
 	entries := make([]string, 0, len(ws.Paths))
 	for relPath, ownership := range ws.Paths {
+		if !legacyApplied && !appliedStores[ownership.Store] {
+			continue
+		}
 		if err := e.fs.ValidateRelPath(relPath); err != nil {
 			return nil, fmt.Errorf("invalid managed path %q in ledger: %w", relPath, err)
 		}
