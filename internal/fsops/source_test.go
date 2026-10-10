@@ -28,6 +28,99 @@ func sourceCopiers(fs *RealFS) map[string]func(string, string) error {
 	}
 }
 
+func TestManagedSourceWithSymlinkedTrustedAncestor(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(base, "real", "workspace")
+	writeSourceFixture(t, filepath.Join(root, "tree", "nested", "file"), "safe")
+	alias := filepath.Join(base, "alias")
+	requireSymlink(t, filepath.Dir(root), alias)
+	logicalRoot := filepath.Join(alias, "workspace")
+	src, err := ResolveSourcePath(logicalRoot, filepath.Join(logicalRoot, "tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src != filepath.Join(root, "tree") {
+		t.Fatalf("resolved source = %q", src)
+	}
+	for method, copy := range sourceCopiers(NewRealFS()) {
+		t.Run(method, func(t *testing.T) {
+			dst := filepath.Join(base, method)
+			if err := copy(src, dst); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := os.ReadFile(filepath.Join(dst, "nested", "file")); err != nil || string(got) != "safe" {
+				t.Fatalf("copied %q, %v", got, err)
+			}
+		})
+	}
+	if err := ValidateCopySource(src); err != nil {
+		t.Fatal(err)
+	}
+	file, err := OpenRegularSource(filepath.Join(src, "nested", "file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+
+	outside := filepath.Join(base, "outside")
+	writeSourceFixture(t, filepath.Join(outside, "private.txt"), "outside-secret-sentinel")
+	for _, location := range []string{"ancestor", "leaf", "descendant"} {
+		t.Run(location, func(t *testing.T) {
+			link := filepath.Join(root, location)
+			target := outside
+			if location == "leaf" {
+				target = filepath.Join(outside, "private.txt")
+			}
+			if location == "descendant" {
+				link = filepath.Join(root, "tree", "leak")
+			}
+			requireSymlink(t, target, link)
+			defer func() { _ = os.Remove(link) }()
+			logical := filepath.Join(logicalRoot, location)
+			switch location {
+			case "ancestor":
+				logical = filepath.Join(logical, "private.txt")
+			case "descendant":
+				logical = filepath.Join(logicalRoot, "tree")
+			}
+			resolved, err := ResolveSourcePath(logicalRoot, logical)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkError := func(err error) {
+				t.Helper()
+				if err == nil || !strings.Contains(err.Error(), "refusing to copy symlink \""+link+"\"") {
+					t.Fatalf("error = %v, want absolute offending path %q", err, link)
+				}
+			}
+			checkError(ValidateCopySource(resolved))
+			for method, copy := range sourceCopiers(NewRealFS()) {
+				dst := filepath.Join(base, "unchanged-"+method)
+				writeSourceFixture(t, dst, "original")
+				checkError(copy(resolved, dst))
+				if got, err := os.ReadFile(dst); err != nil || string(got) != "original" {
+					t.Fatalf("destination = %q, %v", got, err)
+				}
+			}
+			if location != "descendant" {
+				file, err := OpenRegularSource(resolved)
+				if file != nil {
+					_ = file.Close()
+				}
+				checkError(err)
+			}
+		})
+	}
+	for _, path := range []string{filepath.Join(base, "outside", "private.txt"), logicalRoot + "-sibling/file"} {
+		if _, err := ResolveSourcePath(logicalRoot, path); err == nil {
+			t.Fatalf("accepted source outside root: %q", path)
+		}
+	}
+}
+
 func TestManagedCopiesRejectSourceLinksBeforeDestinationMutation(t *testing.T) {
 	for method, copy := range sourceCopiers(NewRealFS()) {
 		for _, location := range []string{"ancestor", "root", "descendant", "leaf"} {

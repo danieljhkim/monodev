@@ -11,6 +11,44 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// ResolveSourcePath resolves a caller's trusted root, never the source beneath
+// it. The returned path still goes through the no-follow managed-source walk,
+// so checkout-controlled links cannot be hidden by canonicalization.
+func ResolveSourcePath(root, path string) (string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, absolute)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("source %q is outside trusted root %q", path, root)
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve trusted source root %q: %w", root, err)
+	}
+	return filepath.Join(resolved, rel), nil
+}
+
+// SourcePath lets disk-backed providers resolve an explicit source boundary
+// while abstract filesystem providers retain their own path namespace.
+func SourcePath(fs FS, root, path string) (string, error) {
+	if resolver, ok := fs.(interface {
+		SourcePath(string, string) (string, error)
+	}); ok {
+		return resolver.SourcePath(root, path)
+	}
+	return path, nil
+}
+
+func (fs *RealFS) SourcePath(root, path string) (string, error) {
+	return ResolveSourcePath(root, path)
+}
+
 // openCopySource pins the source through directory-relative, no-follow opens.
 // Never canonicalize arbitrary source paths with EvalSymlinks: doing so would
 // erase the very links managed snapshots must reject.
@@ -39,7 +77,7 @@ func openCopySource(path string) (*os.File, error) {
 		return current, nil
 	}
 	for i, part := range parts {
-		next, err := openSourceAt(current, part, strings.Join(parts[:i+1], "/"), i < len(parts)-1)
+		next, err := openSourceAt(current, part, "/"+strings.Join(parts[:i+1], "/"), i < len(parts)-1)
 		_ = current.Close()
 		if err != nil {
 			return nil, err
@@ -74,7 +112,7 @@ func openSourceAt(parent *os.File, name, relPath string, directory bool) (*os.Fi
 		}
 		return nil, fmt.Errorf("failed to open source %q: %w", relPath, err)
 	}
-	file := os.NewFile(uintptr(fd), name)
+	file := os.NewFile(uintptr(fd), relPath)
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
@@ -103,7 +141,7 @@ func validateSourceHandle(source *os.File, relPath string, excluded map[string]b
 func walkSourceChildren(source *os.File, relPath string, excluded map[string]bool, visit func(*os.File, os.FileInfo, string) error) error {
 	// A fresh handle to the pinned directory starts enumeration at offset zero,
 	// allowing preflight and execution to traverse the same root independently.
-	dir, err := openSourceAt(source, ".", relPath, true)
+	dir, err := openSourceAt(source, ".", source.Name(), true)
 	if err != nil {
 		return err
 	}
@@ -117,7 +155,7 @@ func walkSourceChildren(source *os.File, relPath string, excluded map[string]boo
 		if excluded[filepath.Clean(childRel)] {
 			continue
 		}
-		child, err := openSourceAt(source, entry.Name(), filepath.ToSlash(childRel), false)
+		child, err := openSourceAt(source, entry.Name(), filepath.Join(source.Name(), entry.Name()), false)
 		if err != nil {
 			return err
 		}

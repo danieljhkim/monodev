@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/danieljhkim/monodev/internal/config"
+	"github.com/danieljhkim/monodev/internal/engine"
 	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/stores"
 )
@@ -171,6 +173,110 @@ func TestInitSucceedsThroughSymlinkedRepositoryAncestor(t *testing.T) {
 		if info, err := os.Stat(filepath.Join(repo, config.RepoLocalDirName, name)); err != nil || !info.IsDir() {
 			t.Fatalf("repo-local %s missing through symlinked ancestor: info %v, error %v", name, info, err)
 		}
+	}
+}
+
+func TestManagedCommandsThroughSymlinkedAncestors(t *testing.T) {
+	for _, sharedRoot := range []bool{false, true} {
+		t.Run(map[bool]string{false: "repo-local", true: "shared-root"}[sharedRoot], func(t *testing.T) {
+			base, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			realParent := filepath.Join(base, "real")
+			repo := initGitRepo(t, filepath.Join(realParent, "repo"), "https://example.com/monodev.git")
+			home := filepath.Join(realParent, "home")
+			if err := os.MkdirAll(home, 0700); err != nil {
+				t.Fatal(err)
+			}
+			alias := filepath.Join(base, "alias")
+			if err := os.Symlink(realParent, alias); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", filepath.Join(alias, "home"))
+			t.Setenv("MONODEV_ROOT", "")
+			if sharedRoot {
+				t.Setenv("MONODEV_ROOT", filepath.Join(alias, "home", ".monodev"))
+			}
+			logicalRepo := filepath.Join(alias, "repo")
+			chdir(t, logicalRepo)
+			t.Setenv("PWD", logicalRepo)
+			if cwd, err := os.Getwd(); err != nil || cwd != logicalRepo {
+				t.Fatalf("test must retain logical cwd: %q, %v", cwd, err)
+			}
+			runCLI(t, "init")
+			runCLI(t, "checkout", "-n", "qa")
+			notes := filepath.Join(repo, "notes.txt")
+			tree := filepath.Join(repo, "tree")
+			if err := os.Mkdir(tree, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(tree, "file.txt"), []byte("tree contents"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			write := func(content string) {
+				t.Helper()
+				if err := os.WriteFile(notes, []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("committed")
+			runCLI(t, "track", "notes.txt", "tree")
+			runCLI(t, "commit", "--all")
+			write("saved")
+			runCLI(t, "save")
+			write("workspace backup")
+			runCLI(t, "apply", "--force")
+			if got, err := os.ReadFile(notes); err != nil || string(got) != "saved" {
+				t.Fatalf("applied file = %q, %v", got, err)
+			}
+			if got, err := os.ReadFile(filepath.Join(tree, "file.txt")); err != nil || string(got) != "tree contents" {
+				t.Fatalf("applied directory leaf = %q, %v", got, err)
+			}
+			runCLI(t, "unapply")
+			if _, err := os.Lstat(notes); !os.IsNotExist(err) {
+				t.Fatalf("unapply did not remove notes: %v", err)
+			}
+			if _, err := os.Lstat(tree); !os.IsNotExist(err) {
+				t.Fatalf("unapply did not remove directory: %v", err)
+			}
+			// Earlier versions wrote logical store paths into symlink-mode
+			// overlays. Canonicalizing store locations must retain that ownership.
+			eng, err := newEngine()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := eng.Apply(context.Background(), &engine.ApplyRequest{CWD: logicalRepo, Mode: "symlink"}); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{notes, tree} {
+				target, err := os.Readlink(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				logicalTarget := strings.Replace(target, realParent, alias, 1)
+				if err := os.Symlink(logicalTarget, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runCLI(t, "commit", "--all")
+			runCLI(t, "unapply")
+			// The same source policy must still reject workspace-controlled
+			// symlinks, naming the link's canonical location rather than alias.
+			outside := filepath.Join(base, "private.txt")
+			if err := os.WriteFile(outside, []byte("private"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, notes); err != nil {
+				t.Fatal(err)
+			}
+			if err := runCLIErr(t, "commit", "--all"); err == nil || !strings.Contains(err.Error(), "refusing to copy symlink \""+notes+"\"") {
+				t.Fatalf("symlink refusal = %v, want real path %q", err, notes)
+			}
+		})
 	}
 }
 

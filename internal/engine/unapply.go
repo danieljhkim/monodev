@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/danieljhkim/monodev/internal/lockfile"
 	"github.com/danieljhkim/monodev/internal/state"
@@ -231,10 +230,12 @@ func (e *Engine) validateManagedSymlink(absPath, relPath string, ownership state
 	if err != nil {
 		return fmt.Errorf("failed to read symlink %s: %w", relPath, err)
 	}
-	if !slices.Contains(expected, filepath.Clean(target)) {
-		return fmt.Errorf("%w: %w: managed symlink %s now points to %s; %s", ErrValidation, ErrDrift, relPath, target, forceUnapplyHint)
+	for _, expectedTarget := range expected {
+		if e.sameOverlayTarget(target, expectedTarget) {
+			return nil
+		}
 	}
-	return nil
+	return fmt.Errorf("%w: %w: managed symlink %s now points to %s; %s", ErrValidation, ErrDrift, relPath, target, forceUnapplyHint)
 }
 
 // expectedSymlinkTargets returns the overlay paths a symlink-mode apply of

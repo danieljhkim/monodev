@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/danieljhkim/monodev/internal/fsops"
 	"github.com/danieljhkim/monodev/internal/hash"
 	"github.com/danieljhkim/monodev/internal/planner"
 	"github.com/danieljhkim/monodev/internal/state"
@@ -20,7 +21,7 @@ const forceUnapplyHint = "inspect the listed paths or re-run with --force to rem
 // owners is the plan's final path-to-store map. Nested paths owned by another
 // store are omitted from a directory manifest so unapply of the directory does
 // not treat them as this store's files.
-func (e *Engine) ownershipForAppliedPath(op planner.Operation, mode string, owners map[string]string) state.PathOwnership {
+func (e *Engine) ownershipForAppliedPath(workspaceRoot string, op planner.Operation, mode string, owners map[string]string) state.PathOwnership {
 	ownership := state.PathOwnership{
 		Store:     op.Store,
 		Type:      mode,
@@ -30,6 +31,11 @@ func (e *Engine) ownershipForAppliedPath(op planner.Operation, mode string, owne
 		return ownership
 	}
 
+	sourcePath, err := fsops.SourcePath(e.fs, workspaceRoot, op.DestPath)
+	if err != nil {
+		return ownership
+	}
+	op.DestPath = sourcePath
 	info, err := e.fs.Lstat(op.DestPath)
 	if err != nil {
 		return ownership
@@ -108,6 +114,10 @@ func (e *Engine) planManagedPathRemoval(workspaceRoot string, workspaceState *st
 				return nil, nil, fmt.Errorf("invalid path %q in workspace state: %w", relPath, err)
 			}
 			absPath := filepath.Join(workspaceRoot, relPath)
+			absPath, err := fsops.SourcePath(e.fs, workspaceRoot, absPath)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to resolve checksum source %s: %w", relPath, err)
+			}
 			if err := e.validateManagedPath(absPath, relPath, workspaceState.Paths[relPath], workspaceState.Paths); err != nil {
 				return nil, nil, fmt.Errorf("validation failed for %s: %w", relPath, err)
 			}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/danieljhkim/monodev/internal/clock"
 	"github.com/danieljhkim/monodev/internal/config"
@@ -71,6 +72,28 @@ func prepareScopedPaths() (*config.ScopedPaths, error) {
 		if _, err := gitx.EnsureDurableRepoID(scopedPaths.RepoRoot); err != nil {
 			return nil, fmt.Errorf("failed to persist durable repo id: %w", err)
 		}
+	}
+
+	// Resolve only trusted location prefixes. Keep .monodev and every store,
+	// snapshot and transaction entry beneath them subject to no-follow opens.
+	canonicalPaths := func(paths *config.Paths, root string) error {
+		if paths == nil {
+			return nil
+		}
+		for _, path := range []*string{&paths.Root, &paths.Stores, &paths.Workspaces, &paths.Config} {
+			resolved, err := fsops.ResolveSourcePath(root, *path)
+			if err != nil {
+				return err
+			}
+			*path = resolved
+		}
+		return nil
+	}
+	if err := canonicalPaths(scopedPaths.Global, filepath.Dir(scopedPaths.Global.Root)); err != nil {
+		return nil, err
+	}
+	if err := canonicalPaths(scopedPaths.Component, scopedPaths.RepoRoot); err != nil {
+		return nil, err
 	}
 
 	return scopedPaths, nil
