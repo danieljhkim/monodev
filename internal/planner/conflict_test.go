@@ -1,7 +1,9 @@
 package planner
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,7 +13,9 @@ import (
 // mockFS is a mock implementation of fsops.FS for testing
 type mockFS struct {
 	exists      map[string]bool
+	existsErr   map[string]error
 	lstat       map[string]os.FileInfo
+	lstatErr    map[string]error
 	readlink    map[string]string
 	readlinkErr map[string]error
 }
@@ -19,7 +23,9 @@ type mockFS struct {
 func newMockFS() *mockFS {
 	return &mockFS{
 		exists:      make(map[string]bool),
+		existsErr:   make(map[string]error),
 		lstat:       make(map[string]os.FileInfo),
+		lstatErr:    make(map[string]error),
 		readlink:    make(map[string]string),
 		readlinkErr: make(map[string]error),
 	}
@@ -29,8 +35,16 @@ func (m *mockFS) setExists(path string, exists bool) {
 	m.exists[path] = exists
 }
 
+func (m *mockFS) setExistsError(path string, err error) {
+	m.existsErr[path] = err
+}
+
 func (m *mockFS) setLstat(path string, info os.FileInfo) {
 	m.lstat[path] = info
+}
+
+func (m *mockFS) setLstatError(path string, err error) {
+	m.lstatErr[path] = err
 }
 
 func (m *mockFS) setReadlink(path string, target string, err error) {
@@ -42,6 +56,9 @@ func (m *mockFS) setReadlink(path string, target string, err error) {
 }
 
 func (m *mockFS) Exists(path string) (bool, error) {
+	if err, ok := m.existsErr[path]; ok {
+		return false, err
+	}
 	if exists, ok := m.exists[path]; ok {
 		return exists, nil
 	}
@@ -49,6 +66,9 @@ func (m *mockFS) Exists(path string) (bool, error) {
 }
 
 func (m *mockFS) Lstat(path string) (os.FileInfo, error) {
+	if err, ok := m.lstatErr[path]; ok {
+		return nil, err
+	}
 	if info, ok := m.lstat[path]; ok {
 		return info, nil
 	}
@@ -445,19 +465,63 @@ func TestConflictChecker_GetOwnership(t *testing.T) {
 	}
 }
 
-func TestConflictChecker_CheckPath_FilesystemError(t *testing.T) {
+func TestConflictChecker_CheckPath_MissingPath(t *testing.T) {
 	fs := newMockFS()
 	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
 	checker := NewConflictChecker(fs, workspace, false)
 
-	// Test with a path that doesn't exist - should not conflict
 	fs.setExists("/workspace/Makefile", false)
 
 	conflict := checker.CheckPath("Makefile", "/workspace/Makefile", "file", "symlink", "store1")
 
-	// Should not conflict if path doesn't exist
 	if conflict != nil {
 		t.Errorf("unexpected conflict when path doesn't exist: %v", conflict)
+	}
+}
+
+func TestConflictChecker_CheckPath_FilesystemError(t *testing.T) {
+	fs := newMockFS()
+	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	checker := NewConflictChecker(fs, workspace, false)
+	fs.setExistsError("/workspace/Makefile", errors.New("permission denied"))
+
+	conflict := checker.CheckPath("Makefile", "/workspace/Makefile", "file", "symlink", "store1")
+
+	if conflict == nil {
+		t.Fatal("expected conflict when checking path fails")
+	}
+	if conflict.Path != "Makefile" {
+		t.Errorf("conflict path = %q, want %q", conflict.Path, "Makefile")
+	}
+	if conflict.Existing != "unknown" {
+		t.Errorf("conflict existing state = %q, want unknown", conflict.Existing)
+	}
+	if !strings.Contains(conflict.Reason, "permission denied") {
+		t.Errorf("conflict reason %q does not preserve the filesystem error", conflict.Reason)
+	}
+}
+
+func TestConflictChecker_CheckPath_ManagedPathLstatError(t *testing.T) {
+	fs := newMockFS()
+	fs.setExists("/workspace/Makefile", true)
+	fs.setLstatError("/workspace/Makefile", errors.New("stat permission denied"))
+	workspace := state.NewWorkspaceState("repo1", "workspace", "symlink")
+	workspace.Paths["Makefile"] = state.PathOwnership{Store: "store1", Type: "symlink"}
+	checker := NewConflictChecker(fs, workspace, false)
+
+	conflict := checker.CheckPath("Makefile", "/workspace/Makefile", "file", "symlink", "store1")
+
+	if conflict == nil {
+		t.Fatal("expected conflict when statting managed path fails")
+	}
+	if conflict.Path != "Makefile" {
+		t.Errorf("conflict path = %q, want %q", conflict.Path, "Makefile")
+	}
+	if conflict.Existing != "unknown" {
+		t.Errorf("conflict existing state = %q, want unknown", conflict.Existing)
+	}
+	if !strings.Contains(conflict.Reason, "stat permission denied") {
+		t.Errorf("conflict reason %q does not preserve the filesystem error", conflict.Reason)
 	}
 }
 
